@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in · Byline</title><link rel="stylesheet" href="/styles.css"><link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#0b0912"></head>
+<body style="display:grid;place-items:center;min-height:100vh;padding:16px">
+  <form class="card accent" id="f" style="width:min(380px,100%)">
+    <div class="mast">By<em>line</em></div>
+    <div class="mast-sub" style="margin-bottom:18px">Private workspace</div>
+    <label class="field">Password<input type="password" id="pw" autocomplete="current-password" autofocus required></label>
+    <button class="primary" style="margin-top:14px;width:100%;justify-content:center" type="submit">Sign in</button>
+    <p class="small muted" id="msg" style="margin:10px 0 0"></p>
+  </form>
+  <script>
+    document.getElementById('f').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const r = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: document.getElementById('pw').value }) });
+      if (r.ok) location.href = '/#/today'; else document.getElementById('msg').textContent = (await r.json()).error || 'Sign-in failed.';
+    });
+  </script>
+</body></html>

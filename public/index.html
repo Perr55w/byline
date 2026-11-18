@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Byline — briefing & media studio</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%230b0912'/><text x='7' y='24' font-family='Georgia' font-weight='700' font-size='22' fill='%239b7bff'>B</text></svg>">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <meta name="theme-color" content="#0b0912">
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/css/career.css">
+  <link rel="stylesheet" href="/css/people.css">
+  <link rel="stylesheet" href="/css/control.css">
+</head>
+<body>
+  <div class="shell">
+    <aside class="rail">
+      <div class="mast">By<em>line</em></div>
+      <div class="mast-sub">Briefing · Studio · Career</div>
+      <nav class="nav" id="nav"></nav>
+      <div class="rail-foot" id="rail-foot"></div>
+    </aside>
+    <main id="view"></main>
+  </div>
+  <div class="toasts" id="toasts"></div>
+  <script type="module" src="/js/app.js"></script>
+  <script>if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});</script>
+</body>
+</html>

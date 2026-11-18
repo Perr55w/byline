@@ -1,0 +1,17 @@
+{
+  "name": "byline",
+  "version": "0.1.0",
+  "description": "Personal AI news briefing, LinkedIn drafting, and career/media studio",
+  "type": "module",
+  "private": true,
+  "engines": { "node": ">=22.5" },
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning server.js",
+    "daily": "node --disable-warning=ExperimentalWarning scripts/daily.js",
+    "demo": "node --disable-warning=ExperimentalWarning scripts/demo.js",
+    "test": "node --disable-warning=ExperimentalWarning --test test/*.test.js"
+  },
+  "optionalDependencies": {
+    "@anthropic-ai/sdk": "^1.10.0"
+  }
+}
