@@ -121,21 +121,24 @@ export function modal(content, { wide = false, onClose } = {}) {
     const grip = document.createElement('div');
     grip.className = 'sheet-grip'; grip.setAttribute('aria-hidden', 'true');
     el.prepend(grip);
-    let y0 = 0, dy = 0, t0 = 0, dragging = false;
+    let y0 = 0, dy = 0, t0 = 0, dragging = false, samples = [];
+    el.addEventListener('animationend', (ev) => { if (ev.target === el) el.classList.add('settled'); });
     const settle = () => { el.classList.add('spring'); el.style.setProperty('--drag', '0px'); wrap.style.setProperty('--p', '0'); setTimeout(() => el.classList.remove('spring'), 280); };
     grip.addEventListener('pointerdown', (e) => {
-      dragging = true; dy = 0; y0 = e.clientY; t0 = performance.now(); grip.setPointerCapture(e.pointerId); el.classList.add('dragging');
+      dragging = true; dy = 0; y0 = e.clientY; t0 = performance.now(); samples = [[t0, 0]]; el.classList.add('settled'); grip.setPointerCapture(e.pointerId); el.classList.add('dragging');
     });
     grip.addEventListener('pointermove', (e) => {
       if (!dragging) return;
       const raw = e.clientY - y0;
       dy = raw > 0 ? raw : raw * .2;
+      const now = performance.now(); samples.push([now, dy]); while (samples.length > 2 && now - samples[0][0] > 80) samples.shift();
       el.style.setProperty('--drag', `${dy}px`);
       wrap.style.setProperty('--p', String(Math.max(0, Math.min(1, dy / el.offsetHeight))));
     });
     const end = (cancelled) => {
       if (!dragging) return; dragging = false; el.classList.remove('dragging');
-      const v = dy / Math.max(1, performance.now() - t0);
+      const [ta, ya] = samples[0] || [t0, 0], [tb, yb] = samples[samples.length - 1] || [t0, dy];
+      const v = (yb - ya) / Math.max(1, tb - ta);
       if (!cancelled && (dy > 120 || v > .6)) close(); else settle();
       dy = 0;
     };

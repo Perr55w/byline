@@ -215,7 +215,8 @@ button.done { border-color: var(--ink); }
   background: radial-gradient(circle, var(--rule-strong) 1.6px, transparent 2px) 0 0 / 9px 4px repeat-x;
 }
 .modal-wrap.as-sheet .modal::after { content: ''; position: absolute; top: 4px; left: 50%; width: 38px; height: 4px; margin-left: -19px; background: var(--ink-3); }
-.modal-wrap.as-sheet .modal.dragging { animation: none; transition: none; }
+.modal-wrap.as-sheet .modal.dragging { transition: none; }
+.modal-wrap.as-sheet .modal.settled { animation: none; }
 .modal-wrap.as-sheet .modal.spring { transition: transform 260ms var(--ease-stamp); }
 .modal-wrap.as-sheet.out { animation: fade-out 220ms var(--ease-rule) both; }
 .modal-wrap.as-sheet.out .modal { animation: sheet-down 220ms var(--ease-rule) both; }
@@ -339,6 +340,7 @@ html { background-color: var(--paper); }
 @media (max-width: 760px) { .brief-item.lead { grid-template-columns: minmax(0, 1fr) 88px; } }
 .story-title { text-wrap: balance; }
 .topics .t { white-space: nowrap; }
+@media (max-width: 760px) { .topics .t { white-space: normal; } .story .pw-stamp { display: block; width: max-content; max-width: 100%; margin: 8px 0 0 auto; } html, body { overflow-x: clip; } }
 
 /* sheet grip: the drag handle owns the gesture */
 .sheet-grip { display: none; }
@@ -353,3 +355,4 @@ main :is(.story, .hit, tbody tr, .source-row):nth-child(n+13) { content-visibili
 .card.pinned { border-top: 3px solid var(--pencil-red); }
 .lead-hl { background-position: 0 100%; }
 :root[data-theme="dark"] .lead-hl { background-position: 0 100%; }
+.galley-scale { overflow: clip; overflow-clip-margin: 6px; }
