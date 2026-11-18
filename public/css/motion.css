@@ -153,3 +153,5 @@ html.doc-hidden * { animation-play-state: paused !important; }
   .nameplate.inking .np-ink, .nameplate.inking .np-roller, .nameplate.inking .np-word, .morgue > * { animation: none !important; }
   ::view-transition-old(page), ::view-transition-group(folio-mark) { animation-duration: 0s !important; }
 }
+/* a desk switch wipes the whole sheet: nothing is captured as its own layer */
+html.theme-wipe .page.current, html.theme-wipe .masthead, html.theme-wipe .folio-mark { view-transition-name: none; }
