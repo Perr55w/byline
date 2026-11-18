@@ -21,20 +21,20 @@ export function digestHtml(date) {
   const items = parse(b.items_json, []);
   const draft = b.draft_id ? get('SELECT id, title, format FROM drafts WHERE id = ?', b.draft_id) : null;
   const rows = items.map((it, i) => `
-    <tr><td style="padding:16px 0;border-top:1px solid #2a2440;vertical-align:top;font:600 13px monospace;color:#f5b544;width:34px">${String(i + 1).padStart(2, '0')}</td>
-    <td style="padding:16px 0;border-top:1px solid #2a2440">
-      <a href="${appUrl()}/#/story/${it.story_id}" style="font:600 18px Georgia,serif;color:#f4f0ff;text-decoration:none">${esc(it.title)}</a>
-      <p style="margin:6px 0;color:#d8d2ee;font:15px/1.5 Arial,sans-serif">${esc(it.summary)}</p>
-      <p style="margin:0;color:#9a93b5;font:12px/1.5 Arial,sans-serif">Score ${it.score}${it.qualifies ? ' · post-worthy' : ''} · ${it.domains.length} source(s) · ${esc((it.topics || []).join(', '))}</p>
+    <tr><td style="padding:16px 0;border-top:1px solid #D6CDBB;vertical-align:top;font:italic 700 18px Georgia,serif;color:#B3301A;width:34px">${String(i + 1).padStart(2, '0')}</td>
+    <td style="padding:16px 0;border-top:1px solid #D6CDBB">
+      <a href="${appUrl()}/#/story/${it.story_id}" style="font:600 18px Georgia,serif;color:#1C1A16;text-decoration:none">${esc(it.title)}</a>
+      <p style="margin:6px 0;color:#4A453C;font:15px/1.5 'Helvetica Neue',Arial,sans-serif">${esc(it.summary)}</p>
+      <p style="margin:0;color:#6B6457;font:12px/1.5 'Helvetica Neue',Arial,sans-serif">Score ${it.score}${it.qualifies ? ' · post-worthy' : ''} · ${it.domains.length} source(s) · ${esc((it.topics || []).join(', '))}</p>
     </td></tr>`).join('');
-  return `<!doctype html><html><body style="margin:0;background:#0b0912;padding:24px">
-  <table role="presentation" width="100%" style="max-width:640px;margin:0 auto;background:#13101d;border-radius:12px;padding:28px">
-    <tr><td colspan="2" style="font:11px monospace;letter-spacing:3px;color:#f5b544">BYLINE · ${esc(date)}</td></tr>
-    <tr><td colspan="2" style="padding:8px 0 4px;font:600 26px Georgia,serif;color:#f4f0ff">Today’s briefing</td></tr>
-    <tr><td colspan="2" style="padding-bottom:12px;font:16px/1.5 Georgia,serif;color:#d8d2ee">${esc(b.summary)} <span style="color:#9a93b5">≈ ${b.reading_minutes} min read.</span></td></tr>
+  return `<!doctype html><html><body style="margin:0;background:#F3EEE4;padding:24px">
+  <table role="presentation" width="100%" style="max-width:640px;margin:0 auto;background:#FBF8F2;border:1px solid #B9AD96;border-top:3px solid #1C1A16;padding:28px">
+    <tr><td colspan="2" style="font:700 11px 'Helvetica Neue',Arial,sans-serif;letter-spacing:3px;color:#B3301A">BYLINE · ${esc(date)}</td></tr>
+    <tr><td colspan="2" style="padding:8px 0 4px;font:600 26px Georgia,serif;color:#1C1A16">Today’s briefing</td></tr>
+    <tr><td colspan="2" style="padding-bottom:12px;font:16px/1.5 Georgia,serif;color:#4A453C">${esc(b.summary)} <span style="color:#6B6457">≈ ${b.reading_minutes} min read.</span></td></tr>
     ${rows}
-    ${draft ? `<tr><td colspan="2" style="padding-top:18px"><a href="${appUrl()}/#/draft/${draft.id}" style="display:inline-block;background:#9b7bff;color:#0b0912;padding:10px 16px;border-radius:8px;font:600 14px Arial,sans-serif;text-decoration:none">Review today’s ${esc(draft.format)} draft →</a></td></tr>` : ''}
-    <tr><td colspan="2" style="padding-top:22px;font:12px Arial,sans-serif;color:#6c6588">Nothing is posted without your approval in Byline.</td></tr>
+    ${draft ? `<tr><td colspan="2" style="padding-top:18px"><a href="${appUrl()}/#/draft/${draft.id}" style="display:inline-block;background:#1C1A16;color:#F3EEE4;padding:10px 16px;border-radius:0;font:600 14px 'Helvetica Neue',Arial,sans-serif;text-decoration:none">Review today’s ${esc(draft.format)} draft →</a></td></tr>` : ''}
+    <tr><td colspan="2" style="padding-top:22px;font:12px 'Helvetica Neue',Arial,sans-serif;color:#6B6457">Nothing is posted without your approval in Byline.</td></tr>
   </table></body></html>`;
 }
 

@@ -86,13 +86,29 @@ export function download(filename, data, type = 'text/plain') {
   setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 }
 
-/** Rasterize an SVG (markup or URL) to a PNG blob in the browser. */
+/** Embed the app's woff2 fonts into SVG markup so rasterized/exported images keep the real typefaces. */
+let fontFaces;
+async function fontFaceCss() {
+  if (fontFaces) return fontFaces;
+  const load = async (family, file, extra) => {
+    const buf = await (await fetch(`/fonts/${file}`)).arrayBuffer();
+    let bin = ''; const bytes = new Uint8Array(buf);
+    for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    return `@font-face{font-family:'${family}';src:url(data:font/woff2;base64,${btoa(bin)}) format('woff2');${extra}}`;
+  };
+  fontFaces = (await Promise.all([load('Newsreader', 'newsreader.woff2', 'font-weight:200 800;'), load('Newsreader', 'newsreader-italic.woff2', 'font-weight:200 800;font-style:italic;'),
+    load('Schibsted Grotesk', 'schibsted-grotesk.woff2', 'font-weight:400 900;'), load('Martian Mono', 'martian-mono.woff2', 'font-weight:100 800;font-stretch:75% 112.5%;')])).join('');
+  return fontFaces;
+}
+
+/** Rasterize an SVG (markup or URL) to a PNG blob in the browser, with fonts embedded. */
 export async function svgToPng(svgOrUrl, w = 1200, h = 1200) {
-  const svgText = svgOrUrl.trim().startsWith('<') ? svgOrUrl : await (await fetch(svgOrUrl)).text();
-  await document.fonts.ready;
+  let svgText = svgOrUrl.trim().startsWith('<') ? svgOrUrl : await (await fetch(svgOrUrl)).text();
+  if (!svgText.includes('@font-face')) svgText = svgText.replace(/<svg([^>]*)>/, `<svg$1><style>${await fontFaceCss()}</style>`);
   const img = new Image();
   img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgText);
   await img.decode();
+  await new Promise(r => setTimeout(r, 60)); // let embedded fonts settle before drawing
   const c = document.createElement('canvas');
   c.width = w; c.height = h;
   c.getContext('2d').drawImage(img, 0, 0, w, h);
@@ -121,3 +137,15 @@ export async function act(btn, fn, label) {
 }
 
 export const pct = (v) => Math.round((v || 0) * 100);
+
+/** Score numeral: integer + small decimal; --score drives the press-time count-up overlay. */
+export function scoreNum(v) {
+  const n = Number(v) || 0;
+  const [i, d] = n.toFixed(1).split('.');
+  return html`<b class="score-num" style="--score:${Number(i)}"><span class="int">${i}</span>${d !== '0' ? html`<span class="dec">.${d}</span>` : ''}</b>`;
+}
+
+/** Topics as run-in text ("AGENT ORCHESTRATION · EVALUATION"), not chips. */
+export const topicsLine = (topics = [], max = 3) => topics.length
+  ? html`<span class="topics">${topics.slice(0, max).map((t, k) => html`${k ? html`<i>·</i>` : ''}${t}`)}${topics.length > max ? html`<i>·</i>+${topics.length - max}` : ''}</span>` : '';
+

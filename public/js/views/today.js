@@ -1,5 +1,5 @@
 import { api } from '../api.js';
-import { html, on, act, toast, status, demoFlag, channelLabel, fmtDate, timeAgo, modal } from '../ui.js';
+import { html, on, act, toast, status, demoFlag, channelLabel, fmtDate, timeAgo, modal, scoreNum, topicsLine } from '../ui.js';
 
 export async function render(view) {
   const t = await api.get('/today');
@@ -22,49 +22,58 @@ export async function render(view) {
   </div>
 
   <div class="split">
-    <div class="stack reveal">
-      <section class="card accent">
+    <div class="stack">
+      <section class="card">
         <div class="row between">
-          <h3>The brief ${b && b.run_date !== t.date ? html`<span class="chip amber">from ${b.run_date}</span>` : ''}</h3>
+          <h3 style="flex:1">The brief ${b && b.run_date !== t.date ? html`<span class="chip amber">from ${b.run_date}</span>` : ''}</h3>
           ${b ? html`<span class="mono faint">≈ ${b.reading_minutes} min read · ${items.length} stories</span>` : ''}
         </div>
-        ${b ? html`<div class="row" style="margin:-2px 0 6px">
+        ${b ? html`<p class="brief-lead">${b.summary}</p>
+          <div class="row" style="margin:10px 0 4px">
             <button class="sm" data-act="listen">▶ Listen to the brief</button>
             <button class="sm ghost" data-act="digest">Email digest preview</button>
             <button class="sm ghost" data-act="deliver">Send email + push now</button>
-          </div>` : ''}
-        ${b ? html`<p class="brief-lead">${b.summary}</p>` : html`<div class="empty">No brief yet. Run today’s workflow, or load the demo data to try the full flow without credentials.</div>`}
+          </div>` : html`<div class="empty">No brief yet. Run today’s workflow, or load the demo data to try the full flow without credentials.</div>`}
         ${b?.quiet ? html`
-          <div class="card flat" style="margin-top:14px;border-color:rgba(245,181,68,.4)">
+          <div class="flag" style="margin-top:14px;border-left-color:var(--st-review);background:var(--st-review-bg)">
             <strong>Quiet day.</strong> <span class="muted">No story met your publishing threshold (${t.threshold}). Nothing will be drafted automatically.</span>
             ${t.evergreen_candidates.length ? html`<div class="stack" style="margin-top:10px">
-              <div class="mono faint">Prepare an evergreen draft from a saved topic:</div>
+              <div class="faint small">Prepare an evergreen draft from a saved topic:</div>
               ${t.evergreen_candidates.map(c => html`<div class="row between"><span>${c.title} <span class="chip">${c.collection}</span></span><button class="sm" data-act="evergreen" data-id="${c.id}">Draft evergreen</button></div>`)}
             </div>` : html`<p class="muted small" style="margin:8px 0 0">Save stories to a collection to unlock evergreen drafts on quiet days.</p>`}
           </div>` : ''}
-        ${items.map((it, i) => html`
-          <div class="brief-item">
-            <div class="brief-num">${String(i + 1).padStart(2, '0')}</div>
+        ${items.length ? html`<div>
+          ${[items[0]].map(it => html`
+          <article class="brief-item lead">
             <div>
-              <a href="#/story/${it.story_id}" class="story-title" style="color:var(--text)">${it.title}</a> ${demoFlag(it.is_demo)}
-              <p style="margin:6px 0 4px">${it.summary}</p>
+              <a href="#/story/${it.story_id}" class="story-title" style="color:var(--ink)"><span class="lead-hl">${it.title}</span></a> ${demoFlag(it.is_demo)}
+              <p style="margin:10px 0 6px;max-width:62ch">${it.summary}</p>
+              <div class="row" style="gap:6px 14px">${topicsLine(it.topics)}<span class="when">${it.domains.length} source${it.domains.length > 1 ? 's' : ''} · ${it.domains.slice(0, 3).join(' · ')}</span>${it.qualifies ? html`<span class="chip amber">post-worthy</span>` : ''}</div>
               <div class="story-why">${it.explanation}</div>
-              <div class="row" style="margin-top:8px">
-                <span class="chip ${it.qualifies ? 'amber' : ''}">score ${it.score}${it.qualifies ? ' · post-worthy' : ''}</span>
-                ${(it.topics || []).map(x => html`<span class="chip violet">${x}</span>`)}
-                <span class="chip">${it.domains.length} source${it.domains.length > 1 ? 's' : ''}</span>
-              </div>
             </div>
-          </div>`)}
+            <div class="score ${it.qualifies ? 'hot' : ''}">${scoreNum(it.score)}<small>Score</small></div>
+          </article>`)}
+        </div>` : ''}
+        ${items.length > 1 ? html`<div class="fold-label">Below the fold</div><div class="below-fold">
+          ${items.slice(1).map(it => html`
+          <article class="brief-item">
+            <div>
+              <a href="#/story/${it.story_id}" class="story-title" style="color:var(--ink);font-size:var(--fs-md)">${it.title}</a> ${demoFlag(it.is_demo)}
+              <div style="margin-top:6px">${topicsLine(it.topics, 2)}</div>
+              <div class="when" style="margin-top:4px">${it.domains.length} source${it.domains.length > 1 ? 's' : ''}${it.qualifies ? ' · post-worthy' : ''}</div>
+            </div>
+            <div class="score">${scoreNum(it.score)}</div>
+          </article>`)}
+        </div>` : ''}
       </section>
     </div>
 
-    <div class="stack reveal">
-      <section class="card">
+    <div class="stack">
+      <section class="card accent">
         <h3>Suggested LinkedIn draft</h3>
         ${t.draft ? html`
           <a href="#/draft/${t.draft.id}" style="color:inherit">
-            ${t.draft.image_file ? html`<img src="/media/${t.draft.image_file}" alt="" style="width:100%;border-radius:8px;margin-bottom:10px">` : ''}
+            ${t.draft.image_file ? html`<img src="/media/${t.draft.image_file}" alt="" style="width:100%;border:1px solid var(--rule-strong);margin-bottom:10px">` : ''}
             <div class="story-title">${t.draft.title}</div>
           </a>
           <div class="row" style="margin-top:8px">${status(t.draft.status)}<span class="chip">${channelLabel(t.draft.channel, t.draft.format)}</span></div>
@@ -109,7 +118,7 @@ export async function render(view) {
     }
     if (a === 'digest') await act(btn, async () => {
       const r = await api.get(`/briefs/${b.run_date}/digest`);
-      const m = modal(String(html`<h2>Email digest preview</h2><iframe sandbox="" style="width:100%;height:60vh;border:1px solid var(--line);border-radius:8px;background:#0b0912"></iframe><div class="row" style="justify-content:flex-end;margin-top:12px"><button data-close>Close</button></div>`), { wide: true });
+      const m = modal(String(html`<h2>Email digest preview</h2><iframe sandbox="" style="width:100%;height:60vh;border:1px solid var(--line);background:#F3EEE4"></iframe><div class="row" style="justify-content:flex-end;margin-top:12px"><button data-close>Close</button></div>`), { wide: true });
       m.el.querySelector('iframe').srcdoc = r.html;
     });
     if (a === 'deliver') await act(btn, async () => {

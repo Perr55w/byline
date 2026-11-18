@@ -38,25 +38,31 @@ function wrap(text, max) {
   return out;
 }
 export function slideSvg(text, i, n) {
+  // Proof Desk carousel slide (1080×1350). Fonts are embedded at PNG export time (ui.svgToPng).
+  const C = { paper: '#F3EEE4', ink: '#1C1A16', ink2: '#4A453C', ink3: '#6B6457', red: '#B3301A' };
   const [head, ...rest] = String(text).split('\n');
   const body = rest.join(' ').trim();
-  const headSize = head.length > 60 ? 64 : head.length > 36 ? 78 : 96;
-  const headLines = wrap(head, Math.floor(1700 / headSize));
-  const bodyLines = wrap(body, 34);
+  const headSize = head.length > 60 ? 70 : head.length > 36 ? 86 : 104;
+  const headLines = wrap(head, Math.floor(1560 / headSize));
+  const bodyLines = wrap(body, 32);
   const bodySize = bodyLines.length > 6 ? 40 : 46;
-  let y = body ? 360 : 675 - (headLines.length * headSize * 1.1) / 2 + headSize;
-  const t = headLines.map(l => { const s = `<text x="90" y="${y}" font-family="Fraunces, Georgia, serif" font-weight="600" font-size="${headSize}" fill="#f4f0ff">${esc(l)}</text>`; y += headSize * 1.12; return s; }).join('');
-  y += 40;
-  const b = bodyLines.map(l => { const s = `<text x="90" y="${y}" font-family="Hanken Grotesk, sans-serif" font-size="${bodySize}" fill="#d8d2ee">${esc(l)}</text>`; y += bodySize * 1.4; return s; }).join('');
+  let y = body ? 400 : 675 - (headLines.length * headSize * 1.02) / 2 + headSize;
+  const t = headLines.map(l => { const r = `<text x="90" y="${y}" font-family="'Newsreader', Georgia, serif" font-weight="560" font-size="${headSize}" letter-spacing="-2" fill="${C.ink}">${esc(l)}</text>`; y += headSize * 1.02; return r; }).join('');
+  y += 46;
+  const b = bodyLines.map(l => { const r = `<text x="90" y="${y}" font-family="'Schibsted Grotesk', Arial, sans-serif" font-size="${bodySize}" fill="${C.ink2}">${esc(l)}</text>`; y += bodySize * 1.4; return r; }).join('');
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1350" viewBox="0 0 1080 1350">
-<defs><radialGradient id="g${i}" cx="85%" cy="5%" r="95%"><stop offset="0" stop-color="#3b2a72"/><stop offset=".6" stop-color="#151226"/><stop offset="1" stop-color="#0b0a12"/></radialGradient></defs>
-<rect width="1080" height="1350" fill="url(#g${i})"/><rect x="90" y="140" width="16" height="16" fill="#f5b544"/>
-<text x="122" y="156" font-family="IBM Plex Mono, monospace" font-size="28" letter-spacing="4" fill="#c9b8ff">${i + 1} / ${n}</text>${t}${b}
-<text x="90" y="1250" font-family="IBM Plex Mono, monospace" font-size="26" fill="#8f89aa">${i === n - 1 ? 'Sources in caption' : 'Swipe →'}</text></svg>`;
+<defs><filter id="gr${i}"><feTurbulence type="fractalNoise" baseFrequency=".9" numOctaves="2" stitchTiles="stitch"/><feColorMatrix values="0 0 0 0 .11 0 0 0 0 .10 0 0 0 0 .09 0 0 0 .5 -.2"/></filter></defs>
+<rect width="1080" height="1350" fill="${C.paper}"/><rect width="1080" height="1350" filter="url(#gr${i})" opacity=".5"/>
+<line x1="90" y1="130" x2="990" y2="130" stroke="${C.ink}" stroke-width="1.5"/>
+<rect x="90" y="160" width="34" height="7" fill="${C.red}"/>
+<text x="140" y="170" font-family="'Martian Mono', monospace" font-size="26" fill="${C.ink3}">${String(i + 1).padStart(2, '0')} / ${String(n).padStart(2, '0')}</text>${t}${b}
+<line x1="90" y1="1196" x2="990" y2="1196" stroke="${C.ink}" stroke-width="4"/><line x1="90" y1="1204" x2="990" y2="1204" stroke="${C.ink}" stroke-width="1.5"/>
+<text x="90" y="1262" font-family="'Schibsted Grotesk', Arial, sans-serif" font-weight="700" font-size="26" letter-spacing="3" fill="${C.ink2}">${i === n - 1 ? 'SOURCES IN CAPTION' : 'SWIPE →'}</text>
+<text x="990" y="1264" text-anchor="end" font-family="'Newsreader', Georgia, serif" font-style="italic" font-weight="800" font-size="40" fill="${C.ink}">Byline</text></svg>`;
   const issues = [];
   if (text.length > 170) issues.push(`${text.length} chars — aim for under 170 per slide`);
   if (bodyLines.length > 8) issues.push('Too many body lines; split the slide');
-  if (y > 1200) issues.push('Text runs into the footer');
+  if (y > 1170) issues.push('Text runs into the footer');
   return { svg, issues };
 }
 
@@ -165,7 +171,7 @@ async function editor(el, id) {
       const rendered = slides.map((s, i) => ({ s, ...slideSvg(s.text, i, slides.length) }));
       return html`<div class="slides">${rendered.map((r, i) => html`<div><div class="slide-frame">${raw(r.svg)}</div>
         <div class="small ${r.issues.length ? '' : 'faint'}" style="margin-top:4px;color:${r.issues.length ? 'var(--amber)' : ''}">${r.issues.length ? r.issues.join('; ') : `${r.s.label}: legible`}</div></div>`)}</div>
-        <div class="hr"></div><div class="mono faint">CAPTION</div><pre class="code" style="max-height:160px">${d.sections.find(s => s.kind === 'caption')?.text || ''}</pre>`;
+        <div class="hr"></div><div class="label">CAPTION</div><pre class="code" style="max-height:160px">${d.sections.find(s => s.kind === 'caption')?.text || ''}</pre>`;
     }
     if (d.channel === 'video') {
       const scenes = d.sections.filter(s => s.kind === 'scene');

@@ -101,7 +101,7 @@ export async function render(view) {
           <label class="field">Avoid<input data-f="wp_avoid" value="${wp.avoid || ''}" placeholder="hype, emojis, hashtag spam"></label>
         </div>
         <datalist id="depth-list"><option value="accessible"><option value="analytical"><option value="technical"><option value="deep-dive"></datalist>
-        <div class="mono faint small" style="margin:14px 0 6px">WRITING SAMPLES (${wp.samples.length})</div>
+        <div class="label" style="margin:14px 0 6px">WRITING SAMPLES (${wp.samples.length})</div>
         <p class="muted small" style="margin-top:0">Paste posts you’ve written so drafts match your voice. Samples guide style only — Byline never invents experiences or opinions.</p>
         <div class="stack">${wp.samples.map((x, i) => html`<div class="row" style="align-items:flex-start;flex-wrap:nowrap">
           <textarea data-sample="${i}" rows="3" style="flex:1">${x}</textarea><button class="sm danger" type="button" data-act="rm-sample" data-i="${i}">Remove</button></div>`)}</div>

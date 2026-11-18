@@ -87,13 +87,13 @@ function renderVideo(d, { orientation = 'vertical', burnCaptions = true } = {}) 
     const args = ['-y', '-hide_banner', '-loglevel', 'error'];
     if (media && /^video\//.test(media.mime)) args.push('-t', String(dur), '-i', path.join(MEDIA_DIR, media.filename));
     else if (media && /^image\//.test(media.mime)) args.push('-loop', '1', '-t', String(dur), '-i', path.join(MEDIA_DIR, media.filename));
-    else args.push('-f', 'lavfi', '-t', String(dur), '-i', `color=c=0x14121f:s=${W}x${H}:r=30`);
+    else args.push('-f', 'lavfi', '-t', String(dur), '-i', `color=c=0xF3EEE4:s=${W}x${H}:r=30`);
     args.push('-f', 'lavfi', '-t', String(dur), '-i', 'anullsrc=r=44100:cl=stereo');
-    let vf = `[0:v]scale=${W}:${H}:force_original_aspect_ratio=decrease,pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2:color=0x0d0b16,setsar=1,fps=30,format=yuv420p`;
+    let vf = `[0:v]scale=${W}:${H}:force_original_aspect_ratio=decrease,pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2:color=0x1C1A16,setsar=1,fps=30,format=yuv420p`;
     if (font) {
       if (sc.onscreen) {
         const f = path.join(work, `on${i}.txt`); fs.writeFileSync(f, wrapText(sc.onscreen, orientation === 'landscape' ? 32 : 18));
-        vf += `,drawtext=fontfile='${ffEsc(font)}':textfile='${ffEsc(f)}':fontcolor=white:fontsize=${orientation === 'landscape' ? 72 : 84}:line_spacing=14:box=1:boxcolor=0x9b7bff@0.85:boxborderw=28:x=(w-text_w)/2:y=h*0.18`;
+        vf += `,drawtext=fontfile='${ffEsc(font)}':textfile='${ffEsc(f)}':fontcolor=0xF3EEE4:fontsize=${orientation === 'landscape' ? 72 : 84}:line_spacing=14:box=1:boxcolor=0x1C1A16@0.92:boxborderw=28:x=(w-text_w)/2:y=h*0.18`;
       }
       if (burnCaptions && sc.text) {
         const f = path.join(work, `cap${i}.txt`); fs.writeFileSync(f, wrapText(sc.text, orientation === 'landscape' ? 60 : 30));

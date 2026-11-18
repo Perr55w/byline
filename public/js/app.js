@@ -20,14 +20,15 @@ export async function refreshStatus() {
   try {
     state.status = await api.get('/status');
     const s = state.status;
-    const ai = s.provider.active === 'claude' ? html`<span class="dot ok"></span>Claude (${s.provider.model})` : s.provider.active === 'ollama' ? html`<span class="dot ok"></span>Ollama (${s.provider.model})` : html`<span class="dot warn"></span>Template drafting engine`;
+    const engine = s.provider.active === 'claude' ? `Claude` : s.provider.active === 'ollama' ? `Ollama` : 'Template engine';
     document.getElementById('rail-foot').innerHTML = String(html`
-      <div>${ai}</div>
-      <div><span class="dot ${s.publishers.linkedin.available ? 'ok' : ''}"></span>LinkedIn ${s.publishers.linkedin.available ? 'connected' : 'manual export'}</div>
-      <div><span class="dot ${s.connectors.x.ready ? 'ok' : ''}"></span>X ${s.connectors.x.ready ? 'connected' : 'not configured'}</div>
-      <div style="margin-top:8px">${s.counts.stories} stories · ${s.counts.sources} sources</div>
-      ${s.counts.demo_articles ? html`<div style="margin-top:6px"><span class="demo-flag">DEMO DATA LOADED</span></div>` : ''}
-      <div style="margin-top:6px">${s.today} · ${s.timezone}</div>`);
+      <span><span class="dot ${s.provider.active === 'local' ? 'warn' : 'ok'}"></span><b>${engine}</b></span>
+      <span>LinkedIn: <b>${s.publishers.linkedin.available ? 'connected' : 'manual'}</b></span>
+      <span><b>${s.counts.stories}</b> stories · <b>${s.counts.sources}</b> sources</span>
+      ${s.counts.demo_articles ? html`<span class="demo-flag" style="color:#E0B055">Demo data</span>` : ''}`);
+    const d = new Date(`${s.today}T12:00:00`);
+    const doy = Math.round((d - new Date(d.getFullYear(), 0, 0)) / 864e5);
+    document.getElementById('dateline').textContent = `Vol. 1 · No. ${doy} · ${d.toLocaleDateString('en-US', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' }).replace(/,/g, '')}`;
     const badge = document.querySelector('[data-nav="studio"] .badge');
     if (badge) badge.textContent = s.counts.awaiting || '';
     if (badge) badge.style.display = s.counts.awaiting ? '' : 'none';
@@ -35,8 +36,27 @@ export async function refreshStatus() {
 }
 
 function renderNav(active) {
-  document.getElementById('nav').innerHTML = NAV.map(([group, items]) => `<div class="nav-group">${group}</div>` + items.map(([k, label]) =>
-    `<a href="#/${k}" data-nav="${k}" class="${k === active ? 'active' : ''}">${label}${k === 'studio' ? '<span class="badge" style="display:none"></span>' : ''}</a>`).join('')).join('');
+  document.getElementById('nav').innerHTML = NAV.map(([group, items]) => `<span class="folio-group">${group}</span>` + items.map(([k, label]) =>
+    `<a href="#/${k}" data-nav="${k}" class="${k === active ? 'active' : ''}"${k === active ? ' aria-current="page"' : ''}>${label}${k === 'studio' ? '<span class="badge" style="display:none"></span>' : ''}</a>`).join('')).join('');
+  document.querySelector('#nav a.active')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+}
+
+// Theme: Proof Desk (light) / Night desk (dark); follows the system until chosen.
+function themeNow() { return document.documentElement.dataset.theme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'); }
+function paintToggle() { document.getElementById('theme-toggle').textContent = themeNow() === 'dark' ? 'Proof desk' : 'Night desk'; }
+document.getElementById('theme-toggle').addEventListener('click', () => {
+  const next = themeNow() === 'dark' ? 'light' : 'dark';
+  document.documentElement.dataset.theme = next;
+  try { localStorage.setItem('byline-theme', next); } catch (e) { /* storage unavailable */ }
+  paintToggle();
+});
+paintToggle();
+
+// The full "going to press" hero plays on the first Today render of the session; every route gets the compressed grammar.
+function heroDue(key) {
+  if (key !== 'today') return false;
+  try { if (sessionStorage.getItem('byline-hero')) return false; sessionStorage.setItem('byline-hero', '1'); } catch (e) { return false; }
+  return true;
 }
 
 const ALIAS = { story: 'feed', draft: 'studio', person: 'people' };
@@ -46,7 +66,10 @@ async function route() {
   const key = ROUTES[name] ? name : 'today';
   renderNav(ALIAS[key] || key);
   const el = document.getElementById('view');
-  el.innerHTML = '<div class="muted" style="padding:40px 0"><span class="spinner"></span> Loading…</div>';
+  const bar = document.getElementById('pressbar');
+  const slow = setTimeout(() => { bar.classList.add('on'); el.innerHTML = '<div class="loading">Setting type…</div>'; }, 200);
+  el.classList.remove('press', 'hero');
+  el.dataset.route = key;
   try {
     const mod = await import(ROUTES[key]);
     await mod.render(el, { name: key, params });
@@ -54,6 +77,13 @@ async function route() {
     console.error(e);
     el.innerHTML = String(html`<div class="card"><h2>Something went wrong</h2><p class="muted">${e.message}</p></div>`);
   }
+  clearTimeout(slow);
+  bar.classList.remove('on');
+  void el.offsetWidth; // restart animations for this route only
+  el.classList.add('press');
+  if (heroDue(key)) el.classList.add('hero');
+  clearTimeout(route.settle);
+  route.settle = setTimeout(() => el.classList.remove('press', 'hero'), 1700); // in-view re-renders never replay the entrance
   refreshStatus();
 }
 

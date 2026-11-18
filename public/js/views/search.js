@@ -49,7 +49,7 @@ export async function render(view) {
     <div data-results class="reveal"><div class="muted"><span class="spinner"></span> Searching…</div></div>
     <form class="card stack" data-form="search">
       <label class="field">Text<input name="q" value="${q.q}" placeholder="e.g. evaluation harness" autofocus></label>
-      <div><div class="mono faint small" style="margin-bottom:6px">INCLUDE</div>
+      <div><div class="label" style="margin-bottom:6px">INCLUDE</div>
         <div class="row">${TYPES.map(([k, l]) => html`<label class="check"><input type="checkbox" name="type" value="${k}" ${q.type.includes(k) ? 'checked' : ''}> ${l}</label>`)}</div></div>
       <label class="field">Topic${sel('topic', [['', 'Any topic'], ...settings.priorities.map(p => [p.topic, p.topic])], q.topic)}</label>
       <label class="field">Company${sel('company', [['', 'Any company'], ...employers.map(e => [e.name, e.name])], q.company)}</label>

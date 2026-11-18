@@ -4,11 +4,12 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Byline — briefing & media studio</title>
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%230b0912'/><text x='7' y='24' font-family='Georgia' font-weight='700' font-size='22' fill='%239b7bff'>B</text></svg>">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%231C1A16'/><text x='8' y='24' font-family='Georgia' font-style='italic' font-weight='700' font-size='22' fill='%23F3EEE4'>B</text></svg>">
   <link rel="manifest" href="/manifest.webmanifest">
-  <meta name="theme-color" content="#0b0912">
+  <meta name="theme-color" content="#1C1A16">
   <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
   <meta name="apple-mobile-web-app-capable" content="yes">
+  <script>try { const t = localStorage.getItem('byline-theme'); if (t) document.documentElement.dataset.theme = t; } catch (e) {}</script>
   <link rel="stylesheet" href="/styles.css">
   <link rel="stylesheet" href="/css/career.css">
   <link rel="stylesheet" href="/css/people.css">
@@ -16,12 +17,16 @@
 </head>
 <body>
   <div class="shell">
-    <aside class="rail">
-      <div class="mast">By<em>line</em></div>
-      <div class="mast-sub">Briefing · Studio · Career</div>
-      <nav class="nav" id="nav"></nav>
-      <div class="rail-foot" id="rail-foot"></div>
-    </aside>
+    <header class="masthead">
+      <div class="mast-row">
+        <a class="nameplate" href="#/today" aria-label="Byline — Today">Byline</a>
+        <span class="dateline" id="dateline"></span>
+        <div class="mast-status" id="rail-foot"></div>
+        <button class="theme-toggle" id="theme-toggle" type="button"></button>
+      </div>
+      <nav class="folios" id="nav" aria-label="Sections"></nav>
+      <div class="pressbar" id="pressbar" aria-hidden="true"></div>
+    </header>
     <main id="view"></main>
   </div>
   <div class="toasts" id="toasts"></div>

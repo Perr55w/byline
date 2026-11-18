@@ -4,6 +4,29 @@ import path from 'node:path';
 import { MEDIA_DIR, run, now } from './db.js';
 import { numericFacts, truncate } from './text.js';
 
+// Proof Desk palette for generated images (matches the app tokens).
+const C = { paper: '#F3EEE4', sheet: '#FBF8F2', ink: '#1C1A16', ink2: '#4A453C', ink3: '#6B6457', rule: '#D6CDBB', ruleStrong: '#B9AD96', red: '#B3301A', blue: '#1F5F9E',
+  ev: { announcement: '#855500', reporting: '#1F5F9E', research: '#2E6A38', commentary: '#8A3560' } };
+const F = { display: "'Newsreader', Georgia, serif", body: "'Schibsted Grotesk', 'Helvetica Neue', Arial, sans-serif", data: "'Martian Mono', Menlo, monospace" };
+
+// Images are shown via <img> and exported as PNG, where web fonts don't load, so the woff2 files are embedded.
+let fontCss = null;
+export function embeddedFonts() {
+  if (fontCss !== null) return fontCss;
+  const dir = path.resolve('public/fonts');
+  const face = (family, file, extra) => {
+    try { return `@font-face{font-family:'${family}';src:url(data:font/woff2;base64,${fs.readFileSync(path.join(dir, file)).toString('base64')}) format('woff2');${extra}}`; }
+    catch { return ''; }
+  };
+  fontCss = face('Newsreader', 'newsreader.woff2', 'font-weight:200 800;') + face('Schibsted Grotesk', 'schibsted-grotesk.woff2', 'font-weight:400 900;') + face('Martian Mono', 'martian-mono.woff2', 'font-weight:100 800;font-stretch:75% 112.5%;');
+  return fontCss;
+}
+const head = (w, h) => `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}"><style>${embeddedFonts()}</style>
+<defs><filter id="grain"><feTurbulence type="fractalNoise" baseFrequency=".9" numOctaves="2" stitchTiles="stitch"/><feColorMatrix values="0 0 0 0 .11 0 0 0 0 .10 0 0 0 0 .09 0 0 0 .5 -.2"/></filter></defs>
+<rect width="100%" height="100%" fill="${C.paper}"/><rect width="100%" height="100%" filter="url(#grain)" opacity=".5"/>`;
+const nameplate = (w, h) => `<line x1="72" y1="${h - 118}" x2="${w - 72}" y2="${h - 118}" stroke="${C.ink}" stroke-width="3"/><line x1="72" y1="${h - 112}" x2="${w - 72}" y2="${h - 112}" stroke="${C.ink}" stroke-width="1"/>
+<text x="${w - 72}" y="${h - 62}" text-anchor="end" font-family="${F.display}" font-style="italic" font-weight="800" font-size="34" fill="${C.ink}">Byline</text>`;
+
 const esc = (s = '') => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
 function wrap(text, max) {
@@ -16,18 +39,16 @@ function wrap(text, max) {
 }
 
 export function cardSvg({ kicker, title, footer, w = 1200, h = 1200 }) {
-  const lines = wrap(title, w > h ? 34 : 22).slice(0, 6);
-  const fs0 = w > h ? 64 : 76;
-  const startY = h / 2 - (lines.length * fs0 * 1.15) / 2 + fs0 * 0.5;
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
-<defs><radialGradient id="g" cx="80%" cy="10%" r="90%"><stop offset="0" stop-color="#3b2a72"/><stop offset="0.55" stop-color="#151226"/><stop offset="1" stop-color="#0b0a12"/></radialGradient>
-<pattern id="p" width="28" height="28" patternUnits="userSpaceOnUse"><path d="M28 0H0V28" fill="none" stroke="#ffffff" stroke-opacity="0.04"/></pattern></defs>
-<rect width="100%" height="100%" fill="url(#g)"/><rect width="100%" height="100%" fill="url(#p)"/>
-<rect x="72" y="86" width="14" height="14" fill="#f5b544"/>
-<text x="100" y="100" font-family="IBM Plex Mono, DejaVu Sans Mono, monospace" font-size="26" letter-spacing="4" fill="#c9b8ff">${esc((kicker || '').toUpperCase())}</text>
-${lines.map((l, i) => `<text x="72" y="${startY + i * fs0 * 1.15}" font-family="Fraunces, Georgia, DejaVu Serif, serif" font-weight="600" font-size="${fs0}" fill="#f4f0ff">${esc(l)}</text>`).join('\n')}
-<line x1="72" y1="${h - 130}" x2="${w - 72}" y2="${h - 130}" stroke="#9b7bff" stroke-opacity="0.5"/>
-<text x="72" y="${h - 84}" font-family="IBM Plex Mono, DejaVu Sans Mono, monospace" font-size="22" fill="#a8a2c4">${esc(truncate(footer || '', 90))}</text>
+  const lines = wrap(title, w > h ? 30 : 20).slice(0, 6);
+  const fs0 = w > h ? 72 : 84;
+  const startY = h / 2 - (lines.length * fs0 * 1.04) / 2 + fs0 * 0.6;
+  return `${head(w, h)}
+<line x1="72" y1="96" x2="${w - 72}" y2="96" stroke="${C.ink}" stroke-width="1"/>
+<rect x="72" y="120" width="28" height="6" fill="${C.red}"/>
+<text x="114" y="128" font-family="${F.body}" font-weight="800" font-size="24" letter-spacing="4" fill="${C.ink2}">${esc((kicker || '').toUpperCase())}</text>
+${lines.map((l, i) => `<text x="72" y="${startY + i * fs0 * 1.04}" font-family="${F.display}" font-weight="560" font-size="${fs0}" letter-spacing="-1.5" fill="${C.ink}">${esc(l)}</text>`).join('\n')}
+<text x="72" y="${h - 62}" font-family="${F.data}" font-size="20" fill="${C.ink3}">${esc(truncate(footer || '', 70).toUpperCase())}</text>
+${nameplate(w, h)}
 </svg>`;
 }
 
@@ -52,20 +73,24 @@ export function chartFromClaims(claims, articles = []) {
 
 export function chartSvg({ title, points, source, w = 1200, h = 1200 }) {
   const max = Math.max(...points.map(p => p.value));
-  const barH = 92, gap = 70, top = 330;
+  const barH = 64, gap = 96, top = 380, scaleW = w - 300;
+  const ticks = [0, .25, .5, .75, 1].map(t => `<line x1="${72 + t * scaleW}" y1="${top - 30}" x2="${72 + t * scaleW}" y2="${top + points.length * (barH + gap) - gap + 10}" stroke="${C.rule}" stroke-width="1"/><text x="${72 + t * scaleW}" y="${top - 40}" text-anchor="middle" font-family="${F.data}" font-size="16" fill="${C.ink3}">${Math.round(max * t)}</text>`).join('');
   const bars = points.map((p, i) => {
-    const bw = Math.max(8, (p.value / max) * (w - 200));
+    const bw = Math.max(8, (p.value / max) * scaleW);
     const y = top + i * (barH + gap);
-    return `<text x="72" y="${y - 16}" font-family="Hanken Grotesk, DejaVu Sans, sans-serif" font-size="28" fill="#d8d2ee">${esc(p.label)}</text>
-<rect x="72" y="${y}" width="${bw}" height="${barH}" rx="6" fill="${i === 0 ? '#9b7bff' : '#5b4a9e'}"/>
-<text x="${72 + bw + 16}" y="${y + barH / 2 + 12}" font-family="IBM Plex Mono, DejaVu Sans Mono, monospace" font-size="34" fill="#f4f0ff">${p.value}${p.unit === '%' ? '%' : ' ' + esc(p.unit)}</text>`;
+    return `<text x="72" y="${y - 14}" font-family="${F.body}" font-weight="500" font-size="26" fill="${C.ink2}">${esc(p.label)}</text>
+<rect x="72" y="${y}" width="${bw}" height="${barH}" fill="${i === 0 ? C.red : C.ink}"/>
+<text x="${72 + bw + 18}" y="${y + barH / 2 + 16}" font-family="${F.data}" font-weight="700" font-stretch="75%" font-size="46" fill="${C.ink}">${p.value}${p.unit === '%' ? '%' : ' ' + esc(p.unit)}</text>`;
   }).join('\n');
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
-<rect width="100%" height="100%" fill="#0d0b16"/>
-<text x="72" y="120" font-family="IBM Plex Mono, DejaVu Sans Mono, monospace" font-size="24" letter-spacing="4" fill="#f5b544">BY THE NUMBERS</text>
-${wrap(title, 36).slice(0, 2).map((l, i) => `<text x="72" y="${190 + i * 62}" font-family="Fraunces, Georgia, serif" font-weight="600" font-size="54" fill="#f4f0ff">${esc(l)}</text>`).join('\n')}
+  return `${head(w, h)}
+<line x1="72" y1="96" x2="${w - 72}" y2="96" stroke="${C.ink}" stroke-width="1"/>
+<rect x="72" y="120" width="28" height="6" fill="${C.red}"/>
+<text x="114" y="128" font-family="${F.body}" font-weight="800" font-size="24" letter-spacing="4" fill="${C.ink2}">BY THE NUMBERS</text>
+${wrap(title, 34).slice(0, 2).map((l, i) => `<text x="72" y="${210 + i * 64}" font-family="${F.display}" font-weight="600" font-size="56" letter-spacing="-1" fill="${C.ink}">${esc(l)}</text>`).join('\n')}
+${ticks}
 ${bars}
-<text x="72" y="${h - 70}" font-family="IBM Plex Mono, DejaVu Sans Mono, monospace" font-size="20" fill="#8f89aa">Values as stated in each source · ${esc(truncate(source || '', 60))}</text>
+<text x="72" y="${h - 62}" font-family="${F.data}" font-size="18" fill="${C.ink3}">VALUES AS STATED IN EACH SOURCE · ${esc(truncate(source || '', 40).toUpperCase())}</text>
+${nameplate(w, h)}
 </svg>`;
 }
 
@@ -110,21 +135,22 @@ export function diagramSvg({ story, claims = [], articles = [], w = 1200, h = 12
     ['WHAT OTHERS FOUND', truncate(ind?.text || 'No independent measurement yet', 80)],
     ['WHAT TO TEST', 'Narrow task · baseline · one outcome metric']
   ];
-  const boxH = 190, gap = 62, top = 190, x = 110, bw = w - 220;
-  const colors = ['#9b7bff', '#7cc4ff', '#6fd3a5', '#f5b544'];
+  const boxH = 176, gap = 54, top = 200, x = 100, bw = w - 200;
+  const marks = [C.ink, C.ev.announcement, C.ev.reporting, C.red];
   const parts = steps.map(([label, text], i) => {
     const y = top + i * (boxH + gap);
-    const lines = wrap(text, 46).slice(0, 3);
-    return `<rect x="${x}" y="${y}" width="${bw}" height="${boxH}" rx="18" fill="#161226" stroke="${colors[i]}" stroke-width="3"/>
-<circle cx="${x + 54}" cy="${y + 54}" r="24" fill="${colors[i]}"/><text x="${x + 54}" y="${y + 63}" text-anchor="middle" font-family="IBM Plex Mono, DejaVu Sans Mono, monospace" font-size="24" font-weight="600" fill="#0b0912">${i + 1}</text>
-<text x="${x + 96}" y="${y + 63}" font-family="IBM Plex Mono, DejaVu Sans Mono, monospace" font-size="22" letter-spacing="3" fill="${colors[i]}">${label}</text>
-${lines.map((l, k) => `<text x="${x + 40}" y="${y + 112 + k * 36}" font-family="Hanken Grotesk, DejaVu Sans, sans-serif" font-size="30" fill="#ece8f7">${esc(l)}</text>`).join('')}
-${i < steps.length - 1 ? `<path d="M${w / 2} ${y + boxH + 8} L${w / 2} ${y + boxH + gap - 12}" stroke="#4a3f73" stroke-width="4"/><path d="M${w / 2 - 12} ${y + boxH + gap - 24} L${w / 2} ${y + boxH + gap - 8} L${w / 2 + 12} ${y + boxH + gap - 24}" fill="none" stroke="#4a3f73" stroke-width="4"/>` : ''}`;
+    const lines = wrap(text, 52).slice(0, 3);
+    return `<rect x="${x + 4}" y="${y + 4}" width="${bw}" height="${boxH}" fill="${C.rule}"/><rect x="${x}" y="${y}" width="${bw}" height="${boxH}" fill="${C.sheet}" stroke="${C.ruleStrong}" stroke-width="1.5"/>
+<rect x="${x}" y="${y}" width="6" height="${boxH}" fill="${marks[i]}"/>
+<text x="${x + 34}" y="${y + 52}" font-family="${F.display}" font-style="italic" font-weight="700" font-size="40" fill="${marks[i]}">${i + 1}.</text>
+<text x="${x + 90}" y="${y + 48}" font-family="${F.body}" font-weight="800" font-size="21" letter-spacing="3" fill="${C.ink2}">${label}</text>
+${lines.map((l, k) => `<text x="${x + 90}" y="${y + 92 + k * 34}" font-family="${F.display}" font-size="28" fill="${C.ink}">${esc(l)}</text>`).join('')}
+${i < steps.length - 1 ? `<path d="M${x + 52} ${y + boxH + 6} L${x + 52} ${y + boxH + gap - 6}" stroke="${C.ink}" stroke-width="2" stroke-dasharray="4 5"/>` : ''}`;
   }).join('\n');
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
-<rect width="100%" height="100%" fill="#0d0b16"/>
-<text x="${x}" y="120" font-family="Fraunces, Georgia, DejaVu Serif, serif" font-weight="600" font-size="48" fill="#f4f0ff">How to read this story</text>
+  return `${head(w, h)}
+<text x="${x}" y="130" font-family="${F.display}" font-weight="600" font-size="52" letter-spacing="-1" fill="${C.ink}">How to read this story</text>
 ${parts}
-<text x="${x}" y="${h - 50}" font-family="IBM Plex Mono, DejaVu Sans Mono, monospace" font-size="20" fill="#8f89aa">${credible} credible source${credible === 1 ? '' : 's'} · quotes as stated in sources</text>
+<text x="72" y="${h - 62}" font-family="${F.data}" font-size="18" fill="${C.ink3}">${credible} CREDIBLE SOURCE${credible === 1 ? '' : 'S'} · QUOTES AS STATED IN SOURCES</text>
+${nameplate(w, h)}
 </svg>`;
 }

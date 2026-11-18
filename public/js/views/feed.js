@@ -1,5 +1,5 @@
 import { api } from '../api.js';
-import { html, on, act, toast, evChip, demoFlag, status, channelLabel, timeAgo, fmtDate, pct, modal } from '../ui.js';
+import { html, on, act, toast, evChip, demoFlag, status, channelLabel, timeAgo, fmtDate, pct, modal, scoreNum, topicsLine } from '../ui.js';
 
 const COLLECTIONS = ['AI product management', 'Business analysis', 'Data analytics', 'Career watchlist'];
 
@@ -27,7 +27,7 @@ async function renderFeed(el, view) {
     <div><div class="kicker">Ranked by your priorities</div><h1>Feed</h1>
       <p class="lede">Coverage of the same development is grouped into one story. Scores combine interest, novelty, evidence quality, and practical impact — engagement is never counted as evidence.</p></div>
   </div>
-  <div class="card flat" style="margin-bottom:18px">
+  <div style="margin-bottom:18px">
     <form class="row" id="intake">
       <input name="url" placeholder="Submit a story URL (when no connector covers it)…" style="flex:1;min-width:260px">
       <select name="evidence_kind" style="width:auto">
@@ -38,27 +38,26 @@ async function renderFeed(el, view) {
     </form>
   </div>
   <div class="row" style="margin-bottom:14px">
-    <a class="chip ${!q.get('topic') ? 'violet' : ''}" href="#/feed">All</a>
-    ${settings.priorities.map(p => html`<a class="chip ${q.get('topic') === p.topic ? 'violet' : ''}" href="#/feed?topic=${encodeURIComponent(p.topic)}">${p.topic}</a>`)}
-    <a class="chip ${q.get('status') === 'archived' ? 'violet' : ''}" href="#/feed?status=archived">Archived</a>
+    <a class="chip ${!q.get('topic') ? 'blue' : ''}" href="#/feed">All</a>
+    ${settings.priorities.map(p => html`${p.weight > 0 ? html`<a class="chip ${q.get('topic') === p.topic ? 'blue' : ''}" href="#/feed?topic=${encodeURIComponent(p.topic)}">${p.topic}</a>` : ''}`)}
+    <a class="chip ${q.get('status') === 'archived' ? 'blue' : ''}" href="#/feed?status=archived">Archived</a>
   </div>
-  <section class="card reveal">
-    ${stories.length ? stories.map(s => html`
+  <section class="card">
+    ${stories.length ? stories.map((s, idx) => html`
       <div class="story" data-href="#/story/${s.id}">
-        <div class="score ${s.score >= settings.publish_threshold ? 'hot' : ''}">${Math.round(s.score)}<small>SCORE</small></div>
+        <div class="score ${idx === 0 && s.score >= settings.publish_threshold ? 'hot' : ''}">${scoreNum(s.score)}<small>Score</small></div>
         <div>
           <div class="story-title">${s.title} ${demoFlag(s.is_demo)}</div>
+          <div class="row" style="margin-top:7px;gap:6px 14px">
+            ${topicsLine(s.topics)}
+            <span class="when">${s.article_count} article${s.article_count > 1 ? 's' : ''} · ${s.domain_count} source${s.domain_count > 1 ? 's' : ''} · ${timeAgo(s.updated_at)}</span>
+            ${s.new_since_view ? html`<span class="new-pill">${s.new_since_view} new since you looked</span>` : ''}
+            ${(s.companies || []).length ? html`<span class="chip blue">${s.companies.join(', ')}</span>` : ''}
+            ${s.collections ? html`<span class="chip green">Saved: ${s.collections}</span>` : ''}
+          </div>
           <div class="story-why">${s.explanation || ''}</div>
           ${meter(s.breakdown)}
-          <div class="row" style="margin-top:9px">
-            <span class="chip">${s.article_count} article${s.article_count > 1 ? 's' : ''} · ${s.domain_count} source${s.domain_count > 1 ? 's' : ''}</span>
-            ${s.new_since_view ? html`<span class="new-pill">${s.new_since_view} NEW SINCE YOU LOOKED</span>` : ''}
-            ${(s.topics || []).slice(0, 3).map(t => html`<span class="chip violet">${t}</span>`)}
-            ${(s.companies || []).map(c => html`<span class="chip blue">${c}</span>`)}
-            ${s.collections ? html`<span class="chip green">saved: ${s.collections}</span>` : ''}
-            ${engagementNote(s.breakdown?.engagement)}
-            <span class="faint mono">${timeAgo(s.updated_at)}</span>
-          </div>
+          ${engagementNote(s.breakdown?.engagement)}
         </div>
       </div>`) : html`<div class="empty">No stories yet. Add sources, run the daily workflow, or load demo data from Today.</div>`}
   </section>`);
@@ -91,7 +90,7 @@ async function renderStory(el, view, id) {
       <p class="lede">${s.summary || ''}</p>
       <div class="row" style="margin-top:10px">
         <span class="chip amber">score ${s.score}</span>
-        ${(s.topics || []).map(t => html`<span class="chip violet">${t}</span>`)}
+        ${topicsLine(s.topics, 6)}
         ${(s.companies || []).map(c => html`<span class="chip blue">${c}</span>`)}
         ${s.status === 'archived' ? html`<span class="chip">archived</span>` : ''}
       </div>
@@ -116,9 +115,9 @@ async function renderStory(el, view, id) {
 
       <section class="card">
         <h3>Coverage</h3>
-        ${d.origin ? html`<div class="mono faint" style="margin-bottom:6px">ORIGINATING SOURCE</div>
+        ${d.origin ? html`<div class="label" style="margin-bottom:6px">ORIGINATING SOURCE</div>
           <div class="source-row">${evChip(d.origin.evidence_kind)}<a href="${d.origin.url}" target="_blank" rel="noopener noreferrer">${d.origin.title}</a><span class="mono faint">${d.origin.domain}</span></div>` : ''}
-        ${followUps.length ? html`<div class="mono faint" style="margin:14px 0 6px">FOLLOW-UP COVERAGE</div>
+        ${followUps.length ? html`<div class="label" style="margin:14px 0 6px">FOLLOW-UP COVERAGE</div>
           ${followUps.map(a => html`<div class="source-row">${evChip(a.evidence_kind)}<span><a href="${a.url}" target="_blank" rel="noopener noreferrer">${a.title}</a> ${a.is_new ? html`<span class="new-pill">NEW</span>` : ''}
             <div class="small muted">${a.summary}</div></span><span class="mono faint">${a.domain}<br>${timeAgo(a.published_at || a.fetched_at)}</span></div>`)}` : html`<p class="muted small" style="margin-top:12px">No independent follow-up coverage yet.</p>`}
       </section>
@@ -141,17 +140,17 @@ async function renderStory(el, view, id) {
           <button data-act="draft" data-channel="video" data-format="explainer">Video explainer</button>
           <button data-act="project">Portfolio project</button>
         </div>
-        ${d.drafts.length ? html`<div class="hr"></div><div class="mono faint">EXISTING PIECES</div>${d.drafts.map(x => html`<div class="row between small" style="padding:4px 0"><a href="#/draft/${x.id}">${channelLabel(x.channel, x.format)}</a>${status(x.status)}</div>`)}` : ''}
+        ${d.drafts.length ? html`<div class="hr"></div><div class="label">EXISTING PIECES</div>${d.drafts.map(x => html`<div class="row between small" style="padding:4px 0"><a href="#/draft/${x.id}">${channelLabel(x.channel, x.format)}</a>${status(x.status)}</div>`)}` : ''}
         ${d.projects.length ? d.projects.map(p => html`<div class="row between small" style="padding:4px 0"><a href="#/career">Project: ${p.title}</a><span class="chip">${p.status}</span></div>`) : ''}
       </section>
 
       <section class="card">
         <div class="row between"><h3>Career lens</h3><button class="sm ghost" data-act="lens">Refresh</button></div>
         <dl class="small" style="margin:0">
-          <dt class="mono faint">WHO COULD USE IT</dt><dd style="margin:2px 0 10px">${lens.who}</dd>
-          <dt class="mono faint">DECISION IT MIGHT CHANGE</dt><dd style="margin:2px 0 10px">${lens.decision}</dd>
-          <dt class="mono faint">WHAT TO LEARN</dt><dd style="margin:2px 0 10px">${lens.learn}</dd>
-          <dt class="mono faint">WHAT YOU COULD TEST</dt><dd style="margin:2px 0 0"><ul style="margin:4px 0;padding-left:18px">${(Array.isArray(lens.test) ? lens.test : [lens.test]).filter(Boolean).map(t => html`<li>${t}</li>`)}</ul></dd>
+          <dt class="label">WHO COULD USE IT</dt><dd style="margin:2px 0 10px">${lens.who}</dd>
+          <dt class="label">DECISION IT MIGHT CHANGE</dt><dd style="margin:2px 0 10px">${lens.decision}</dd>
+          <dt class="label">WHAT TO LEARN</dt><dd style="margin:2px 0 10px">${lens.learn}</dd>
+          <dt class="label">WHAT YOU COULD TEST</dt><dd style="margin:2px 0 0"><ul style="margin:4px 0;padding-left:18px">${(Array.isArray(lens.test) ? lens.test : [lens.test]).filter(Boolean).map(t => html`<li>${t}</li>`)}</ul></dd>
         </dl>
         <div class="faint mono" style="margin-top:8px">via ${lens.provider || 'provider'}</div>
       </section>
