@@ -1,5 +1,5 @@
 import { api } from '../api.js';
-import { html, on, toast, status, channelLabel, fmtDate } from '../ui.js';
+import { html, on, toast, status, channelLabel, fmtDate, modal, optimistic, stampChanged, reducedMotion } from '../ui.js';
 
 const pad = (n) => String(n).padStart(2, '0');
 const ymd = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -97,24 +97,68 @@ export async function render(view, { params = [] } = {}) {
   on(el, 'click', '[data-act="nav"]', (e, b) => { location.hash = `#/calendar/${b.dataset.month}`; });
   on(el, 'click', '[data-href]', (e, t) => { location.hash = t.dataset.href; });
 
+  // ---- moving items: drag (desktop), tap → "Move to…" sheet (phone), Alt+arrows (keyboard) ----
+  const fine = matchMedia('(pointer: fine)').matches;
+  el.querySelectorAll('.cal-item[draggable="true"]').forEach(i => { i.tabIndex = 0; i.setAttribute('aria-roledescription', 'movable item'); });
+  const cellFor = (date) => el.querySelector(`[data-drop="${date || ''}"]`);
+  /** Move an item optimistically with a FLIP glide, a stamp, and an undo toast. */
+  function move(itemEl, date) {
+    const id = itemEl.dataset.id, from = itemEl.closest('[data-drop]'), to = cellFor(date);
+    if (!to || to === from) return;
+    const fromDate = from?.dataset.drop || null;
+    const place = (target) => {
+      const r0 = itemEl.getBoundingClientRect();
+      const anchor = target.querySelector('.more') || null;
+      target.insertBefore(itemEl, anchor);
+      if (reducedMotion()) return;
+      const r1 = itemEl.getBoundingClientRect();
+      itemEl.animate([{ transform: `translate(${r0.left - r1.left}px, ${r0.top - r1.top}px) rotate(-2deg)` }, { transform: 'none' }], { duration: 260, easing: 'cubic-bezier(.16,1,.3,1)' });
+      setTimeout(() => stampChanged(itemEl), 240);
+    };
+    optimistic({
+      apply: () => place(to), item: itemEl,
+      commit: () => api.post(`/drafts/${id}/plan`, { date }),
+      revert: () => from && place(from)
+    }).then(() => toast(date ? `Planned for ${fmtDate(date + 'T12:00:00')}` : 'Date cleared', 'ok', {
+      undo: { revert: () => optimistic({ apply: () => from && place(from), item: itemEl, commit: () => api.post(`/drafts/${id}/plan`, { date: fromDate }), revert: () => place(to) }).catch(() => {}) }
+    })).catch(() => {});
+  }
+
+  let dragId = null;
   on(el, 'dragstart', '.cal-item[draggable="true"]', (e, t) => {
+    dragId = t.dataset.id;
     e.dataTransfer.setData('text/plain', t.dataset.id);
     e.dataTransfer.effectAllowed = 'move';
-    t.classList.add('dragging');
+    requestAnimationFrame(() => t.classList.add('lifted'));
   });
-  on(el, 'dragend', '.cal-item', (e, t) => t.classList.remove('dragging'));
+  on(el, 'dragend', '.cal-item', (e, t) => { t.classList.remove('lifted'); el.querySelectorAll('.drop').forEach(d => d.classList.remove('drop')); });
   on(el, 'dragover', '[data-drop]', (e, t) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; t.classList.add('drop'); });
   on(el, 'dragleave', '[data-drop]', (e, t) => { if (!t.contains(e.relatedTarget)) t.classList.remove('drop'); });
-  on(el, 'drop', '[data-drop]', async (e, t) => {
+  on(el, 'drop', '[data-drop]', (e, t) => {
     e.preventDefault();
     t.classList.remove('drop');
-    const id = e.dataTransfer.getData('text/plain');
-    if (!id) return;
-    const date = t.dataset.drop || null;
-    try {
-      await api.post(`/drafts/${id}/plan`, { date });
-      toast(date ? `Planned for ${fmtDate(date + 'T12:00:00')}` : 'Date cleared', 'ok');
-      render(view, { params: [month] });
-    } catch (err) { toast(err.message, 'err'); }
+    const id = e.dataTransfer.getData('text/plain') || dragId;
+    const itemEl = id && el.querySelector(`.cal-item[data-id="${id}"]`);
+    if (itemEl) { itemEl.classList.remove('lifted'); move(itemEl, t.dataset.drop || null); }
+  });
+  // phone: tapping a movable item opens a "Move to…" sheet instead of navigating
+  el.addEventListener('click', (e) => {
+    const t = e.target.closest('.cal-item[draggable="true"]');
+    if (!t || fine) return;
+    e.stopImmediatePropagation(); e.preventDefault();
+    const days = [...el.querySelectorAll('.cal-day[data-drop]')].map(d => d.dataset.drop);
+    const m = modal(String(html`<h2 style="margin-bottom:6px">Move to…</h2><p class="muted small" style="margin-top:0">${t.textContent.trim()}</p>
+      <div class="move-days">${days.map(d => html`<button class="sm ghost" data-to="${d}">${fmtDate(d + 'T12:00:00', { weekday: 'short', day: 'numeric' })}</button>`)}</div>
+      <div class="row" style="margin-top:14px;justify-content:space-between"><button class="ghost" data-to="">Clear date</button><a class="btn" href="${t.dataset.href}" data-close>Open draft →</a></div>`));
+    m.el.addEventListener('click', (ev) => { const b = ev.target.closest('[data-to]'); if (!b) return; m.close(); move(t, b.dataset.to || null); });
+  }, true);
+  // keyboard: Alt+←/→ moves a day, Alt+↑/↓ a week
+  on(el, 'keydown', '.cal-item[draggable="true"]', (e, t) => {
+    if (e.key === 'Enter') { location.hash = t.dataset.href; return; }
+    if (!e.altKey || !/^Arrow/.test(e.key)) return;
+    e.preventDefault();
+    const cur = t.closest('[data-drop]')?.dataset.drop || today;
+    const d = new Date(cur + 'T12:00:00'); d.setDate(d.getDate() + ({ ArrowLeft: -1, ArrowRight: 1, ArrowUp: -7, ArrowDown: 7 })[e.key]);
+    move(t, ymd(d)); requestAnimationFrame(() => t.focus());
   });
 }

@@ -1,0 +1,123 @@
+/* Wire player — the spoken brief with an on-air transcript (public/js/player.js) */
+.wp { position: relative; outline: none; }
+.wp:focus-visible .wp-bar { outline: 2px solid var(--focus); outline-offset: 2px; }
+.wp-live { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+.wp-bar {
+  display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 14px;
+  padding: 12px 0 14px; border-top: 2px solid var(--ink); border-bottom: 1px solid var(--rule);
+}
+
+/* play / pause: two paths that morph between a triangle and two bars */
+.wp-play {
+  width: 44px; height: 44px; padding: 0; justify-content: center; border-radius: 50%;
+  background: var(--ink); color: var(--paper); border-color: var(--ink); box-shadow: 2px 2px 0 var(--pencil-red);
+}
+.wp-play:hover { background: var(--ink-2); }
+.wp-play:disabled { opacity: .45; cursor: not-allowed; }
+.wp-glyph { width: 22px; height: 22px; display: block; }
+.wp-glyph.sm { width: 18px; height: 18px; }
+.wp-glyph path { fill: currentColor; transition: d 220ms var(--ease-press); }
+.wp[data-state="fetching-voice"] .wp-play, .wp[data-state="loading"] .wp-play { box-shadow: 2px 2px 0 var(--ink-3); }
+
+.wp-mid { min-width: 0; display: grid; gap: 9px; }
+.wp-top { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.wp-stamp {
+  flex: none; font: 700 var(--fs-stamp)/1 var(--body); letter-spacing: .14em; text-transform: uppercase;
+  color: var(--pencil-red); border: 1.5px solid currentColor; padding: 3px 5px 2px; transform: rotate(-1.5deg);
+}
+.wp[data-voice="browser"] .wp-stamp { color: var(--ink-2); border-style: dashed; }
+.wp-now {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font: 600 var(--fs-sm)/1.2 var(--display); font-style: italic; color: var(--ink-2);
+}
+.wp-time {
+  flex: none; font: 400 var(--fs-xs)/1 var(--data); font-stretch: 87.5%; font-variant-numeric: tabular-nums; color: var(--ink-2);
+}
+.wp-time .wp-el { color: var(--ink); }
+.wp-sep { margin: 0 .4em; color: var(--ink-3); }
+
+/* the track: a rule with per-story ticks and a red playhead */
+.wp-track { position: relative; height: 18px; cursor: pointer; touch-action: manipulation; outline: none; }
+.wp-track:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.wp-track > i, .wp-ticks { position: absolute; left: 0; right: 0; top: 50%; display: block; pointer-events: none; }
+.wp-rule { height: 1px; background: var(--rule-strong); }
+.wp-fill { height: 3px; margin-top: -1px; background: var(--ink); transform: scaleX(0); transform-origin: left center; }
+.wp-tick { position: absolute; top: -6px; width: 1px; height: 12px; background: var(--ink-2); }
+.wp-head { width: 3px; height: 16px; margin: -8px 0 0 -1px; background: var(--pencil-red); right: auto !important; transform: translateX(0); }
+.wp-wait { height: 3px; margin-top: -1px; right: auto !important; width: 18%; opacity: 0; background: var(--pencil-red); }
+.wp[data-state="fetching-voice"] .wp-wait { opacity: .55; animation: wp-wait 900ms var(--ease-rule) infinite alternate; }
+@keyframes wp-wait { from { transform: translateX(0); } to { transform: translateX(455%); } }
+.wp[data-state="idle"] .wp-head, .wp[data-state="loading"] .wp-head { background: var(--ink-3); }
+
+.wp-rate {
+  min-width: 52px; justify-content: center; padding: 6px 8px; box-shadow: 1px 1px 0 var(--ink);
+  font: 500 var(--fs-xs)/1 var(--data); font-stretch: 87.5%; font-variant-numeric: tabular-nums;
+}
+
+/* on-air transcript: the brief itself */
+.wp-transcript { padding: 6px 0 0 76px; max-width: calc(66ch + 76px); }
+.wp-note { color: var(--ink-3); font-size: var(--fs-sm); margin: 10px 0; }
+.wp-group { position: relative; padding: 12px 0 2px; }
+.wp-group + .wp-group { border-top: 1px solid var(--rule); }
+.wp-gkick { font: 700 var(--fs-label)/1.3 var(--body); letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3); margin-bottom: 4px; }
+.wp-gkick span { text-transform: none; letter-spacing: 0; font: 600 var(--fs-sm)/1.3 var(--display); color: var(--ink-2); }
+.wp-group p { margin: 0 0 8px; font: 400 var(--fs-base)/1.62 var(--body); color: var(--ink-2); text-wrap: pretty; }
+.wp-seg {
+  cursor: pointer; border-radius: 1px; color: inherit;
+  background: linear-gradient(var(--pencil-red), var(--pencil-red)) 0 100% / 0% 2px no-repeat;
+  transition: background-size 520ms var(--ease-rule), color var(--t-quick) linear;
+  padding-bottom: 1px;
+}
+.wp-seg:hover { color: var(--ink); }
+.wp-seg:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.wp-seg.on { color: var(--ink); background-size: 100% 2px; }
+
+.wp-onair {
+  position: absolute; left: -76px; top: 13px; width: 58px; text-align: center;
+  font: 800 var(--fs-stamp)/1 var(--body); letter-spacing: .12em; color: var(--pencil-red);
+  border: 1.5px solid currentColor; padding: 4px 0 3px;
+  opacity: 0; transform: rotate(-4deg) scale(1.25); transition: opacity 140ms linear, transform 260ms var(--ease-stamp);
+}
+.wp-group.on .wp-onair { opacity: 1; transform: rotate(-4deg) scale(1); }
+.wp[data-state="paused"] .wp-onair { color: var(--ink-3); }
+.wp[data-state="paused"] .wp-seg.on { background-image: linear-gradient(var(--ink-3), var(--ink-3)); }
+.wp-group.on .wp-gkick { color: var(--pencil-red); }
+
+/* mini-player dock (mobile) */
+.wp-dock {
+  position: fixed; z-index: 60; left: 10px; right: 10px; bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+  display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 10px; padding: 8px 12px 8px 8px;
+  background: var(--band); color: var(--band-text); border: 1px solid var(--band); box-shadow: 3px 3px 0 var(--pencil-red);
+  opacity: 0; transform: translateY(calc(100% + 24px)); pointer-events: none; visibility: hidden;
+  transition: transform 260ms var(--ease-press), opacity 160ms linear, visibility 0s linear 260ms;
+}
+.wp-dock.show { opacity: 1; transform: none; pointer-events: auto; visibility: visible; transition: transform 260ms var(--ease-press), opacity 160ms linear, visibility 0s; }
+.wp-dock-fill { position: absolute; left: 0; right: 0; top: 0; height: 2px; background: var(--band-mark); transform: scaleX(0); transform-origin: left center; }
+.wp-dock .wp-play { width: 40px; height: 40px; background: var(--band-text); color: var(--band); border-color: var(--band-text); box-shadow: none; }
+.wp-dock-now { display: grid; gap: 2px; min-width: 0; text-align: left; background: none; border: 0; box-shadow: none; padding: 2px 0; color: inherit; white-space: normal; }
+.wp-dock-now:hover { background: none; }
+.wp-dock-kicker { font: 700 var(--fs-stamp)/1 var(--body); letter-spacing: .14em; color: var(--band-mark); }
+.wp-dock[data-voice="browser"] .wp-dock-kicker { color: var(--band-muted); }
+.wp-dock-title { font: 600 var(--fs-sm)/1.2 var(--display); font-style: italic; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wp-dock-time { font: 400 var(--fs-stamp)/1 var(--data); font-stretch: 87.5%; font-variant-numeric: tabular-nums; color: var(--band-muted); }
+html.wp-docked body { padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px)); }
+
+@media (max-width: 760px) {
+  .wp-bar { gap: 10px; }
+  .wp-top { flex-wrap: wrap; row-gap: 6px; }
+  .wp-now { order: 3; flex-basis: 100%; }
+  .wp-time { margin-left: auto; }
+  .wp-transcript { padding-left: 0; }
+  .wp-onair { position: static; display: inline-block; width: auto; padding: 3px 5px 2px; margin: 0 0 6px; display: none; }
+  .wp-group.on .wp-onair { display: inline-block; }
+}
+@media (pointer: coarse) { .wp-rate { min-height: 44px; } .wp-track { height: 32px; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .wp-glyph path, .wp-seg { transition: none; }
+  .wp-onair { transform: rotate(-4deg); transition: opacity 120ms linear; }
+  .wp-group.on .wp-onair { transform: rotate(-4deg); }
+  .wp[data-state="fetching-voice"] .wp-wait { animation: none; transform: none; width: 100%; opacity: .25; }
+  .wp-dock, .wp-dock.show { transform: none; transition: opacity 120ms linear, visibility 0s; }
+}

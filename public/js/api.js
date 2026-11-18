@@ -10,10 +10,23 @@ async function request(method, path, body) {
   return data;
 }
 
+// 15s cache for GETs (warmed by hover prefetch); any write clears it.
+const cache = new Map();
+function cachedGet(p, { fresh = false } = {}) {
+  const hit = cache.get(p);
+  if (!fresh && hit && Date.now() - hit.t < 15000) return hit.p;
+  const pr = request('GET', p);
+  cache.set(p, { t: Date.now(), p: pr });
+  pr.catch(() => cache.delete(p));
+  return pr;
+}
+const write = (m) => (p, b) => { cache.clear(); return request(m, p, b); };
+
 export const api = {
-  get: (p) => request('GET', p),
-  post: (p, b = {}) => request('POST', p, b),
-  put: (p, b = {}) => request('PUT', p, b),
-  patch: (p, b = {}) => request('PATCH', p, b),
-  del: (p, b) => request('DELETE', p, b)
+  get: cachedGet,
+  post: (p, b = {}) => write('POST')(p, b),
+  put: (p, b = {}) => write('PUT')(p, b),
+  patch: (p, b = {}) => write('PATCH')(p, b),
+  del: (p, b) => write('DELETE')(p, b),
+  clear: () => cache.clear()
 };

@@ -1,5 +1,5 @@
 import { api } from '../api.js';
-import { html, on, act, toast, confirmBox } from '../ui.js';
+import { html, on, act, toast, confirmBox, copy } from '../ui.js';
 import { refreshStatus } from '../app.js';
 
 const ZONES = ['America/New_York', 'America/Chicago', 'America/Denver', 'America/Phoenix', 'America/Los_Angeles', 'America/Anchorage', 'Pacific/Honolulu',
@@ -21,6 +21,47 @@ export async function render(view) {
     topic: r.querySelector('[data-p=topic]').value.trim(), weight: Number(r.querySelector('[data-p=weight]').value), terms: splitTerms(r.querySelector('[data-p=terms]').value)
   }));
   const readSamples = () => [...el.querySelectorAll('[data-sample]')].map(t => t.value);
+
+  // Display: Night (default) / Proof / Match system. Stored per browser.
+  const themePref = () => { try { return localStorage.getItem('byline-theme') || 'dark'; } catch { return 'dark'; } };
+  const applyTheme = (v) => {
+    try { localStorage.setItem('byline-theme', v); } catch { /* storage unavailable */ }
+    if (window.__byline?.setTheme) return window.__byline.setTheme(v);
+    if (v === 'system') delete document.documentElement.dataset.theme; else document.documentElement.dataset.theme = v;
+  };
+
+  // Security: status plus TOTP enrollment. The secret is shown only during enrollment, never afterwards.
+  let sec = null, enrolling = null;
+  const loadSecurity = () => api.get('/security').then(x => { sec = x; paintSecurity(); }).catch(() => {});
+  const codeInput = (name, label) => html`<label class="field">${label}<input class="mono" data-code="${name}" type="text" autocomplete="one-time-code" inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="6 digits" style="display:block;width:12ch;letter-spacing:.2em"></label>`;
+  const paintSecurity = () => {
+    const box = el.querySelector('[data-security]'); if (!box) return;
+    if (!sec) { box.innerHTML = '<span class="spinner"></span> Checking…'; return; }
+    const required = sec.totp_always ? 'at every sign-in' : 'when Byline is reached through a tunnel, proxy or another device';
+    box.innerHTML = String(html`
+      <p class="small" style="margin-top:0"><span class="dot ${sec.password_set ? 'ok' : 'warn'}"></span>${sec.password_set ? 'Password sign-in is on.' : 'No password set (BYLINE_PASSWORD). Two-step sign-in only applies once a password is set.'}</p>
+      <p class="small"><span class="dot ${sec.totp_enabled ? 'ok' : ''}"></span>${sec.totp_enabled
+        ? html`Two-step sign-in is on${sec.totp_source === 'env' ? html` (set by <span class="mono">BYLINE_TOTP_SECRET</span>)` : ''}. A code is asked for ${required}.`
+        : 'Two-step sign-in is off.'}${sec.totp_required_now ? html` <span class="chip">needed from here</span>` : ''}</p>
+      ${enrolling ? html`
+        <div class="label" style="margin:14px 0 6px">1 · ADD BYLINE TO YOUR AUTHENTICATOR APP</div>
+        <p class="muted small" style="margin-top:0">Choose “enter a setup key” and type the key below (time-based, 6 digits), or paste the setup link into an app that accepts one.</p>
+        <div class="mono" data-totp-key style="font-size:var(--fs-md);letter-spacing:.06em;word-spacing:.3em;line-height:1.6;user-select:all">${enrolling.secret.replace(/(.{4})(?=.)/g, '$1 ')}</div>
+        <div class="row" style="margin-top:8px"><input readonly data-otpauth value="${enrolling.otpauth}" aria-label="Setup link (otpauth)" class="mono small" style="flex:1 1 220px;min-width:0"><button class="sm" type="button" data-act="copy-otpauth">Copy link</button><button class="sm" type="button" data-act="copy-key">Copy key</button></div>
+        <div class="label" style="margin:14px 0 6px">2 · CONFIRM WITH A CODE</div>
+        <div class="row" style="align-items:flex-end">${codeInput('confirm', 'Code from the app')}<button class="primary" type="button" data-act="totp-confirm">Turn on</button><button class="ghost" type="button" data-act="totp-cancel">Cancel</button></div>
+      ` : sec.totp_enabled && sec.totp_source !== 'env' ? html`
+        <div class="row" style="align-items:flex-end;margin-top:10px">${codeInput('disable', 'Current code')}<button class="danger" type="button" data-act="totp-disable">Turn off two-step sign-in</button></div>
+      ` : !sec.totp_enabled ? html`
+        <div class="row" style="margin-top:10px"><button class="primary" type="button" data-act="totp-begin">Set up two-step sign-in</button></div>
+      ` : ''}
+      <p class="set-note">Works with any authenticator app (1Password, Google Authenticator, Authy, Bitwarden). Set <span class="mono">BYLINE_TOTP_ALWAYS=1</span> to ask for a code on this computer too.</p>`);
+  };
+  const codeVal = (name) => {
+    const v = (el.querySelector(`[data-code="${name}"]`)?.value || '').replace(/\s/g, '');
+    if (!/^\d{6}$/.test(v)) throw new Error('Enter the 6-digit code from your authenticator app.');
+    return v;
+  };
 
   const paint = () => {
     el.innerHTML = String(html`
@@ -162,12 +203,25 @@ export async function render(view) {
         <div class="row" style="margin-top:12px"><button class="primary" data-save="media">Save</button></div>
       </section>
 
+      <section class="card">
+        <h3>Display</h3>
+        <div role="radiogroup" aria-label="Theme" style="display:flex;flex-direction:column;gap:8px">${[['dark', 'Night desk', 'Warm black. The default.'], ['light', 'Proof desk', 'Newsprint paper.'], ['system', 'Match system', 'Follow this device’s light or dark setting.']].map(([v, l, note]) => html`
+          <label class="check"><input type="radio" name="byline-theme" data-theme-opt value="${v}" ${themePref() === v ? 'checked' : ''}> <strong>${l}</strong> <span class="faint small">${note}</span></label>`)}</div>
+        <p class="set-note">Saved in this browser only, so your phone and computer can differ.</p>
+      </section>
+
+      <section class="card">
+        <h3>Security</h3>
+        <div data-security></div>
+      </section>
+
       <section class="card flat" style="grid-column:1 / -1">
         <h3>Demo data</h3>
         <p class="muted small" style="margin-top:0">Fictional sample sources, stories and drafts — clearly labeled DEMO — for trying the full flow without credentials. ${st.counts?.demo_articles ? html`<span class="demo-flag">LOADED</span> ${st.counts.demo_articles} demo articles present.` : 'Not loaded.'}</p>
         <div class="row"><button data-act="demo-load">Load demo data</button><button class="danger" data-act="demo-clear" ${st.counts?.demo_articles ? '' : 'disabled'}>Remove demo data</button></div>
       </section>
     </div>`);
+    paintSecurity();
   };
   // Repaint while keeping unsaved edits in other sections.
   const repaint = () => {
@@ -183,6 +237,8 @@ export async function render(view) {
     el.querySelector('#ollama-models').innerHTML = o.models.map(m => `<option value="${m}">`).join('');
   }).catch(() => {});
   checkOllama();
+  loadSecurity();
+  on(el, 'change', '[data-theme-opt]', (e, r) => { applyTheme(r.value); toast(`Theme: ${r.closest('label').querySelector('strong').textContent}`, 'ok'); });
 
   const val = (f) => el.querySelector(`[data-f="${f}"]`);
   const builders = {
@@ -259,6 +315,20 @@ export async function render(view) {
       if (a === 'add-sample') [...el.querySelectorAll('[data-sample]')].pop()?.focus();
     }
     if (a === 'copy-ics') { const i = el.querySelector('#ics'); i.select(); try { await navigator.clipboard.writeText(i.value); toast('Calendar link copied', 'ok'); } catch { document.execCommand('copy'); } }
+    if (a === 'totp-begin') await act(btn, async () => { enrolling = await api.post('/security/totp/begin'); paintSecurity(); el.querySelector('[data-code="confirm"]')?.focus(); }, 'Starting…');
+    if (a === 'totp-cancel') { enrolling = null; paintSecurity(); }
+    if (a === 'copy-otpauth' && enrolling) { await copy(enrolling.otpauth); }
+    if (a === 'copy-key' && enrolling) { await copy(enrolling.secret); }
+    if (a === 'totp-confirm') await act(btn, async () => {
+      await api.post('/security/totp/confirm', { code: codeVal('confirm') });
+      enrolling = null; toast('Two-step sign-in is on', 'ok'); await loadSecurity();
+    }, 'Checking…');
+    if (a === 'totp-disable') {
+      let code; try { code = codeVal('disable'); } catch (err) { toast(err.message, 'err'); return; }
+      if (await confirmBox('Turn off two-step sign-in? Signing in will need only the password.', 'Turn off')) await act(btn, async () => {
+        await api.post('/security/totp/disable', { code }); toast('Two-step sign-in is off', 'ok'); await loadSecurity();
+      }, 'Turning off…');
+    }
     if (a === 'logout') { await fetch('/api/logout', { method: 'POST' }); location.href = '/login'; }
     if (a === 'roundup-now') await act(btn, async () => { const r = await api.post('/weekly-roundup', {}); if (r.draft_id) location.hash = `#/draft/${r.draft_id}`; else toast(r.reason, 'err'); }, 'Drafting…');
     if (a === 'demo-load') await act(btn, async () => { await api.post('/demo/load'); toast('Demo data loaded (fictional, labeled DEMO)', 'ok'); refreshStatus(); render(view); }, 'Loading…');

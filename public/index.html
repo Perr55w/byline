@@ -2,32 +2,43 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Byline — briefing & media studio</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%231C1A16'/><text x='8' y='24' font-family='Georgia' font-style='italic' font-weight='700' font-size='22' fill='%23F3EEE4'>B</text></svg>">
   <link rel="manifest" href="/manifest.webmanifest">
-  <meta name="theme-color" content="#1C1A16">
+  <meta name="theme-color" content="#0B0A08">
   <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <script>try { const t = localStorage.getItem('byline-theme'); if (t) document.documentElement.dataset.theme = t; } catch (e) {}</script>
+  <script>(function () { var t = null; try { t = localStorage.getItem('byline-theme'); } catch (e) {} if (t !== 'light' && t !== 'dark') t = t === 'system' ? (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark') : 'dark'; document.documentElement.dataset.theme = t; })();</script>
   <link rel="stylesheet" href="/styles.css">
   <link rel="stylesheet" href="/css/career.css">
   <link rel="stylesheet" href="/css/people.css">
   <link rel="stylesheet" href="/css/control.css">
+  <link rel="stylesheet" href="/css/index.css">
+  <link rel="stylesheet" href="/css/desk.css">
+  <link rel="stylesheet" href="/css/motion.css">
+  <link rel="modulepreload" href="/js/views/today.js">
+  <link rel="modulepreload" href="/js/views/feed.js">
+  <link rel="modulepreload" href="/js/views/studio.js">
+  <link rel="stylesheet" href="/css/player.css">
 </head>
 <body>
   <div class="shell">
     <header class="masthead">
       <div class="mast-row">
-        <a class="nameplate" href="#/today" aria-label="Byline — Today">Byline</a>
+        <a class="nameplate" href="#/today" aria-label="Byline — Today"><span class="np-word">Byline<span class="np-ink" aria-hidden="true">Byline</span></span><i class="np-roller" aria-hidden="true"></i></a>
         <span class="dateline" id="dateline"></span>
         <div class="mast-status" id="rail-foot"></div>
-        <button class="theme-toggle" id="theme-toggle" type="button"></button>
+        <div class="mast-ctl">
+          <button class="index-btn" id="index-btn" type="button" aria-label="Open the Index (search and commands)">Index <kbd>⌘K</kbd></button>
+          <button class="desk-switch" id="theme-toggle" type="button" role="switch" aria-checked="true" aria-label="Night desk" data-short="☾"><span class="lbl-off">☼ Proof</span><span class="track"><span class="knob"></span></span><span class="lbl-on">☾ Night</span></button>
+        </div>
       </div>
       <nav class="folios" id="nav" aria-label="Sections"></nav>
       <div class="pressbar" id="pressbar" aria-hidden="true"></div>
     </header>
     <main id="view"></main>
+  <div class="sr-only" id="route-live" aria-live="polite"></div>
   </div>
   <div class="toasts" id="toasts"></div>
   <script type="module" src="/js/app.js"></script>

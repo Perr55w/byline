@@ -1,5 +1,11 @@
 import { api } from '../api.js';
-import { html, on, act, toast, status, demoFlag, channelLabel, fmtDate, timeAgo, modal, scoreNum, topicsLine } from '../ui.js';
+import { html, on, act, toast, status, demoFlag, channelLabel, fmtDate, timeAgo, modal, scoreNum, topicsLine, plateImg, hydratePlates } from '../ui.js';
+
+const plural = (n, w) => `${n} ${n === 1 ? w : w.replace(/y$/, 'ie') + 's'}`;
+function whyRanked(it) {
+  const bits = [(it.topics || []).slice(0, 3).join(', '), `${plural(it.domains.length, 'source')}`].filter(Boolean);
+  return html`<div class="why-ranked"><b>Why it ranked:</b> ${bits.join(' · ')}${it.explanation ? html`<details><summary>Scoring detail</summary>${it.explanation}</details>` : ''}</div>`;
+}
 
 export async function render(view) {
   const t = await api.get('/today');
@@ -13,27 +19,26 @@ export async function render(view) {
     <div>
       <div class="kicker">${fmtDate(t.date + 'T12:00:00', { weekday: 'long', month: 'long', day: 'numeric' })}</div>
       <h1>Today’s briefing</h1>
-      <p class="lede">What changed, why it matters to your work, what you think — and whether it’s worth posting, testing, or saving.</p>
+      ${items.length ? html`<p class="live-dek"><b>${plural(items.length, 'story')}</b> · <b>${items.filter(i => i.qualifies).length}</b> post-worthy · <b>${t.awaiting.length}</b> draft${t.awaiting.length === 1 ? '' : 's'} awaiting review</p>`
+        : html`<p class="lede">What changed, why it matters to your work, what you think — and whether it’s worth posting, testing, or saving.</p>`}
     </div>
     <div class="row">
-      ${!items.length ? html`<button data-act="demo">Load demo data</button>` : ''}
-      <button class="primary" data-act="run">Run today’s workflow</button>
+      ${t.last_run?.finished_at ? html`<span class="ran-at">Ran ${timeAgo(t.last_run.finished_at)}</span>` : ''}
+      ${!items.length ? html`<button class="primary" data-act="demo">Load demo data</button>` : ''}
+      <button class="${items.length ? 'ghost' : ''}" data-act="run" data-key="R">Run today’s workflow</button>
     </div>
   </div>
 
   <div class="split">
     <div class="stack">
-      <section class="card">
+      <section class="card screened">
         <div class="row between">
           <h3 style="flex:1">The brief ${b && b.run_date !== t.date ? html`<span class="chip amber">from ${b.run_date}</span>` : ''}</h3>
           ${b ? html`<span class="mono faint">≈ ${b.reading_minutes} min read · ${items.length} stories</span>` : ''}
         </div>
         ${b ? html`<p class="brief-lead">${b.summary}</p>
-          <div class="row" style="margin:10px 0 4px">
-            <button class="sm" data-act="listen">▶ Listen to the brief</button>
-            <button class="sm ghost" data-act="digest">Email digest preview</button>
-            <button class="sm ghost" data-act="deliver">Send email + push now</button>
-          </div>` : html`<div class="empty">No brief yet. Run today’s workflow, or load the demo data to try the full flow without credentials.</div>`}
+          <div class="wire-slot" id="wire-player"><button class="sm" data-act="listen">▶ Listen to the brief</button></div>
+          <div class="text-links"><button data-act="digest">Email digest preview</button><button data-act="deliver">Send email + push now</button></div>` : html`<div class="empty">No brief yet. Run today’s workflow, or load the demo data to try the full flow without credentials.</div>`}
         ${b?.quiet ? html`
           <div class="flag" style="margin-top:14px;border-left-color:var(--st-review);background:var(--st-review-bg)">
             <strong>Quiet day.</strong> <span class="muted">No story met your publishing threshold (${t.threshold}). Nothing will be drafted automatically.</span>
@@ -46,12 +51,12 @@ export async function render(view) {
           ${[items[0]].map(it => html`
           <article class="brief-item lead">
             <div>
-              <a href="#/story/${it.story_id}" class="story-title" style="color:var(--ink)"><span class="lead-hl">${it.title}</span></a> ${demoFlag(it.is_demo)}
+              <a href="#/story/${it.story_id}" class="story-title" style="color:var(--ink)"><span class="lead-hl">${it.title}</span></a>${demoFlag(it.is_demo)}
               <p style="margin:10px 0 6px;max-width:62ch">${it.summary}</p>
-              <div class="row" style="gap:6px 14px">${topicsLine(it.topics)}<span class="when">${it.domains.length} source${it.domains.length > 1 ? 's' : ''} · ${it.domains.slice(0, 3).join(' · ')}</span>${it.qualifies ? html`<span class="chip amber">post-worthy</span>` : ''}</div>
-              <div class="story-why">${it.explanation}</div>
+              <div class="row" style="gap:6px 14px">${topicsLine(it.topics)}<span class="when">${it.domains.length} source${it.domains.length > 1 ? 's' : ''} · ${it.domains.slice(0, 3).join(' · ')}</span></div>
+              ${whyRanked(it)}
             </div>
-            <div class="score ${it.qualifies ? 'hot' : ''}">${scoreNum(it.score)}<small>Score</small></div>
+            <div class="score single" data-stamp style="--v:${Math.round(it.score)}">${scoreNum(it.score, { dec: true })}<small>Score</small><div class="galley-scale" aria-hidden="true" style="--t:${t.threshold}%"><b class="th"></b><i class="caret"></i></div></div>
           </article>`)}
         </div>` : ''}
         ${items.length > 1 ? html`<div class="fold-label">Below the fold</div><div class="below-fold">
@@ -69,11 +74,11 @@ export async function render(view) {
     </div>
 
     <div class="stack">
-      <section class="card accent">
+      <section class="card accent crop">
         <h3>Suggested LinkedIn draft</h3>
         ${t.draft ? html`
           <a href="#/draft/${t.draft.id}" style="color:inherit">
-            ${t.draft.image_file ? html`<img src="/media/${t.draft.image_file}" alt="" style="width:100%;border:1px solid var(--rule-strong);margin-bottom:10px">` : ''}
+            ${t.draft.image_file ? html`<div style="border:1px solid var(--rule-strong);margin-bottom:10px">${plateImg(t.draft.image_file, { ar: 1.91 })}</div>` : ''}
             <div class="story-title">${t.draft.title}</div>
           </a>
           <div class="row" style="margin-top:8px">${status(t.draft.status)}<span class="chip">${channelLabel(t.draft.channel, t.draft.format)}</span></div>
@@ -99,10 +104,19 @@ export async function render(view) {
     </div>
   </div>`);
 
+  hydratePlates(el);
+  const slot = el.querySelector('#wire-player');
+  if (slot && b) import('../player.js').then(m => { if (slot.isConnected && m.mountPlayer) { slot.innerHTML = ''; view.__player?.destroy?.(); view.__player = m.mountPlayer(slot, { date: b.run_date, stories: items });
+      // the transcript repeats the stories below: keep it folded until asked for (or while playing)
+      const tr = slot.querySelector('.wp-transcript');
+      if (tr) { const d = document.createElement('details'); d.className = 'read-along'; d.innerHTML = '<summary>Read along</summary>'; tr.replaceWith(d); d.append(tr);
+        slot.querySelector('.wp')?.addEventListener('click', (ev) => { if (ev.target.closest('.wp-play') && !d.open) d.open = true; }); }
+    } }).catch(() => { /* keep the browser-voice button */ });
+
   on(el, 'click', '[data-act]', async (e, btn) => {
     const a = btn.dataset.act;
     if (a === 'run') await act(btn, async () => {
-      const r = await api.post('/runs', {});
+      const r = await (window.__byline?.stagedRun || ((p) => p))(api.post('/runs', {}));
       toast(r.status === 'done' ? 'Daily run finished' : `Run failed at ${r.failed_stage}: ${r.error}`, r.status === 'done' ? 'ok' : 'err');
       render(view);
     }, 'Running…');

@@ -1,5 +1,7 @@
 import { api } from '../api.js';
-import { html, on, act, toast, modal, confirmBox, status, fmtDate, channelLabel } from '../ui.js';
+import { html, on, act, toast, modal, confirmBox, strikeOut, status, fmtDate, channelLabel } from '../ui.js';
+
+const rowOf = (b) => b.closest('tr, [data-exp], .source-row, .watch-row, .card, li') || b.parentElement;
 
 const TABS = [['radar', 'Skill radar'], ['collections', 'Collections'], ['projects', 'Projects'], ['weekly', 'Weekly recap'], ['experiences', 'Experiences']];
 const GROUPS = ['AI product management', 'Business analysis', 'Data analytics'];
@@ -71,7 +73,7 @@ async function radar(pane, again) {
     e.preventDefault();
     await act(e.submitter, async () => { await api.post('/jobposts', Object.fromEntries(new FormData(e.target))); toast('Job post added', 'ok'); again(); });
   });
-  on(pane, 'click', '[data-del-job]', async (e, b) => { if (await confirmBox('Delete this job post?', 'Delete')) await act(b, async () => { await api.del(`/jobposts/${b.dataset.delJob}`); again(); }); });
+  on(pane, 'click', '[data-del-job]', (e, b) => { const id = b.dataset.delJob; strikeOut(rowOf(b), { message: 'Job post deleted.', commit: () => api.del(`/jobposts/${id}`) }); });
   on(pane, 'click', '[data-skill]', (e, tr) => {
     const s = skills[tr.dataset.skill];
     modal(String(html`<div class="row between"><h2 style="margin:0">${s.skill}</h2>${trendChip(s.trend)}</div>
@@ -241,5 +243,5 @@ async function experiences(pane, again) {
     catch (err) { cb.checked = !cb.checked; toast(err.message, 'err'); }
   });
   on(pane, 'click', '[data-save]', (e, b) => act(b, async () => { const row = b.closest('[data-exp]'); await api.patch(`/experiences/${row.dataset.exp}`, { text: row.querySelector('[data-text]').value }); toast('Saved', 'ok'); }));
-  on(pane, 'click', '[data-del]', async (e, b) => { if (await confirmBox('Delete this experience?', 'Delete')) await act(b, async () => { await api.del(`/experiences/${b.closest('[data-exp]').dataset.exp}`); again(); }); });
+  on(pane, 'click', '[data-del]', (e, b) => { const row = b.closest('[data-exp]'); const id = row.dataset.exp; strikeOut(row, { message: 'Experience deleted.', commit: () => api.del(`/experiences/${id}`) }); });
 }

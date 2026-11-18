@@ -1,5 +1,7 @@
 import { api } from '../api.js';
-import { html, on, act, toast, modal, confirmBox, status, fmtDate, channelLabel } from '../ui.js';
+import { html, on, act, toast, modal, confirmBox, strikeOut, status, fmtDate, channelLabel } from '../ui.js';
+
+const rowOf = (b) => b.closest('tr, [data-exp], .source-row, .watch-row, .card, li') || b.parentElement;
 
 const fresh = (el) => { const root = document.createElement('div'); el.replaceChildren(root); return root; };
 const list = (s) => String(s || '').split(',').map(x => x.trim()).filter(Boolean);
@@ -38,7 +40,7 @@ export async function render(el, ctx = {}) {
   const byId = (id) => employers.find(e => e.id === Number(id));
   on(root, 'click', '[data-pin]', (e, b) => act(b, async () => { await api.patch(`/employers/${b.dataset.pin}`, { pinned: b.dataset.on !== '1' }); again(); }));
   on(root, 'click', '[data-team-pin]', (e, b) => act(b, async () => { await api.patch(`/watchlists/${b.dataset.teamPin}`, { pinned: b.dataset.on !== '1' }); again(); }));
-  on(root, 'click', '[data-team-del]', async (e, b) => { if (await confirmBox('Remove this team watchlist?', 'Remove')) await act(b, async () => { await api.del(`/watchlists/${b.dataset.teamDel}`); again(); }); });
+  on(root, 'click', '[data-team-del]', (e, b) => { const id = b.dataset.teamDel; strikeOut(rowOf(b), { message: 'Team watchlist removed.', commit: () => api.del(`/watchlists/${id}`) }); });
   on(root, 'click', '[data-team-add]', (e, b) => {
     const emp = byId(b.dataset.teamAdd);
     formModal(html`<h2>Add a team at ${emp.name}</h2>

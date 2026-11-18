@@ -58,7 +58,7 @@ export async function render(view, { params = [] } = {}) {
 
   <div class="split">
     <div class="stack reveal">
-      <section class="card">
+      <section class="card ledger">
         <h3>Run history</h3>
         ${runs.length ? html`<div class="ctl-scroll"><table style="min-width:560px">
           <thead><tr><th>#</th><th>Date</th><th>Trigger</th><th>Status</th><th>Started</th><th>Duration</th><th>Cost</th></tr></thead>

@@ -1,7 +1,7 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
-import { MEDIA_DIR } from './src/db.js';
+import { MEDIA_DIR, getSettings, setSetting } from './src/db.js';
 import { registerContent } from './src/routes/content.js';
 import { registerDrafts } from './src/routes/drafts.js';
 import { registerCareer } from './src/routes/career.js';
@@ -9,6 +9,7 @@ import { startScheduler } from './src/scheduler.js';
 import { seedDefaults } from './src/seed.js';
 import crypto from 'node:crypto';
 import { icsFeed, icsToken } from './src/ics.js';
+import * as totp from './src/totp.js';
 
 seedDefaults();
 
@@ -65,6 +66,60 @@ function validSession(req) {
   return good.length === sig.length && crypto.timingSafeEqual(Buffer.from(good), Buffer.from(sig));
 }
 const proxied = (req) => !!(req.headers['cf-connecting-ip'] || req.headers['x-forwarded-for']);
+const loopback = (addr = '') => addr === '::1' || addr.startsWith('127.') || addr.startsWith('::ffff:127.');
+// Remote = arrived through a proxy/tunnel, or from another machine on the network.
+const remote = (req) => proxied(req) || !loopback(req.socket.remoteAddress);
+
+// ----- optional TOTP second factor -----
+// The secret comes from BYLINE_TOTP_SECRET, or from the `totp_secret` setting enrolled in Settings → Security.
+// A code is required at sign-in for remote requests, or always with BYLINE_TOTP_ALWAYS=1. It only ever applies
+// on top of BYLINE_PASSWORD: plain localhost without a password never asks for one.
+const ENV_TOTP = (process.env.BYLINE_TOTP_SECRET || '').replace(/[\s=-]/g, '').toUpperCase();
+const TOTP_ALWAYS = process.env.BYLINE_TOTP_ALWAYS === '1';
+const TOTP_KEYS = ['totp_secret', 'totp_pending'];
+const totpSecret = () => ENV_TOTP || getSettings().totp_secret || '';
+const totpRequired = (req) => !!PASSWORD && !!totpSecret() && (TOTP_ALWAYS || remote(req));
+// Settings rows that hold TOTP material never leave the server or change through the generic settings API.
+const redactSettings = (pathname, out) => {
+  if (pathname === '/api/settings' && out && typeof out === 'object') for (const k of TOTP_KEYS) delete out[k];
+  return out;
+};
+const guardSettingsBody = (pathname, body) => {
+  if (pathname === '/api/settings' && body && typeof body === 'object') for (const k of TOTP_KEYS) delete body[k];
+  return body;
+};
+const fail = (msg, status = 400) => Object.assign(new Error(msg), { status });
+const notEnvManaged = () => { if (ENV_TOTP) throw fail('Two-step sign-in is set by BYLINE_TOTP_SECRET on the server. Change or remove it there.', 409); };
+
+route('GET', '/api/security', ({ req }) => ({
+  password_set: !!PASSWORD, totp_enabled: !!totpSecret(), totp_source: ENV_TOTP ? 'env' : (totpSecret() ? 'settings' : null),
+  totp_always: TOTP_ALWAYS, totp_required_now: totpRequired(req), totp_pending: !!getSettings().totp_pending?.secret
+}));
+route('POST', '/api/security/totp/begin', () => {
+  notEnvManaged();
+  if (totpSecret()) throw fail('Two-step sign-in is already on. Turn it off first to enroll a new device.', 409);
+  const secret = totp.generateSecret();
+  setSetting('totp_pending', { secret, created_at: new Date().toISOString() });
+  return { secret, otpauth: totp.otpauthUrl(secret) };
+});
+route('POST', '/api/security/totp/confirm', ({ body }) => {
+  notEnvManaged();
+  const pending = getSettings().totp_pending;
+  if (!pending?.secret) throw fail('Start enrollment first.', 409);
+  if (Date.now() - Date.parse(pending.created_at) > 30 * 60e3) { setSetting('totp_pending', null); throw fail('Enrollment expired. Start again.', 410); }
+  if (!totp.verify(pending.secret, body.code)) throw fail('That code didn’t match. Check the time on your phone and try the next code.', 400);
+  setSetting('totp_secret', pending.secret);
+  setSetting('totp_pending', null);
+  return { ok: true, totp_enabled: true };
+});
+route('POST', '/api/security/totp/disable', ({ body }) => {
+  notEnvManaged();
+  const secret = totpSecret();
+  if (!secret) throw fail('Two-step sign-in is not on.', 409);
+  if (!totp.verify(secret, body.code)) throw fail('That code didn’t match.', 400);
+  setSetting('totp_secret', null);
+  return { ok: true, totp_enabled: false };
+});
 
 async function handleLogin(req, res) {
   const ip = req.headers['cf-connecting-ip'] || req.socket.remoteAddress;
@@ -76,6 +131,15 @@ async function handleLogin(req, res) {
   if (!PASSWORD || !crypto.timingSafeEqual(given, want)) {
     attempts.set(ip, [...a, Date.now()]);
     res.writeHead(401, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'Wrong password.' }));
+  }
+  if (totpRequired(req)) {
+    // Wrong or missing codes count against the same limiter as wrong passwords.
+    const code = String(body.code || '').replace(/\s/g, '');
+    if (!code) { res.writeHead(401, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'Enter the 6-digit code from your authenticator app.', code_required: true })); }
+    if (!totp.verify(totpSecret(), code)) {
+      attempts.set(ip, [...a, Date.now()]);
+      res.writeHead(401, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'That code didn’t match. Wait for the next one and try again.', code_required: true }));
+    }
   }
   const exp = String(Date.now() + 30 * 864e5);
   const secure = req.headers['x-forwarded-proto'] === 'https' ? '; Secure' : '';
@@ -92,6 +156,10 @@ const server = http.createServer(async (req, res) => {
       return res.end(icsFeed());
     }
     if (url.pathname === '/api/login' && req.method === 'POST') return handleLogin(req, res);
+    if (url.pathname === '/api/login' && req.method === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+      return res.end(JSON.stringify({ totp: totpRequired(req) }));
+    }
     if (url.pathname === '/api/logout' && req.method === 'POST') {
       res.writeHead(200, { 'Content-Type': 'application/json', 'Set-Cookie': 'byline_session=; Path=/; Max-Age=0' });
       return res.end('{"ok":true}');
@@ -100,7 +168,7 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
       return res.end('Byline is being reached through a proxy or tunnel but no password is set. Set BYLINE_PASSWORD and restart before exposing it.');
     }
-    if (PASSWORD && !PUBLIC_PATHS.has(url.pathname) && !url.pathname.startsWith('/icons/') && !validSession(req)) {
+    if (PASSWORD && !PUBLIC_PATHS.has(url.pathname) && !url.pathname.startsWith('/icons/') && !url.pathname.startsWith('/fonts/') && !validSession(req)) {
       if (url.pathname.startsWith('/api/')) { res.writeHead(401, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'Sign in required' })); }
       res.writeHead(302, { Location: '/login' }); return res.end();
     }
@@ -111,8 +179,8 @@ const server = http.createServer(async (req, res) => {
         const m = url.pathname.match(r.re);
         if (!m) continue;
         const params = Object.fromEntries(r.keys.map((k, i) => [k, decodeURIComponent(m[i + 1])]));
-        const body = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method) ? await readBody(req) : {};
-        const out = await r.handler({ params, query: Object.fromEntries(url.searchParams), body, req });
+        const body = guardSettingsBody(url.pathname, ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method) ? await readBody(req) : {});
+        const out = redactSettings(url.pathname, await r.handler({ params, query: Object.fromEntries(url.searchParams), body, req }));
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify(out ?? { ok: true }));
       }

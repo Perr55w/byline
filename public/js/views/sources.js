@@ -1,5 +1,5 @@
 import { api } from '../api.js';
-import { html, on, act, toast, confirmBox, demoFlag, evChip, timeAgo, fmtDateTime } from '../ui.js';
+import { html, on, act, toast, confirmBox, strikeOut, demoFlag, evChip, timeAgo, fmtDateTime } from '../ui.js';
 
 const KINDS = [['rss', 'RSS / Atom feed'], ['blog', 'Company blog (feed)'], ['docs', 'Docs / release notes (feed)'], ['research', 'Research feed'], ['x', 'X search (needs API token)']];
 const EVIDENCE = [['announcement', 'Announcement'], ['reporting', 'Independent reporting'], ['research', 'Research'], ['commentary', 'Commentary']];
@@ -96,7 +96,7 @@ export async function render(view) {
         <datalist id="emp-list">${employers.map(e => html`<option value="${e.name}">`)}</datalist>
       </section>
     </div>
-      <section class="card">
+      <section class="card ledger">
         <div class="row between"><h3>Source directory</h3><span class="mono faint">${sources.length} sources</span></div>
         ${sources.length ? Object.entries(groups).map(([g, list]) => html`
           <div style="margin-top:14px"><div class="kicker" style="color:var(--violet-2);margin-bottom:4px">${g}</div>
@@ -105,7 +105,7 @@ export async function render(view) {
             <tbody>${list.map(sourceRow)}</tbody>
           </table></div></div>`) : html`<div class="empty">No sources yet. Add a feed below, or load demo data from Settings.</div>`}
       </section>
-      <section class="card">
+      <section class="card ledger">
         <div class="row between"><h3>Topic watchlists</h3><span class="mono faint">${watch.length}</span></div>
         <p class="muted small" style="margin-top:0">Companies, researchers, products, frameworks, skills, questions and teams. Matches raise a story’s relevance; pinned items count 1.5×.</p>
         ${watch.length ? html`<div class="ctl-scroll"><table>
@@ -187,12 +187,8 @@ export async function render(view) {
       } catch (err) { ui.syncResult[id] = { ok: false, msg: err.message }; toast(err.message, 'err'); }
       render(view);
     }, 'Syncing…');
-    if (a === 'del-source' && await confirmBox(`Delete “${btn.dataset.name}”? Articles already collected stay in your archive.`, 'Delete source')) await act(btn, async () => {
-      await api.del(`/sources/${id}`); toast('Source deleted', 'ok'); render(view);
-    });
-    if (a === 'del-watch' && await confirmBox(`Remove “${btn.dataset.name}” from your watchlists?`, 'Remove')) await act(btn, async () => {
-      await api.del(`/watchlists/${id}`); toast('Removed', 'ok'); render(view);
-    });
+    if (a === 'del-source') strikeOut(btn.closest('tr, .source-row, .card') || btn.parentElement, { message: `“${btn.dataset.name}” deleted. Collected articles stay in your archive.`, commit: () => api.del(`/sources/${id}`) });
+    if (a === 'del-watch') strikeOut(btn.closest('tr, .source-row, li, .row') || btn.parentElement, { message: `“${btn.dataset.name}” removed from watchlists.`, commit: () => api.del(`/watchlists/${id}`) });
     if (a === 'open-manual') { const u = el.querySelector('[data-form="url"] [name=url]').value; ui.manual = { url: u, evidence_kind: 'reporting', error: '' }; render(view); }
     if (a === 'cancel-manual') { ui.manual = null; render(view); }
   });

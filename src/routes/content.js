@@ -20,7 +20,7 @@ export function registerContent(route) {
   route('GET', '/api/status', () => {
     const s = getSettings();
     return {
-      today: todayIn(s.timezone), timezone: s.timezone, provider: providerStatus(),
+      today: todayIn(s.timezone), timezone: s.timezone, threshold: s.publish_threshold, provider: providerStatus(),
       connectors: Object.fromEntries(Object.entries(connectors).map(([k, c]) => [k, { label: c.label, ...c.status({ url: 'x' }) }])),
       publishers: Object.fromEntries(Object.entries(publishers).map(([k, p]) => [k, p.status()])),
       counts: get(`SELECT (SELECT COUNT(*) FROM stories) AS stories, (SELECT COUNT(*) FROM articles) AS articles, (SELECT COUNT(*) FROM sources) AS sources,
@@ -129,6 +129,8 @@ export function registerContent(route) {
       run('UPDATE stories SET lens_json = ? WHERE id = ?', JSON.stringify(data.lens), story.id);
     }
     data.employer_connections = await getProvider().employerConnections({ ...data, employers: loadEmployers() });
+    data.story.prev_score = story.viewed_score ?? null;
+    if (query.mark_viewed !== '0') run('UPDATE stories SET viewed_score = score WHERE id = ?', story.id);
     if (query.mark_viewed !== '0') run("UPDATE stories SET last_viewed_at = ?, status = CASE WHEN status = 'new' THEN 'seen' ELSE status END WHERE id = ?", now(), story.id);
     return data;
   });

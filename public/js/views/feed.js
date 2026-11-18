@@ -28,7 +28,8 @@ async function renderFeed(el, view) {
       <p class="lede">Coverage of the same development is grouped into one story. Scores combine interest, novelty, evidence quality, and practical impact — engagement is never counted as evidence.</p></div>
   </div>
   <div style="margin-bottom:18px">
-    <form class="row" id="intake">
+    <a href="#" class="add-url-link" data-act="add-url">+ Add story URL</a>
+    <form class="row intake-form" id="intake">
       <input name="url" placeholder="Submit a story URL (when no connector covers it)…" style="flex:1;min-width:260px">
       <select name="evidence_kind" style="width:auto">
         <option value="reporting">Independent reporting</option><option value="announcement">Announcement</option>
@@ -42,12 +43,12 @@ async function renderFeed(el, view) {
     ${settings.priorities.map(p => html`${p.weight > 0 ? html`<a class="${q.get('topic') === p.topic ? 'on' : ''}" href="#/feed?topic=${encodeURIComponent(p.topic)}">${p.topic}</a>` : ''}`)}
     <a class="${q.get('status') === 'archived' ? 'on' : ''}" href="#/feed?status=archived">Archived</a>
   </nav>
-  <section class="card">
+  <section class="card ledger">
     ${stories.length ? stories.map((s, idx) => html`
       <div class="story" data-href="#/story/${s.id}">
-        <div class="score ${idx === 0 && s.score >= settings.publish_threshold ? 'hot' : ''}">${scoreNum(s.score)}${idx === 0 ? html`<small>Score</small>` : ''}</div>
+        <div class="score" ${idx < 3 ? 'data-stamp' : ''}>${s.viewed_score != null && Math.round(s.viewed_score) !== Math.round(s.score) ? html`<s class="was" aria-label="was ${Math.round(s.viewed_score)}">${Math.round(s.viewed_score)}</s>` : ''}${scoreNum(s.score, { flap: true, from: s.viewed_score != null && Math.round(s.viewed_score) !== Math.round(s.score) ? s.viewed_score : null })}${idx === 0 ? html`<small>Score</small>` : ''}</div>
         <div>
-          <div class="story-title">${s.title} ${demoFlag(s.is_demo)}</div>
+          <div class="story-title">${s.title}${demoFlag(s.is_demo)}</div>
           <div class="row" style="margin-top:7px;gap:6px 14px">
             ${topicsLine(s.topics)}
             <span class="when">${s.article_count} article${s.article_count > 1 ? 's' : ''} · ${s.domain_count} source${s.domain_count > 1 ? 's' : ''} · ${timeAgo(s.updated_at)}</span>
@@ -63,6 +64,7 @@ async function renderFeed(el, view) {
   </section>`);
 
   on(el, 'click', '[data-href]', (e, t) => { location.hash = t.dataset.href; });
+  on(el, 'click', '[data-act="add-url"]', (e) => { e.preventDefault(); const f = el.querySelector('#intake'); f.classList.toggle('open'); f.querySelector('input')?.focus(); });
   el.querySelector('#intake').addEventListener('submit', async (e) => {
     e.preventDefault();
     const f = new FormData(e.target);
@@ -89,12 +91,12 @@ async function renderStory(el, view, id) {
       <h1 class="${s.title.length > 70 ? 'long' : ''}">${s.title}</h1>
       <p class="lede">${s.summary || ''}</p>
       <div class="row" style="margin-top:10px">
-        <span class="score inline">${scoreNum(s.score)}<small>Score</small></span>
+        <span class="score inline single" data-stamp style="--v:${Math.round(s.score)}">${s.prev_score != null && Math.round(s.prev_score) !== Math.round(s.score) ? html`<s class="was" aria-label="was ${Math.round(s.prev_score)}">${Math.round(s.prev_score)}</s><span class="caret-mark" aria-hidden="true">‸</span>` : ''}${scoreNum(s.score, { dec: true, from: s.prev_score != null && Math.round(s.prev_score) !== Math.round(s.score) ? s.prev_score : null })}<small>Score</small></span>
         ${topicsLine(s.topics, 6)}
         ${(s.companies || []).map(c => html`<span class="chip blue">${c}</span>`)}
         ${s.status === 'archived' ? html`<span class="chip">archived</span>` : ''}
       </div>
-      <p class="story-why" style="margin-top:10px"><strong>Why it ranked:</strong> ${s.explanation}</p>
+      <div class="why-ranked"><b>Why it ranked:</b> ${[(s.topics || []).slice(0, 3).join(', '), `${d.articles.length} article${d.articles.length === 1 ? '' : 's'}`].filter(Boolean).join(' · ')}${s.explanation ? html`<details><summary>Scoring detail</summary>${s.explanation}</details>` : ''}</div>
       ${meter(s.breakdown)}
       <div style="margin-top:8px">${engagementNote(s.breakdown?.engagement)}</div>
     </div>

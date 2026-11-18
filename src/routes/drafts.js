@@ -277,15 +277,21 @@ export function registerDrafts(route) {
     saveDraft(d.id, { image_id: id }, 'new visual');
     return fullDraft(d.id);
   });
-  route('GET', '/api/images/:id/plate', ({ params }) => {
-    const im = get('SELECT id, filename, mime, blurhash, ar FROM images WHERE id = ?', params.id);
-    if (!im) throw bad('Image not found', 404);
+  route('GET', '/api/plate', ({ query }) => {
+    const im = get('SELECT id FROM images WHERE filename = ?', String(query.file || ''));
+    if (!im) return { blurhash: null, ar: null };
+    return plateFor(im.id);
+  });
+  route('GET', '/api/images/:id/plate', ({ params }) => plateFor(params.id));
+  function plateFor(id) {
+    const im = get('SELECT id, filename, mime, blurhash, ar FROM images WHERE id = ?', id);
+    if (!im) return { blurhash: null, ar: null };
     if (!im.blurhash && /^image\//.test(im.mime || '')) {
       const bh = hashFile(path.join(MEDIA_DIR, im.filename));
       if (bh) { run('UPDATE images SET blurhash = ?, ar = ? WHERE id = ?', bh.hash, bh.ar, im.id); Object.assign(im, { blurhash: bh.hash, ar: bh.ar }); }
     }
     return { id: im.id, blurhash: im.blurhash, ar: im.ar };
-  });
+  }
   route('GET', '/api/images', ({ query }) => all(`SELECT * FROM images ${query.kind ? 'WHERE mime LIKE ?' : ''} ORDER BY id DESC LIMIT 200`, ...(query.kind ? [`${query.kind}/%`] : [])).map(hydrate));
   route('POST', '/api/images', ({ body }) => {
     if (!body.data || !body.filename) throw bad('File data required');

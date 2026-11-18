@@ -25,7 +25,7 @@ function results(r) {
   const total = groups.reduce((n, [k]) => n + r[k].length, 0);
   if (!total) return html`<div class="empty">No matches. Try fewer filters or a shorter phrase.</div>`;
   return html`<p class="mono faint" style="margin:0 0 10px">${total} result${total === 1 ? '' : 's'}</p>
-    <div class="stack">${groups.filter(([k]) => r[k].length).map(([k, title, row]) => html`<section class="card">
+    <div class="stack morgue">${groups.filter(([k]) => r[k].length).map(([k, title, row]) => html`<section class="clipping">
       <div class="row between"><h3>${title}</h3><span class="mono faint">${r[k].length}${r[k].length >= 50 ? '+' : ''}</span></div>
       ${r[k].map(row)}</section>`)}</div>`;
 }

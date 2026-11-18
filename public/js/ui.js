@@ -287,23 +287,26 @@ export function countUp(root = document) {
   const els = [...root.querySelectorAll('.score-num[data-v]:not([data-counted])')];
   if (!els.length) return;
   const t = (window.__byline?.threshold) ?? 55;
-  if (reducedMotion()) { els.forEach(e => e.dataset.counted = '1'); return; }
+  const caretOf = (el) => el.closest('.score')?.querySelector('.galley-scale .caret');
+  if (reducedMotion()) { els.forEach(e => { e.dataset.counted = '1'; const c = caretOf(e); if (c) c.style.transform = `translateX(${Math.min(100, Number(e.dataset.v))}%)`; e.closest('.score')?.classList.add('landed'); }); return; }
   const start = (el) => {
     if (active >= 8) { queue.push(el); return; }
     active++;
     const to = Number(el.dataset.v), from = Number(el.dataset.from ?? 0);
-    const intEl = el.querySelector('.int'), decEl = el.querySelector('.dec');
+    const intEl = el.querySelector('.int'), finalInt = intEl.dataset.final || (intEl.dataset.final = intEl.textContent);
     const dur = Math.min(500 + Math.abs(to - from) * 4, 900), t0 = performance.now();
     let band = -1;
+    const caret = caretOf(el);
     el.classList.add('counting');
     const frame = (now) => {
       const x = Math.min(1, (now - t0) / dur), e = 1 - (1 - x) ** 4;
       const cur = from + (to - from) * e;
       const txt = String(Math.round(x < 1 ? Math.floor(cur) : Math.round(to)));
       if (el.classList.contains('flap') && intEl.textContent !== txt) { intEl.classList.remove('tick'); void intEl.offsetWidth; intEl.classList.add('tick'); }
-      intEl.textContent = x < 1 ? txt : intEl.textContent.length && decEl ? String(Math.trunc(to)) : String(Math.round(to));
+      intEl.textContent = x < 1 ? txt : finalInt;
       const b = inkBand(cur, t), key = b.w * 1000 + b.h;
       if (key !== band) { band = key; el.style.setProperty('--w', b.w); el.style.setProperty('--heat', `${b.h}%`); }
+      if (caret) caret.style.transform = `translateX(${Math.min(100, cur)}%)`;
       if (x < 1) requestAnimationFrame(frame);
       else {
         el.style.cssText = inkStyle(to, t); el.classList.remove('counting'); el.classList.add('landed');
@@ -317,10 +320,101 @@ export function countUp(root = document) {
   const io = new IntersectionObserver((entries) => {
     entries.forEach((en, k) => { if (!en.isIntersecting) return; io.unobserve(en.target); const el = en.target; el.dataset.counted = '1'; setTimeout(() => start(el), Math.min(k, 6) * 60); });
   }, { threshold: .6 });
-  els.forEach(e => io.observe(e));
+  els.forEach(e => { const i = e.querySelector('.int'); if (i && !i.dataset.final) { i.dataset.final = i.textContent; i.textContent = String(Math.round(Number(e.dataset.from ?? 0))); } io.observe(e); });
 }
 
 /** Topics as run-in text ("AGENT ORCHESTRATION · EVALUATION"), not chips. */
 export const topicsLine = (topics = [], max = 3) => topics.length
   ? html`<span class="topics">${topics.slice(0, max).map((t, k) => html`${k ? html`<i>·</i>` : ''}${t}`)}${topics.length > max ? html`<i>·</i>+${topics.length - max}` : ''}</span>` : '';
 
+
+// ---------- galley-proof skeletons (shown only when a tab takes longer than 200ms) ----------
+export function galleyProof(key = '') {
+  const rows = key === 'today' ? 4 : key === 'feed' ? 6 : 3;
+  const row = () => '<div class="g-row"><div><div class="g-line t"></div><div class="g-line"></div><div class="g-line s"></div></div><div class="g-num"></div></div>'.replace('<div><div class="g-line t">', '<div><div class="g-line t">');
+  return `<div class="galley" aria-busy="true"><span class="sr-only">Setting type…</span><div class="g-kick"></div><div class="g-h1"></div><div class="g-rule"></div>${Array.from({ length: rows }, row).join('')}</div>`;
+}
+
+// ---------- halftone plates: BlurHash decoded to luminance, real image develops over it ----------
+const B83 = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz#$%*+,-.:;=?@[]^_{|}~';
+const d83 = (s) => [...s].reduce((v, c) => v * 83 + B83.indexOf(c), 0);
+const s2l = (v) => { v /= 255; return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
+const l2s = (v) => { v = Math.max(0, Math.min(1, v)); return Math.round((v <= 0.0031308 ? v * 12.92 : 1.055 * v ** (1 / 2.4) - 0.055) * 255); };
+const sp = (v, e) => Math.sign(v) * Math.abs(v) ** e;
+export function decodeBlurhash(hash, w = 32, h = 32) {
+  const size = d83(hash[0]), nx = (size % 9) + 1, ny = Math.floor(size / 9) + 1;
+  const maxV = (d83(hash[1]) + 1) / 166;
+  const colors = [];
+  for (let i = 0; i < nx * ny; i++) {
+    if (i === 0) { const v = d83(hash.slice(2, 6)); colors.push([s2l(v >> 16), s2l((v >> 8) & 255), s2l(v & 255)]); }
+    else { const v = d83(hash.slice(4 + i * 2, 6 + i * 2)); colors.push([Math.floor(v / 361), Math.floor(v / 19) % 19, v % 19].map(q => sp((q - 9) / 9, 2) * maxV)); }
+  }
+  const lum = new Uint8ClampedArray(w * h);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    let r = 0, g = 0, b = 0;
+    for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+      const basis = Math.cos(Math.PI * x * i / w) * Math.cos(Math.PI * y * j / h), c = colors[i + j * nx];
+      r += c[0] * basis; g += c[1] * basis; b += c[2] * basis;
+    }
+    lum[y * w + x] = 0.2126 * l2s(r) + 0.7152 * l2s(g) + 0.0722 * l2s(b);
+  }
+  return lum;
+}
+const plateCache = new Map();
+/** Data URL of a luminance plate tinted to the current desk (ink on paper). */
+export function plateUrl(hash) {
+  const dark = document.documentElement.dataset.theme === 'dark';
+  const k = `${hash}|${dark}`;
+  if (plateCache.has(k)) return plateCache.get(k);
+  const w = 32, h = 32, lum = decodeBlurhash(hash, w, h);
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const ctx = c.getContext('2d'), img = ctx.createImageData(w, h);
+  const ink = dark ? [31, 28, 22] : [28, 26, 22], paper = dark ? [120, 112, 98] : [234, 227, 213];
+  for (let p = 0; p < w * h; p++) { const t = lum[p] / 255; for (let ch = 0; ch < 3; ch++) img.data[p * 4 + ch] = ink[ch] + (paper[ch] - ink[ch]) * t; img.data[p * 4 + 3] = 255; }
+  ctx.putImageData(img, 0, 0);
+  const url = c.toDataURL();
+  plateCache.set(k, url);
+  return url;
+}
+/** Markup for an image on a halftone plate; call hydratePlates(root) after insertion. */
+export function plateImg(file, { alt = '', ar = null, cls = '' } = {}) {
+  return html`<span class="plate ${cls}" data-plate="${file}" style="${ar ? `aspect-ratio:${ar}` : ''}"><img src="/media/${file}" alt="${alt}" loading="lazy" decoding="async"></span>`;
+}
+export function hydratePlates(root = document) {
+  root.querySelectorAll('.plate[data-plate]:not([data-hyd])').forEach(async (el) => {
+    el.dataset.hyd = '1';
+    const img = el.querySelector('img');
+    const show = () => img.classList.add('in');
+    if (img.complete && img.naturalWidth) show(); else img.addEventListener('load', show, { once: true });
+    try {
+      const r = await fetch(`/api/plate?file=${encodeURIComponent(el.dataset.plate)}`).then(x => x.ok ? x.json() : null);
+      if (r?.ar && !el.style.aspectRatio) el.style.aspectRatio = String(r.ar);
+      if (r?.blurhash && !img.classList.contains('in')) el.style.backgroundImage = `url(${plateUrl(r.blurhash)})`;
+    } catch (e) { /* plate is decoration only */ }
+  });
+}
+
+// ---------- correction strike + fold away, with undo ----------
+/**
+ * Strike a row through, fold it out of the list, and offer Undo. `commit` runs when the undo window ends.
+ * `revert` (optional) runs if the commit fails or after undo restores the row.
+ */
+export function strikeOut(row, { message = 'Removed.', commit, onUndo } = {}) {
+  const parent = row.parentNode, next = row.nextSibling;
+  row.classList.add('struck');
+  const fold = () => {
+    if (!row.isConnected) return;
+    const h = row.getBoundingClientRect().height;
+    const followers = [];
+    for (let s = row.nextElementSibling; s && followers.length < 12; s = s.nextElementSibling) followers.push(s);
+    row.remove();
+    if (!reducedMotion()) followers.forEach(f => f.animate([{ transform: `translateY(${h}px)` }, { transform: 'none' }], { duration: 200, easing: 'cubic-bezier(.65,0,.35,1)' }));
+  };
+  const t = setTimeout(fold, reducedMotion() ? 0 : 260);
+  toast(message, '', {
+    undo: {
+      commit: async () => { try { await commit?.(); } catch (e) { parent.insertBefore(row, next); row.classList.remove('struck'); toast(`That didn’t save — it has been put back. (${e.message})`, 'err'); } },
+      revert: () => { clearTimeout(t); if (!row.isConnected) parent.insertBefore(row, next); row.classList.remove('struck'); if (!reducedMotion()) row.animate([{ opacity: 0, transform: 'translateY(-4px)' }, { opacity: 1, transform: 'none' }], { duration: 200, easing: 'cubic-bezier(.16,1,.3,1)' }); onUndo?.(); }
+    }
+  });
+}

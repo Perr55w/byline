@@ -251,7 +251,6 @@ label.field > input, label.field > textarea, label.field > select { margin-top: 
 /* --------------------------------------------------------------- numerals */
 .score { font: 700 34px/.9 var(--data); font-stretch: 75%; letter-spacing: -0.04em; color: var(--ink); text-align: right; font-variant-numeric: tabular-nums slashed-zero; }
 .score small { display: block; font: 700 var(--fs-stamp)/1 var(--body); letter-spacing: .12em; color: var(--ink-3); margin-top: 6px; }
-.score.hot { color: var(--pencil-red); }
 .score-num { position: relative; display: inline-block; font-family: var(--data); font-stretch: 75%; font-variant-numeric: tabular-nums slashed-zero; }
 .score-num .int { position: relative; display: inline-block; }
 .dec { font-size: .5em; font-weight: 400; vertical-align: .55em; letter-spacing: 0; margin-left: -.04em; }
@@ -422,13 +421,6 @@ main.press .meter i b { animation: rule-draw 360ms cubic-bezier(.2, .8, .2, 1) c
 main.press .split > :nth-child(2), main.press .studio > :nth-child(2) { animation: fade 360ms ease-out var(--aside) both; }
 main.press .split > :nth-child(2) > .card:first-child::before { content: ''; position: absolute; left: 0; right: 0; top: -2px; height: 2px; background: var(--paper); transform-origin: right; animation: rule-draw 360ms var(--ease-rule) var(--aside) reverse both; }
 
-/* Score count-up: an overlay on the integer part only; the real text stays for assistive tech. */
-main.press.hero .score-num .int::before {
-  content: counter(n) / ''; counter-reset: n var(--n); position: absolute; inset: 0; background: var(--paper); text-align: inherit;
-  animation: count 700ms var(--ease-press) calc(var(--row-start) + 120ms + var(--i-score, 0) * var(--stagger)) both, hide 1ms linear calc(var(--row-start) + 820ms + var(--i-score, 0) * var(--stagger)) forwards;
-}
-.brief-item.lead .score-num .int::before { --i-score: 0; }
-
 /* hero-only: dateline types in, highlighter sweeps under the lead */
 main.press.hero .page-head .kicker { animation: type-in 420ms steps(28, end) both; }
 main.press.hero .page-head::after { animation-duration: 520ms; animation-delay: 60ms; }
@@ -445,7 +437,6 @@ main.press .below-fold::before { content: ''; position: absolute; left: 0; right
   *, *::before, *::after { animation-duration: 1ms !important; animation-delay: 0s !important; animation-iteration-count: 1 !important; transition-duration: 1ms !important; scroll-behavior: auto !important; }
   .pressbar.on::after { display: none; }
   .spinner::before { clip-path: none; }
-  main.press.hero .score-num .int::before { display: none; }
 }
 
 /* --------------------------------------------------------------- responsive */
@@ -478,7 +469,6 @@ main.press .below-fold::before { content: ''; position: absolute; left: 0; right
   .section-block.locked::after { right: 10px; top: -10px; }
   button, .btn { white-space: normal; }
 }
-.story-title, .claim, .li-body, td, main a, .hit-title { overflow-wrap: anywhere; }
 main[data-route="story"] h1, main[data-route="draft"] h1 { font-size: var(--fs-3xl); line-height: 1.02; max-width: min(30ch, 100%); }
 main[data-route="story"] h1.long, main[data-route="draft"] h1.long { font-size: var(--fs-2xl); }
 .score.inline { text-align: left; font-size: 28px; }
