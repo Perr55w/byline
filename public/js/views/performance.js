@@ -32,7 +32,7 @@ export async function render(view) {
   </div>
 
   <div class="stack reveal">
-    <section class="card accent">
+    <section class="card screened">
       <div class="row between"><h3>Compare averages per post</h3>
         <div class="tabs" style="margin:0;border:0">${GROUPS.map(([k, l]) => html`<button data-group="${k}" class="${k === ui.group ? 'on' : ''}">${l}</button>`)}</div>
       </div>

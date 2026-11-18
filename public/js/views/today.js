@@ -78,7 +78,7 @@ export async function render(view) {
         <h3>Suggested LinkedIn draft</h3>
         ${t.draft ? html`
           <a href="#/draft/${t.draft.id}" style="color:inherit">
-            ${t.draft.image_file ? html`<div style="border:1px solid var(--rule-strong);margin-bottom:10px">${plateImg(t.draft.image_file, { ar: 1.91 })}</div>` : ''}
+            ${t.draft.image_file ? html`<div style="border:1px solid var(--rule-strong);margin-bottom:10px">${plateImg(t.draft.image_file)}</div>` : ''}
             <div class="story-title">${t.draft.title}</div>
           </a>
           <div class="row" style="margin-top:8px">${status(t.draft.status)}<span class="chip">${channelLabel(t.draft.channel, t.draft.format)}</span></div>

@@ -330,9 +330,14 @@ export const topicsLine = (topics = [], max = 3) => topics.length
 
 // ---------- galley-proof skeletons (shown only when a tab takes longer than 200ms) ----------
 export function galleyProof(key = '') {
-  const rows = key === 'today' ? 4 : key === 'feed' ? 6 : 3;
-  const row = () => '<div class="g-row"><div><div class="g-line t"></div><div class="g-line"></div><div class="g-line s"></div></div><div class="g-num"></div></div>'.replace('<div><div class="g-line t">', '<div><div class="g-line t">');
-  return `<div class="galley" aria-busy="true"><span class="sr-only">Setting type…</span><div class="g-kick"></div><div class="g-h1"></div><div class="g-rule"></div>${Array.from({ length: rows }, row).join('')}</div>`;
+  const head = '<div class="g-kick"></div><div class="g-h1"></div><div class="g-rule"></div>';
+  const meters = '<div class="g-meters"><i></i><i></i><i></i><i></i></div>';
+  let body;
+  if (key === 'feed') body = Array.from({ length: 5 }, () => `<div class="g-row g-left"><div class="g-num"></div><div><div class="g-line t"></div><div class="g-line s"></div>${meters}</div></div>`).join('');
+  else if (key === 'today') body = `<div class="g-lead"><div><div class="g-line g-big"></div><div class="g-line g-big" style="width:48%"></div><div class="g-line"></div><div class="g-line s"></div></div><div class="g-num g-num-lg"></div></div>
+    <div class="g-fold">${Array.from({ length: 4 }, () => '<div class="g-row g-right"><div><div class="g-line t"></div><div class="g-line s"></div></div><div class="g-num"></div></div>').join('')}</div>`;
+  else body = Array.from({ length: 4 }, () => '<div class="g-row g-plain"><div><div class="g-line t"></div><div class="g-line"></div><div class="g-line s"></div></div></div>').join('');
+  return `<div class="galley" aria-busy="true"><span class="sr-only">Setting type…</span>${head}${body}</div>`;
 }
 
 // ---------- halftone plates: BlurHash decoded to luminance, real image develops over it ----------

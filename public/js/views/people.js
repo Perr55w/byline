@@ -72,7 +72,7 @@ async function renderList(el, ctx) {
         <div class="track-bar"><b style="width:${Math.min(100, fu.week.goal ? fu.week.sent / fu.week.goal * 100 : 0)}%"></b></div>
         <p class="small muted" style="margin:8px 0 0">${fu.week.sent >= fu.week.goal ? 'Goal met — quality over volume from here.' : `${fu.week.goal - fu.week.sent} more approved message${fu.week.goal - fu.week.sent === 1 ? '' : 's'} to hit your weekly goal.`}</p>
       </section>` : ''}
-      <section class="card accent">
+      <section class="card ledger">
         <h3>Follow-ups</h3>
         ${fu.due.length ? fu.due.map(f => html`<div class="row between list-row">
           <span><a href="#/person/${f.id}">${f.name}</a> <span class="faint small">${f.employer || ''}</span><div class="small muted">${f.next_step || ''}</div></span>
@@ -180,7 +180,7 @@ async function renderPerson(el, id, ctx) {
 
   <div class="split">
     <div class="stack reveal">
-      <section class="card accent">
+      <section class="card">
         <h3>Research card</h3>
         <form class="form-grid" id="research">
           <label class="field">Name<input name="name" value="${c.name}"></label>

@@ -190,7 +190,7 @@ async function weekly(pane, again) {
         ${w.ideas.length ? w.ideas.map(i => html`<div class="list-row"><a href="#" data-open-project="${i.id}">${i.title}</a><div class="small muted">${i.question}</div></div>`) : html`<p class="muted small">No ideas waiting. Generate one from a story.</p>`}
       </section>
     </div>
-    <section class="card accent">
+    <section class="card ledger">
       <h3>This week's shortlist</h3>
       ${short.length ? short.map(s => html`<div class="list-row"><div class="row" style="margin-bottom:6px"><span class="chip ${({ trend: 'violet', update: 'blue', project: 'amber' })[s.kind]}">${s.kind}</span></div>
         <div>${s.label}</div>

@@ -43,8 +43,8 @@ main :is(.story, .brief-item, .source-row, .evidence, .hit, .stage, tbody tr):nt
 main :is(.story, .brief-item, .source-row, .evidence, .hit, .stage, tbody tr):nth-child(n+8) { --i: 7; }
 @supports (animation-timeline: view()) {
   @media (prefers-reduced-motion: no-preference) {
-    main :is(.story, .source-row, .hit, tbody tr, .cal-item):nth-child(n+9) { animation: slug-in linear both; animation-timeline: view(); animation-range: entry 0% entry 60%; }
-    main .stack > section:nth-child(n+3) { animation: slug-in linear both; animation-timeline: view(); animation-range: entry 0% entry 35%; }
+    main :is(.story, .source-row, .hit, tbody tr, .cal-item):nth-child(n+9) { animation: slug-in linear both; animation-timeline: view(); animation-range: entry 0% cover 25%; }
+    main .stack > section:nth-child(n+3) { animation: slug-in linear both; animation-timeline: view(); animation-range: entry 0% cover 20%; }
   }
 }
 
@@ -126,17 +126,16 @@ main.press[data-route="settings"] .page-head h1 { animation-duration: 300ms; }
     .pressbar::before { content: ''; position: absolute; inset: 0; background: var(--band-mark); opacity: .7; transform-origin: left; transform: scaleX(0); animation: progress linear both; animation-timeline: scroll(root); }
     .pressbar.on::before { opacity: 0; }
   }
-  /* press-run band: ink travels down the column rules while a workflow runs */
-  .shell.running main::after {
-    content: ''; position: absolute; inset: 0 16px; pointer-events: none; z-index: -1; overflow: hidden;
-    background: repeating-linear-gradient(90deg, transparent 0 calc(100% / 6 - 2px), var(--pencil-red) calc(100% / 6 - 2px) calc(100% / 6));
-    -webkit-mask-image: linear-gradient(180deg, transparent, #000 40%, #000 60%, transparent); mask-image: linear-gradient(180deg, transparent, #000 40%, #000 60%, transparent);
-    -webkit-mask-size: 100% 240px; mask-size: 100% 240px; -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
-    opacity: .5; animation: press-run 1.6s linear infinite;
+  /* press-run band: ink travels down the column rules while a workflow runs (transform only) */
+  .shell.running::after {
+    content: ''; position: fixed; left: 16px; right: 16px; top: 0; height: 240px; pointer-events: none; z-index: 0; will-change: transform;
+    background: repeating-linear-gradient(90deg, transparent 0 calc(100% / 6 - 1px), color-mix(in srgb, var(--ink) 22%, transparent) calc(100% / 6 - 1px) calc(100% / 6));
+    -webkit-mask-image: linear-gradient(180deg, transparent, #000 45%, #000 55%, transparent); mask-image: linear-gradient(180deg, transparent, #000 45%, #000 55%, transparent);
+    animation: press-run 2.4s linear infinite;
   }
 }
 @keyframes progress { to { transform: scaleX(1); } }
-@keyframes press-run { from { -webkit-mask-position: 0 -240px; mask-position: 0 -240px; } to { -webkit-mask-position: 0 100vh; mask-position: 0 100vh; } }
+@keyframes press-run { from { transform: translateY(-240px); } to { transform: translateY(100vh); } }
 html.doc-hidden * { animation-play-state: paused !important; }
 
 /* pressbar driven by real stages */

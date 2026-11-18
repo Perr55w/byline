@@ -77,7 +77,7 @@ function paintSwitch() {
   const night = themeNow() === 'dark';
   b.setAttribute('aria-checked', String(night));
   b.setAttribute('aria-label', night ? 'Night desk on — switch to Proof desk' : 'Proof desk on — switch to Night desk');
-  b.dataset.short = night ? '☾' : '☼';
+  b.dataset.short = night ? '☾ Night' : '☼ Proof';
   document.querySelector('meta[name="theme-color"]')?.setAttribute('content', night ? '#0B0A08' : '#1C1A16');
 }
 function applyTheme(next) {

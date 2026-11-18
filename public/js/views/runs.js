@@ -70,7 +70,7 @@ export async function render(view, { params = [] } = {}) {
         </table></div>` : html`<div class="empty">No runs yet. Use “Run now”, or enable the daily schedule in Settings.</div>`}
       </section>
 
-      ${run ? html`<section class="card accent">
+      ${run ? html`<section class="card">
         <div class="row between">
           <h3>Run #${run.id} · ${run.run_date}</h3>
           <span class="row">${runChip(run.status)}<span class="mono faint">${run.trigger} · ${fmtDateTime(run.started_at)} · ${dur(run.started_at, run.finished_at)}</span></span>

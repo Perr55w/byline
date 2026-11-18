@@ -90,7 +90,7 @@ async function renderDetail(el, id, ctx) {
       </section>
     </div>
     <div class="stack reveal">
-      <section class="card accent">
+      <section class="card screened">
         <h3>Outcomes</h3>
         <div class="grid g3">${stat(o.replies, 'Replies')}${stat(o.meetings, 'Meetings')}${stat(o.portfolio_visits, 'Portfolio visits')}</div>
         <p class="faint small" style="margin-bottom:0">Replies and meetings come from your interaction log after a message was sent. Portfolio visits come from metrics you enter on drafts — shown as unavailable when none were recorded.</p>

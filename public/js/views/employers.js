@@ -112,7 +112,7 @@ async function renderActivity(el, id, ctx) {
       ${section('Conversations', a.conversations, c => html`<div class="list-row"><div class="row between"><a href="#/person/${c.contact_id}">${c.name}</a><span class="row"><span class="chip">${(c.kind || '').replace(/_/g, ' ')}</span><span class="mono faint">${c.date}</span></span></div>${c.notes ? html`<div class="small muted">${c.notes}</div>` : ''}</div>`, 'No logged conversations with people here.')}
     </div>
     <div class="stack reveal">
-      <section class="card accent">
+      <section class="card ledger">
         <h3>Topics</h3>
         <div class="faint small">Repeated in stories</div>
         <div class="row" style="margin:6px 0 12px">${a.repeated_topics.length ? a.repeated_topics.map(([t, n]) => html`<span class="chip ${a.covered_topics.includes(t) ? 'green' : 'violet'}">${t} · ${n}</span>`) : html`<span class="muted small">—</span>`}</div>

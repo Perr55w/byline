@@ -74,7 +74,7 @@ export async function render(view) {
     </div>
 
     <div class="grid g2 reveal" style="align-items:start">
-      <section class="card accent" style="grid-column:1 / -1">
+      <section class="card ledger" style="grid-column:1 / -1">
         <div class="row between"><h3>Priorities</h3><span class="mono faint">weight 0 = ignore · 1 = normal · 2 = double</span></div>
         <p class="muted small" style="margin-top:0">Topics and the terms that signal them. Saving re-ranks the last 30 days of stories.</p>
         <div data-prios>${s.priorities.map((x, i) => html`<div class="prio-row">

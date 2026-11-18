@@ -56,7 +56,7 @@ async function renderFeed(el, view) {
             ${(s.companies || []).length ? html`<span class="chip blue">${s.companies.join(', ')}</span>` : ''}
             ${s.collections ? html`<span class="chip green">Saved: ${s.collections}</span>` : ''}
           </div>
-          <div class="story-why">${s.explanation || ''}</div>
+          <div class="why-ranked"><b>Why it ranked:</b> ${(s.topics || []).slice(0, 2).join(', ')}${/watchlist/i.test(s.explanation || '') ? ' · on your watchlist' : ''}${s.domain_count > 1 ? ` · ${s.domain_count} independent sources` : ''}</div>
           ${meter(s.breakdown)}
           ${engagementNote(s.breakdown?.engagement)}
         </div>
@@ -91,7 +91,7 @@ async function renderStory(el, view, id) {
       <h1 class="${s.title.length > 70 ? 'long' : ''}">${s.title}</h1>
       <p class="lede">${s.summary || ''}</p>
       <div class="row" style="margin-top:10px">
-        <span class="score inline single" data-stamp style="--v:${Math.round(s.score)}">${s.prev_score != null && Math.round(s.prev_score) !== Math.round(s.score) ? html`<s class="was" aria-label="was ${Math.round(s.prev_score)}">${Math.round(s.prev_score)}</s><span class="caret-mark" aria-hidden="true">‸</span>` : ''}${scoreNum(s.score, { dec: true, from: s.prev_score != null && Math.round(s.prev_score) !== Math.round(s.score) ? s.prev_score : null })}<small>Score</small></span>
+        <span class="score inline single" data-stamp style="--v:${Math.round(s.score)}">${s.prev_score != null && Math.round(s.prev_score) !== Math.round(s.score) ? html`<s class="was" aria-label="was ${Math.round(s.prev_score)}">${Math.round(s.prev_score)}</s><span class="caret-mark" aria-hidden="true">‸</span>` : ''}${scoreNum(s.score, { dec: true, from: s.prev_score != null && Math.round(s.prev_score) !== Math.round(s.score) ? s.prev_score : null })}<small>Score</small><span class="galley-scale" aria-hidden="true" style="--t:${window.__byline?.threshold ?? 55}%"><b class="th"></b><i class="caret"></i></span></span>
         ${topicsLine(s.topics, 6)}
         ${(s.companies || []).map(c => html`<span class="chip blue">${c}</span>`)}
         ${s.status === 'archived' ? html`<span class="chip">archived</span>` : ''}
