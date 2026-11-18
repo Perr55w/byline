@@ -483,3 +483,5 @@ main[data-route="story"] h1, main[data-route="draft"] h1 { font-size: var(--fs-3
 main[data-route="story"] h1.long, main[data-route="draft"] h1.long { font-size: var(--fs-2xl); }
 .score.inline { text-align: left; font-size: 28px; }
 @media (max-width: 760px) { main[data-route="story"] h1, main[data-route="draft"] h1 { font-size: var(--fs-2xl); } }
+/* every block after the page head waits for the headline (rows inside start later) */
+main.press .page-head ~ * { animation: fade 280ms ease-out calc(var(--row-start) - 60ms) both; }
