@@ -79,3 +79,14 @@ export async function deliverBrief(date, { force = false, only = null } = {}) {
   run('UPDATE briefs SET delivered_json = ? WHERE id = ?', JSON.stringify(done), b.id);
   return out;
 }
+
+/** Spoken version of a date's brief (used by the Kokoro audio briefing). */
+export function briefScript(date) {
+  const b = get('SELECT * FROM briefs WHERE run_date = ?', date);
+  if (!b) return null;
+  const items = parse(b.items_json, []);
+  const d = new Date(`${date}T12:00:00`).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+  return [`Byline briefing for ${d}.`, b.summary, ...items.map((it, i) => `Story ${i + 1}. ${it.title}. ${it.summary}`),
+    b.draft_id ? 'Today\'s suggested draft is ready for your review.' : ''].filter(Boolean).join(' ');
+}
+

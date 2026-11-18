@@ -15,6 +15,7 @@
     "backup": "node --disable-warning=ExperimentalWarning scripts/backup.js"
   },
   "optionalDependencies": {
-    "@anthropic-ai/sdk": "^1.10.0"
+    "@anthropic-ai/sdk": "^1.10.0",
+    "kokoro-js": "^1.2.1"
   }
 }

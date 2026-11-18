@@ -321,6 +321,12 @@ export async function runDaily({ date, trigger = 'manual', fromStage = null, run
     }
     // Post-run extras: never fail the run, but record what happened.
     try { stats.delivery = await deliverBrief(date); } catch (e) { stats.delivery = { error: e.message }; }
+    // Pre-render the audio briefing in the background so "Listen" starts instantly (skipped if Kokoro isn't installed).
+    import('./tts.js').then(async ({ speak, chunk, ttsStatus }) => {
+      if (!(await ttsStatus()).installed) return;
+      const { briefScript } = await import('./delivery.js');
+      for (const c of chunk(briefScript(date) || '')) await speak(c, getSettings().tts_voice || undefined).catch(() => {});
+    }).catch(() => {});
     const weekday = new Date(`${date}T12:00:00Z`).toLocaleDateString('en-US', { weekday: 'short', timeZone: 'UTC' });
     if (weekday === (s.schedule?.weekly_roundup_day || 'Fri')) {
       try { stats.weekly = await weeklyRoundup(date); } catch (e) { stats.weekly = { error: e.message }; }
