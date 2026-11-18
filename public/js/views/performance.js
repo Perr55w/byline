@@ -24,7 +24,7 @@ export async function render(view) {
     <div>
       <div class="kicker">Post performance</div>
       <h1>Performance</h1>
-      <p class="lede">Enter or import results for published posts and compare what works by topic, format, angle and channel. Missing metrics are shown as unavailable — never counted as zero.</p>
+      <p class="live-dek">${p.posts.length ? html`<b>${p.posts.length}</b> published post${p.posts.length === 1 ? '' : 's'} measured · <b>${(p.by_topic || []).length}</b> topics compared · goal: <b>${label(ui.goal)}</b>` : html`<b>0</b> posts measured yet · add results after you publish — missing metrics stay blank, never zero`}</p>
     </div>
     <label class="field" style="min-width:240px">Goal metric
       <select data-goal>${GOALS.map(([k, l]) => html`<option value="${k}" ${k === ui.goal ? 'selected' : ''}>${l}</option>`)}</select>

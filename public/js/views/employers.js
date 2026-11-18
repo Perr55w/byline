@@ -16,7 +16,7 @@ export async function render(el, ctx = {}) {
     <div>
       <div class="kicker">Target employers</div>
       <h1>Employers</h1>
-      <p class="lede">Companies and the specific teams you follow. Related organizations stay separate — Cox Enterprises and Cox Automotive, or Google Cloud, DeepMind, and other Google teams — so evidence is never pooled across them.</p>
+      <p class="live-dek"><b>${employers.length}</b> companies · <b>${employers.filter(e => e.pinned).length}</b> pinned · <b>${employers.reduce((n, e) => n + e.teams.length, 0)}</b> teams · <b>${employers.reduce((n, e) => n + e.story_count, 0)}</b> related stories — kept separate, never pooled</p>
     </div>
     <div class="row"><button class="primary" data-act="add">Add employer</button></div>
   </div>

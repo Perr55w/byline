@@ -25,7 +25,7 @@ async function renderFeed(el, view) {
   el.innerHTML = String(html`
   <div class="page-head">
     <div><div class="kicker">Ranked by your priorities</div><h1>Feed</h1>
-      <p class="lede">Coverage of the same development is grouped into one story. Scores combine interest, novelty, evidence quality, and practical impact — engagement is never counted as evidence.</p></div>
+      <p class="live-dek"><b>${stories.length}</b> stories · <b>${stories.filter(x => x.score >= settings.publish_threshold).length}</b> above your threshold of ${settings.publish_threshold} · ranked by your <b>${settings.priorities.filter(x => x.weight > 0).length}</b> priorities</p></div>
   </div>
   <div style="margin-bottom:18px">
     <a href="#" class="add-url-link" data-act="add-url">+ Add story URL</a>
