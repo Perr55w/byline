@@ -2,7 +2,7 @@
 .ctl-scroll { overflow-x: auto; }
 .ctl-scroll table { min-width: 720px; }
 .ctl-err { color: var(--pencil-red); font-size: var(--fs-xs); word-break: break-word; }
-.ctl-ok { color: var(--st-ok); font-size: var(--fs-xs); }
+.ctl-ok { color: var(--ink); font-size: var(--fs-xs); }
 .ctl-kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; font-size: var(--fs-sm); }
 .ctl-kv dt { font: 700 var(--fs-label)/1.3 var(--body); color: var(--ink-3); text-transform: uppercase; letter-spacing: .09em; padding-top: 2px; }
 .ctl-kv dd { margin: 0; }

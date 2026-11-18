@@ -25,7 +25,7 @@ export async function refreshStatus() {
       <span><span class="dot ${s.provider.active === 'local' ? 'warn' : 'ok'}"></span><b>${engine}</b></span>
       <span>LinkedIn: <b>${s.publishers.linkedin.available ? 'connected' : 'manual'}</b></span>
       <span><b>${s.counts.stories}</b> stories · <b>${s.counts.sources}</b> sources</span>
-      ${s.counts.demo_articles ? html`<span class="demo-flag" style="color:#E0B055">Demo data</span>` : ''}`);
+      ${s.counts.demo_articles ? html`<span class="demo-flag">Demo data</span>` : ''}`);
     const d = new Date(`${s.today}T12:00:00`);
     const doy = Math.round((d - new Date(d.getFullYear(), 0, 0)) / 864e5);
     document.getElementById('dateline').textContent = `Vol. 1 · No. ${doy} · ${d.toLocaleDateString('en-US', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' }).replace(/,/g, '')}`;

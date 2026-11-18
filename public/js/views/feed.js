@@ -37,15 +37,15 @@ async function renderFeed(el, view) {
       <button class="primary" type="submit">Add story</button>
     </form>
   </div>
-  <div class="row" style="margin-bottom:14px">
-    <a class="chip ${!q.get('topic') ? 'blue' : ''}" href="#/feed">All</a>
-    ${settings.priorities.map(p => html`${p.weight > 0 ? html`<a class="chip ${q.get('topic') === p.topic ? 'blue' : ''}" href="#/feed?topic=${encodeURIComponent(p.topic)}">${p.topic}</a>` : ''}`)}
-    <a class="chip ${q.get('status') === 'archived' ? 'blue' : ''}" href="#/feed?status=archived">Archived</a>
-  </div>
+  <nav class="filters" aria-label="Filter by topic">
+    <a class="${!q.get('topic') && !q.get('status') ? 'on' : ''}" href="#/feed">All</a>
+    ${settings.priorities.map(p => html`${p.weight > 0 ? html`<a class="${q.get('topic') === p.topic ? 'on' : ''}" href="#/feed?topic=${encodeURIComponent(p.topic)}">${p.topic}</a>` : ''}`)}
+    <a class="${q.get('status') === 'archived' ? 'on' : ''}" href="#/feed?status=archived">Archived</a>
+  </nav>
   <section class="card">
     ${stories.length ? stories.map((s, idx) => html`
       <div class="story" data-href="#/story/${s.id}">
-        <div class="score ${idx === 0 && s.score >= settings.publish_threshold ? 'hot' : ''}">${scoreNum(s.score)}<small>Score</small></div>
+        <div class="score ${idx === 0 && s.score >= settings.publish_threshold ? 'hot' : ''}">${scoreNum(s.score)}${idx === 0 ? html`<small>Score</small>` : ''}</div>
         <div>
           <div class="story-title">${s.title} ${demoFlag(s.is_demo)}</div>
           <div class="row" style="margin-top:7px;gap:6px 14px">

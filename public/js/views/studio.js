@@ -256,11 +256,8 @@ async function editor(el, id) {
       <div style="max-width:900px">
         <div class="kicker"><a href="#/studio">← Studio</a>&thinsp;·&thinsp;${channelLabel(d.channel, d.format)}&thinsp;·&thinsp;draft #${d.id}${d.meta?.adapted_from ? ` · adapted from #${d.meta.adapted_from}` : ''}</div>
         <h1 class="${(d.title || '').length > 70 ? 'long' : ''}">${d.title || 'Untitled'}</h1>
-        <div class="row" style="margin-top:10px">${status(d.status)}
-          ${d.story_id ? html`<a class="chip violet" href="#/story/${d.story_id}">story #${d.story_id}</a>` : ''}
-          ${d.project ? html`<a class="chip green" href="#/career">project: ${d.project.title}</a>` : ''}
-          ${d.siblings.map(s => html`<a class="chip" href="#/draft/${s.id}">${channelLabel(s.channel, s.format)} · ${s.status.replace('_', ' ')}</a>`)}
-          ${d.meta?.generated_by ? html`<span class="chip">engine: ${d.meta.generated_by}</span>` : ''}
+        <div class="row" style="margin-top:10px;gap:8px 12px">${status(d.status)}
+          <span class="topics">${d.story_id ? html`<a href="#/story/${d.story_id}">Story #${d.story_id}</a>` : ''}${d.project ? html`<i>·</i><a href="#/career">Project: ${d.project.title}</a>` : ''}${d.siblings.length ? html`<i>·</i>Also: ${d.siblings.map((x, k) => html`${k ? ', ' : ''}<a href="#/draft/${x.id}">${channelLabel(x.channel, x.format).replace(' · ', ' ')}</a>`)}` : ''}${d.meta?.generated_by ? html`<i>·</i>Engine ${d.meta.generated_by}` : ''}</span>
         </div>
       </div>
     </div>
@@ -372,7 +369,7 @@ async function editor(el, id) {
     const a = btn.dataset.act;
     const sid = btn.dataset.id;
     try {
-      if (a === 'lock') { const s = d.sections.find(x => x.id === sid); s.locked = !s.locked; await saveSections(s.locked ? `lock ${s.label}` : `unlock ${s.label}`); paint(); }
+      if (a === 'lock') { const s = d.sections.find(x => x.id === sid); s.locked = !s.locked; await saveSections(s.locked ? `lock ${s.label}` : `unlock ${s.label}`); paint(); if (s.locked) { const b = el.querySelector(`#sec-${CSS.escape(sid)}`); b?.classList.add('just-locked'); setTimeout(() => b?.classList.remove('just-locked'), 400); } }
       if (a === 'rewrite') await act(btn, async () => { d = await api.post(`/drafts/${id}/regenerate`, { section_id: sid, angle: el.querySelector('#angle').value }); paint(); toast('Section rewritten — earlier text saved in history', 'ok'); }, 'Rewriting…');
       if (a === 'regen') await act(btn, async () => { d = await api.post(`/drafts/${id}/regenerate`, { format: el.querySelector('#format').value, angle: el.querySelector('#angle').value }); paint(); toast('Regenerated unlocked sections', 'ok'); }, 'Regenerating…');
       if (a === 'goto') el.querySelector(`#sec-${CSS.escape(sid)}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
