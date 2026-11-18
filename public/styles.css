@@ -90,7 +90,6 @@ body {
   color: var(--ink);
   font: 400 var(--fs-base)/1.55 var(--body);
   -webkit-font-smoothing: antialiased;
-  font-variant-numeric: tabular-nums;
   background-color: var(--paper);
   /* newsprint grain + soft top vignette: static, no blend modes */
   /* newsprint grain + soft top vignette: one static background layer, no blend modes, nothing above content */
@@ -255,10 +254,10 @@ label.field > input, label.field > textarea, label.field > select { margin-top: 
 .score.hot { color: var(--pencil-red); }
 .score-num { position: relative; display: inline-block; font-family: var(--data); font-stretch: 75%; font-variant-numeric: tabular-nums slashed-zero; }
 .score-num .int { position: relative; display: inline-block; }
-.dec { font-size: .5em; font-weight: 400; vertical-align: .55em; letter-spacing: 0; }
+.dec { font-size: .5em; font-weight: 400; vertical-align: .55em; letter-spacing: 0; margin-left: -.04em; }
 .stat { font: 300 48px/1 var(--data); font-stretch: 75%; font-variant-numeric: tabular-nums slashed-zero; }
 .stat-label { font: 700 var(--fs-label)/1.2 var(--body); letter-spacing: .09em; text-transform: uppercase; color: var(--ink-3); margin-top: 6px; }
-td, .cal-date, .prio-row .w, input.metric, time { font-variant-numeric: tabular-nums slashed-zero; }
+td .mono, .mono, .cal-date, .prio-row .w, input.metric, time, .when, .ctl-bar span, .meter b.v { font-variant-numeric: tabular-nums slashed-zero; }
 .when, .src-meta { font: 400 var(--fs-xs)/1.4 var(--data); font-stretch: 87.5%; color: var(--ink-3); text-transform: uppercase; }
 
 /* --------------------------------------------------------------- stories & brief */
@@ -269,7 +268,8 @@ td, .cal-date, .prio-row .w, input.metric, time { font-variant-numeric: tabular-
 .story:hover .story-title { text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; }
 .story-why { font: 400 var(--fs-xs)/1.5 var(--body); color: var(--ink-3); margin-top: 6px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; max-width: 72ch; }
 .meter { position: relative; display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-top: 12px; max-width: 520px; }
-.meter div { font: 700 var(--fs-stamp)/1 var(--body); letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3); }
+.meter div { font: 600 var(--fs-xs)/1 var(--body); color: var(--ink-2); }
+.meter div b.v { font: 400 var(--fs-xs)/1 var(--data); font-stretch: 87.5%; color: var(--ink); margin-left: .25em; }
 .meter i { display: block; height: 3px; background: var(--rule) linear-gradient(90deg, var(--rule-strong) 1px, transparent 1px) 0 0 / 25% 100%; margin-top: 6px; position: relative; overflow: hidden; }
 .meter i b { display: block; height: 100%; background: var(--ink); transform-origin: left; }
 .meter div:nth-child(3) i b { background: var(--pencil-blue); }
@@ -470,5 +470,7 @@ main.press.hero .lead-hl { animation: hl-sweep 480ms var(--ease-rule) 980ms both
   button, .btn { white-space: normal; }
 }
 .story-title, .claim, .li-body, td, main a, .hit-title { overflow-wrap: anywhere; }
-main[data-route="story"] h1, main[data-route="draft"] h1 { font-size: var(--fs-3xl); line-height: 1.02; max-width: 24ch; }
+main[data-route="story"] h1, main[data-route="draft"] h1 { font-size: var(--fs-3xl); line-height: 1.02; max-width: min(30ch, 100%); }
+main[data-route="story"] h1.long, main[data-route="draft"] h1.long { font-size: var(--fs-2xl); }
+.score.inline { text-align: left; font-size: 28px; }
 @media (max-width: 760px) { main[data-route="story"] h1, main[data-route="draft"] h1 { font-size: var(--fs-2xl); } }

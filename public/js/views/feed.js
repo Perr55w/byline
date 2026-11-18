@@ -11,7 +11,7 @@ export async function render(view, ctx) {
 }
 
 const meter = (b = {}) => html`<div class="meter">${[['interest', 'Interest'], ['novelty', 'Novelty'], ['evidence', 'Evidence'], ['impact', 'Impact']].map(([k, l]) =>
-  html`<div>${l} ${pct(b[k])}<i><b style="width:${pct(b[k])}%"></b></i></div>`)}</div>`;
+  html`<div>${l}<b class="v">${pct(b[k])}</b><i><b style="width:${pct(b[k])}%"></b></i></div>`)}</div>`;
 
 const engagementNote = (e) => {
   const entries = Object.entries(e || {});
@@ -85,11 +85,11 @@ async function renderStory(el, view, id) {
   el.innerHTML = String(html`
   <div class="page-head">
     <div style="max-width:880px">
-      <div class="kicker"><a href="#/feed">← Feed</a> · Story #${s.id} ${demoFlag(s.is_demo)}</div>
-      <h1>${s.title}</h1>
+      <div class="kicker"><a href="#/feed">← Feed</a>&thinsp;·&thinsp;Story #${s.id} ${demoFlag(s.is_demo)}</div>
+      <h1 class="${s.title.length > 70 ? 'long' : ''}">${s.title}</h1>
       <p class="lede">${s.summary || ''}</p>
       <div class="row" style="margin-top:10px">
-        <span class="chip amber">score ${s.score}</span>
+        <span class="score inline">${scoreNum(s.score)}<small>Score</small></span>
         ${topicsLine(s.topics, 6)}
         ${(s.companies || []).map(c => html`<span class="chip blue">${c}</span>`)}
         ${s.status === 'archived' ? html`<span class="chip">archived</span>` : ''}

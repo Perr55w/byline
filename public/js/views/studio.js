@@ -254,8 +254,8 @@ async function editor(el, id) {
     el.innerHTML = String(html`
     <div class="page-head">
       <div style="max-width:900px">
-        <div class="kicker"><a href="#/studio">← Studio</a> · ${channelLabel(d.channel, d.format)} · draft #${d.id}${d.meta?.adapted_from ? ` · adapted from #${d.meta.adapted_from}` : ''}</div>
-        <h1>${d.title || 'Untitled'}</h1>
+        <div class="kicker"><a href="#/studio">← Studio</a>&thinsp;·&thinsp;${channelLabel(d.channel, d.format)}&thinsp;·&thinsp;draft #${d.id}${d.meta?.adapted_from ? ` · adapted from #${d.meta.adapted_from}` : ''}</div>
+        <h1 class="${(d.title || '').length > 70 ? 'long' : ''}">${d.title || 'Untitled'}</h1>
         <div class="row" style="margin-top:10px">${status(d.status)}
           ${d.story_id ? html`<a class="chip violet" href="#/story/${d.story_id}">story #${d.story_id}</a>` : ''}
           ${d.project ? html`<a class="chip green" href="#/career">project: ${d.project.title}</a>` : ''}
