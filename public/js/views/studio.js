@@ -257,7 +257,8 @@ async function editor(el, id) {
         <div class="kicker"><a href="#/studio">← Studio</a>&thinsp;·&thinsp;${channelLabel(d.channel, d.format)}&thinsp;·&thinsp;draft #${d.id}${d.meta?.adapted_from ? ` · adapted from #${d.meta.adapted_from}` : ''}</div>
         <h1 class="${(d.title || '').length > 70 ? 'long' : ''}">${d.title || 'Untitled'}</h1>
         <div class="row" style="margin-top:10px;gap:8px 12px">${status(d.status)}
-          <span class="topics">${d.story_id ? html`<a href="#/story/${d.story_id}">Story #${d.story_id}</a>` : ''}${d.project ? html`<i>·</i><a href="#/career">Project: ${d.project.title}</a>` : ''}${d.siblings.length ? html`<i>·</i>Also: ${d.siblings.map((x, k) => html`${k ? ', ' : ''}<a href="#/draft/${x.id}">${channelLabel(x.channel, x.format).replace(' · ', ' ')}</a>`)}` : ''}${d.meta?.generated_by ? html`<i>·</i>Engine ${d.meta.generated_by}` : ''}</span>
+          <span class="topics">${d.story_id ? html`<a href="#/story/${d.story_id}">Story #${d.story_id}</a>` : ''}${d.project ? html`<i>·</i><a href="#/career">Project: ${d.project.title}</a>` : ''}${d.meta?.generated_by ? html`<i>·</i>Engine ${d.meta.generated_by}` : ''}</span>
+          ${d.siblings.length ? html`<span class="also">Also: ${Object.values(d.siblings.reduce((g, x) => { const k = channelLabel(x.channel, x.format).replace(' · ', ' '); (g[k] ||= { label: k, items: [] }).items.push(x); return g; }, {})).map((g, k) => html`${k ? ', ' : ''}<a href="#/draft/${g.items[0].id}">${g.label.charAt(0) + g.label.slice(1).toLowerCase()}</a>${g.items.length > 1 ? ` ×${g.items.length}` : ''}`)}</span>` : ''}
         </div>
       </div>
     </div>
