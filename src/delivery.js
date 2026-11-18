@@ -1,6 +1,7 @@
 // Brief delivery beyond the app: formatted email digest (Resend) and phone push (ntfy).
 // Both are free-tier HTTP APIs; each channel is skipped unless configured. Sends are idempotent per date.
 import { get, run, parse, getSettings } from './db.js';
+import { sendMail, smtpConfigured } from './smtp.js';
 
 const esc = (s = '') => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 const appUrl = () => process.env.BYLINE_PUBLIC_URL || `http://127.0.0.1:${process.env.PORT || 4317}`;
@@ -8,7 +9,8 @@ const appUrl = () => process.env.BYLINE_PUBLIC_URL || `http://127.0.0.1:${proces
 export function deliveryStatus() {
   const d = getSettings().delivery || {};
   return {
-    email: { configured: !!process.env.RESEND_API_KEY, enabled: !!d.email, to: d.email_to || '', note: process.env.RESEND_API_KEY ? 'Resend API key detected.' : 'Set RESEND_API_KEY (free tier: 3,000 emails/month) and RESEND_FROM.' },
+    email: { configured: smtpConfigured() || !!process.env.RESEND_API_KEY, enabled: !!d.email, to: d.email_to || '', via: smtpConfigured() ? 'gmail' : process.env.RESEND_API_KEY ? 'resend' : null,
+      note: smtpConfigured() ? `Sending through ${process.env.SMTP_USER} (SMTP).` : process.env.RESEND_API_KEY ? 'Resend API key detected.' : 'Set SMTP_USER and SMTP_PASS (free Gmail app password), or RESEND_API_KEY.' },
     push: { configured: !!process.env.NTFY_TOPIC, enabled: !!d.push, note: process.env.NTFY_TOPIC ? `Publishing to ntfy topic “${process.env.NTFY_TOPIC}”.` : 'Set NTFY_TOPIC (install the free ntfy app and subscribe to the same, hard-to-guess topic).' }
   };
 }
@@ -39,6 +41,7 @@ export function digestHtml(date) {
 async function sendEmail(date, to) {
   const html = digestHtml(date);
   const b = get('SELECT summary FROM briefs WHERE run_date = ?', date);
+  if (smtpConfigured()) return sendMail({ to, subject: `Byline brief · ${date}`, text: b.summary, html });
   const res = await fetch('https://api.resend.com/emails', {
     method: 'POST', signal: AbortSignal.timeout(15000),
     headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },

@@ -240,7 +240,10 @@ async function stageBrief(ctx) {
   let words = 0;
   for (const c of cands) {
     const { story, articles, claims } = loadStory(c.id);
-    const summary = await ai.summarize({ story, articles, claims });
+    // Re-summarize only when the story's sources change (saves paid calls on reruns).
+    const sumKey = `summary:${ai.name}:${story.id}:${articles.map(a => a.id).join(',')}`;
+    let summary = cacheGet(sumKey, 24 * 30);
+    if (!summary) { summary = await ai.summarize({ story, articles, claims }); cacheSet(sumKey, summary); }
     let lens = story.lens_json ? parse(story.lens_json, null) : story.lens;
     if (!lens) { lens = await ai.careerLens({ story, articles, claims, settings: s }); run('UPDATE stories SET lens_json = ? WHERE id = ?', JSON.stringify(lens), story.id); }
     run('UPDATE stories SET summary = ? WHERE id = ?', summary, story.id);

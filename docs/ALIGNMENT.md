@@ -48,6 +48,14 @@ Assumptions per day: brief summaries + career lenses for 6 stories (≈3k input 
 Other running costs: hosting $0 on your laptop/home box via Cloudflare Tunnel (or ≈ $4–6/mo for a small VPS if it must run with the laptop off) · Resend email and ntfy push $0 on free tiers · optional domain ≈ $10–12/yr · Metricool's API needs a paid plan (pending) · Canva free tier for templates.
 **Minimum to run v1: $0/month. Comfortable final product: ≈ $5–15/month.**
 
+### Post-v1: the $30 Claude wallet (planned, not active)
+v1 runs on free resources only: the template engine, or Ollama locally. After v1, the plan is a **$30 wallet over 3 months** with Opus 5.5 for every task, to see how the program really performs and leave room for fixes. Measured more carefully, Opus 5.5 thinks before answering and that thinking is billed as output, so the realistic cost is **≈ $10–11 a month**. That fits the wallet with little margin. The code is in place but switched off. To turn it on, set:
+- `settings.wallet = { total_usd: 30, months: 3, start: 'YYYY-MM-DD', daily_cap_usd: 1.5 }`
+- `ANTHROPIC_API_KEY` on the server
+- AI provider → Auto
+
+Built-in protections: spending is tracked against an even pace but not blocked by it; a $1.50 daily safety cap; a hard stop at $30 or when the period ends; quick tasks like summaries run at low effort; and summaries are cached per set of sources.
+
 ## Career & relationships
 | Answer | Change |
 |---|---|
@@ -66,7 +74,7 @@ Other running costs: hosting $0 on your laptop/home box via Cloudflare Tunnel (o
 ## Integrations
 | Answer | Status |
 |---|---|
-| Gmail sending after approval | **Pending** OAuth; available now: Resend for the digest. Outreach stays copy + "mark sent" |
+| Gmail sending after approval | **Done (free):** Gmail app password over SMTP. It sends the digest and approved outreach emails at their approved time, with no OAuth or Google Cloud project needed |
 | Google Calendar | **Done (no OAuth needed):** subscribe Google Calendar to Byline's private **ICS feed** (posting slots, scheduled posts, follow-ups, planned sends) |
 | Instagram publishing, Metricool, Canva | **Pending** credentials/paid API; manual export covers them today |
-| Cloudflare | Tunnel + Access deployment guide; R2 backup script is a v2 item |
+| Cloudflare / Supabase | Free comparison in DEPLOY.md. Recommended for v1: **Tailscale** (phone access, no domain) and **Oracle Cloud Always Free** (always-on), with SQLite kept as the database. `npm run backup` handles backups |

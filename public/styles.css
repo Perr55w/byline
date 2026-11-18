@@ -157,7 +157,8 @@ label.field > input, label.field > textarea, label.field > select { margin-top: 
 .status.draft { color: var(--muted); }
 .status.in_review { background: rgba(245,181,68,.14); color: var(--amber); }
 .status.approved, .status.sent { background: rgba(111,211,165,.14); color: var(--green); }
-.status.scheduled { background: rgba(124,196,255,.14); color: var(--blue); }
+.status.scheduled, .status.queued { background: rgba(124,196,255,.14); color: var(--blue); }
+.status.sending { background: rgba(245,181,68,.14); color: var(--amber); }
 .status.published { background: var(--violet); color: #0b0912; }
 .status.archived, .status.cancelled { opacity: .6; }
 

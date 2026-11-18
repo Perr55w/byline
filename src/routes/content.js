@@ -3,6 +3,7 @@ import { connectors, connectorFor } from '../connectors/index.js';
 import { weeklyRoundup } from '../pipeline.js';
 import { deliverBrief, deliveryStatus, digestHtml } from '../delivery.js';
 import { icsFeed, icsToken } from '../ics.js';
+import { ollamaStatus } from '../ai/ollama.js';
 import { runDaily, submitUrl, ingestItem, clusterArticles, rankStories, evergreenDraft, todayIn, STAGES } from '../pipeline.js';
 import { loadStory, loadEmployers, storyPreferences, createDraft } from '../store.js';
 import { getProvider, providerStatus } from '../ai/index.js';
@@ -27,6 +28,7 @@ export function registerContent(route) {
   });
 
   route('GET', '/api/settings', () => getSettings());
+  route('GET', '/api/ollama', () => ollamaStatus());
   route('PUT', '/api/settings', ({ body }) => {
     for (const [k, v] of Object.entries(body)) setSetting(k, v);
     if (body.priorities) rankStories({ days: 30 });

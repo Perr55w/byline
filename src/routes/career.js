@@ -4,6 +4,8 @@ import { getProvider } from '../ai/index.js';
 import { draftContext } from './drafts.js';
 import { termHits, sentences, truncate, hashString } from '../text.js';
 import { generateVisual } from '../visual.js';
+import { smtpConfigured } from '../smtp.js';
+import { recordSent, sendOutreachNow, outreachHash } from '../outreach.js';
 
 const bad = (msg, status = 400) => Object.assign(new Error(msg), { status });
 
@@ -35,7 +37,6 @@ function outreachFlags(o, contact) {
   return flags;
 }
 
-const outreachHash = (o) => hashString(JSON.stringify([o.recipient || '', o.channel, o.subject || '', o.body || '', o.send_at || '']));
 
 function loadOutreach(id) {
   const o = hydrate(get('SELECT * FROM outreach WHERE id = ?', id));
@@ -262,9 +263,22 @@ export function registerCareer(route) {
     if (o.status === 'sent') return o; // idempotent: retries never double-log
     if (!o.approval_valid) throw bad('Approve this exact recipient, message, and send time first.', 409);
     if (o.contact.dnc) throw bad('Contact is marked “do not contact”.');
-    run("UPDATE outreach SET status = 'sent', sent_at = ? WHERE id = ? AND status != 'sent'", now(), o.id);
-    run('INSERT INTO interactions(contact_id, kind, date, notes, created_at) VALUES(?,?,?,?,?)', o.contact_id, o.purpose === 'thank_you' ? 'thank_you' : 'message_sent', now().slice(0, 10), `${o.channel}: ${o.subject || truncate(o.body, 60)}`, now());
-    run("UPDATE contacts SET stage = CASE WHEN stage IN ('researching','drafting') THEN 'contacted' ELSE stage END, next_step = 'Follow up if no reply', next_date = ? WHERE id = ?", new Date(Date.now() + 7 * 864e5).toISOString().slice(0, 10), o.contact_id);
+    recordSent(o.id);
+    return loadOutreach(o.id);
+  });
+  // Send an approved email through Gmail/SMTP now, or queue it for its approved send time.
+  route('POST', '/api/outreach/:id/send', async ({ params }) => {
+    const o = loadOutreach(params.id);
+    if (o.status === 'sent') return o;
+    if (!o.approval_valid) throw bad('Approve this exact recipient, message, and send time first.', 409);
+    if (o.channel !== 'email') throw bad('Only email can be sent from Byline. Copy the text for LinkedIn or Instagram, then mark it sent.');
+    if (!smtpConfigured()) throw bad('Email sending is not set up. Set SMTP_USER and SMTP_PASS (a Gmail app password) on the server.');
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(o.recipient)) throw bad('The recipient must be an email address.');
+    if (o.send_at && Date.parse(o.send_at) > Date.now() + 60e3) {
+      run("UPDATE outreach SET status = 'queued', last_error = NULL WHERE id = ? AND status IN ('approved','queued')", o.id);
+      return loadOutreach(o.id);
+    }
+    await sendOutreachNow(o.id);
     return loadOutreach(o.id);
   });
   route('DELETE', '/api/outreach/:id', ({ params }) => { run("DELETE FROM outreach WHERE id = ? AND status != 'sent'", params.id); return { ok: true }; });

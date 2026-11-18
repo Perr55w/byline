@@ -73,9 +73,12 @@ export async function render(view) {
         <div class="row" style="margin-bottom:10px"><span class="dot ${p.has_key ? 'ok' : 'warn'}"></span>
           <span class="small">${p.has_key ? 'ANTHROPIC_API_KEY detected on the server' : 'ANTHROPIC_API_KEY not detected'} · active now: <strong>${p.active === 'claude' ? 'Claude' : 'local engine'}</strong></span></div>
         <div class="form-grid">
-          <label class="field">Provider<select data-f="ai_provider">${[['auto', 'Auto (Claude if key present)'], ['local', 'Local engine only'], ['claude', 'Claude']].map(([v, l]) => html`<option value="${v}" ${s.ai?.provider === v ? 'selected' : ''}>${l}</option>`)}</select></label>
-          <label class="field">Effort<select data-f="ai_effort">${['low', 'medium', 'high'].map(v => html`<option value="${v}" ${s.ai?.effort === v ? 'selected' : ''}>${v}</option>`)}</select></label>
+          <label class="field">Provider<select data-f="ai_provider">${[['local', 'Template engine (free, instant)'], ['ollama', 'Ollama local LLM (free)'], ['auto', 'Auto (Claude if key present)'], ['claude', 'Claude (paid, post-v1)']].map(([v, l]) => html`<option value="${v}" ${s.ai?.provider === v ? 'selected' : ''}>${l}</option>`)}</select></label>
+          <label class="field">Effort<select data-f="ai_effort">${['auto', 'low', 'medium', 'high'].map(v => html`<option value="${v}" ${s.ai?.effort === v ? 'selected' : ''}>${v === 'auto' ? 'auto (per task)' : v}</option>`)}</select></label>
           <label class="field full">Model<input data-f="ai_model" value="${s.ai?.model || ''}" placeholder="claude-…"></label>
+          <label class="field full">Ollama model<input data-f="ai_ollama_model" list="ollama-models" value="${s.ai?.ollama_model || 'qwen2.5:7b'}" placeholder="qwen2.5:7b"></label>
+          <datalist id="ollama-models"></datalist>
+          <div class="full small" id="ollama-status"><span class="spinner"></span> Checking for Ollama…</div>
         </div>
         <p class="set-note">The API key is never entered in this app. Set <span class="mono">ANTHROPIC_API_KEY</span> as an environment variable where the server runs, then restart it. Without a key (or over budget) Byline uses its free local engine.</p>
         <div class="row" style="margin-top:12px"><button class="primary" data-save="ai">Save</button></div>
@@ -173,6 +176,13 @@ export async function render(view) {
     for (const [f, v] of keep) { const i = el.querySelector(`[data-f="${f}"]`); if (i) i.type === 'checkbox' ? (i.checked = v) : (i.value = v); }
   };
   paint();
+  const checkOllama = () => api.get('/ollama').then(o => {
+    const box = el.querySelector('#ollama-status'); if (!box) return;
+    box.innerHTML = o.reachable ? `<span class="dot ok"></span>Ollama is running · ${o.models.length} model(s): ${o.models.join(', ') || 'none — run “ollama pull qwen2.5:7b”'}`
+      : '<span class="dot"></span>Ollama not detected. Install it free from ollama.com, run <span class="mono">ollama pull qwen2.5:7b</span>, then pick “Ollama” above. Until then Byline uses the template engine.';
+    el.querySelector('#ollama-models').innerHTML = o.models.map(m => `<option value="${m}">`).join('');
+  }).catch(() => {});
+  checkOllama();
 
   const val = (f) => el.querySelector(`[data-f="${f}"]`);
   const builders = {
@@ -194,7 +204,7 @@ export async function render(view) {
       if (!/^\d{2}:\d{2}$/.test(time)) throw new Error('Time must be HH:MM.');
       return { schedule: { ...s.schedule, enabled: val('schedule_enabled').checked, time }, timezone: tz };
     },
-    ai: () => ({ ai: { provider: val('ai_provider').value, model: val('ai_model').value.trim() || s.ai.model, effort: val('ai_effort').value } }),
+    ai: () => ({ ai: { ...s.ai, provider: val('ai_provider').value, model: val('ai_model').value.trim() || s.ai.model, effort: val('ai_effort').value, ollama_model: val('ai_ollama_model').value.trim() || 'qwen2.5:7b' } }),
     budget: () => {
       const b = Number(val('budget').value);
       if (!(b >= 0)) throw new Error('Budget must be zero or more.');
@@ -228,7 +238,7 @@ export async function render(view) {
       Object.assign(s, saved);
       Object.assign(wp, saved.writing_profile);
       toast('Settings saved', 'ok');
-      if (['schedule', 'ai', 'budget'].includes(btn.dataset.save)) { refreshStatus(); st = await api.get('/status'); p = st.provider; repaint(); }
+      if (['schedule', 'ai', 'budget'].includes(btn.dataset.save)) { refreshStatus(); st = await api.get('/status'); p = st.provider; repaint(); checkOllama(); }
     }, 'Saving…');
   });
   on(el, 'click', '[data-act]', async (e, btn) => {

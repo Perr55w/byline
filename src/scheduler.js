@@ -2,6 +2,7 @@
 // scheduler, `npm run daily`) works the same way because runs are idempotent per date.
 import { get, getSettings } from './db.js';
 import { runDaily, todayIn } from './pipeline.js';
+import { sendDueOutreach } from './outreach.js';
 
 const RETRY_MINUTES = 10, MAX_ATTEMPTS = 3;
 
@@ -10,6 +11,7 @@ export function nowHHMM(tz) {
 }
 
 export async function tick() {
+  await sendDueOutreach().catch(e => console.warn('[scheduler] outreach', e.message));
   const s = getSettings();
   if (!s.schedule?.enabled) return;
   const date = todayIn(s.timezone);

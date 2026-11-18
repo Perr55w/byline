@@ -12,6 +12,9 @@ const opts = (list, sel) => list.map(([v, l]) => html`<option value="${v}" ${v =
 const fresh = (el) => { const root = document.createElement('div'); el.replaceChildren(root); return root; };
 const toLocalInput = (iso) => { if (!iso) return ''; const d = new Date(iso); if (isNaN(d)) return ''; return new Date(d - d.getTimezoneOffset() * 6e4).toISOString().slice(0, 16); };
 
+let SMTP_READY = false;
+api.get('/status').then(st => { SMTP_READY = st.delivery?.email?.via === 'gmail'; }).catch(() => {});
+
 const SEGMENTS = { target_team: 'Target team', ksu_alumni: 'KSU alumni in tech', founder: 'Founder / operator', peer: 'Peer', other: 'Other' };
 
 export async function render(el, ctx = {}) {
@@ -344,6 +347,7 @@ export async function openOutreach(id, onChange = () => {}) {
       <div class="row between">
         <div><div class="kicker">Outreach · ${PURPOSES[o.purpose] || label(o.purpose)}</div><h2 style="margin:4px 0 0">To <a href="#/person/${o.contact_id}" data-close>${o.contact.name}</a></h2></div>
         <div class="row">${status(o.status)}<span class="chip">${CHANNELS[o.channel] || o.channel}</span>${o.approval_valid ? html`<span class="chip green">approval valid</span>` : ''}</div>
+        ${o.last_error ? html`<div class="small" style="color:var(--red);margin-top:6px">Last send failed: ${o.last_error}</div>` : ''}
       </div>
       ${o.contact.dnc ? html`<div class="card flat dnc-banner" style="margin-top:12px">${o.contact.name} is marked do-not-contact. This message cannot be approved or sent.</div>` : ''}
       <div class="split" style="margin-top:16px">
@@ -368,6 +372,7 @@ export async function openOutreach(id, onChange = () => {}) {
           <button data-o="copy">Copy text</button>
           ${!locked ? html`<button data-o="save" id="b-save">Save changes</button>
             <button class="primary" data-o="approve" ${o.contact.dnc ? 'disabled' : ''}>${o.approval_valid ? 'Approved ✓' : 'Approve'}</button>` : ''}
+          ${o.channel === 'email' && !locked && SMTP_READY ? html`<button class="primary" data-o="send" id="b-send" ${o.approval_valid ? '' : 'disabled'} title="Sends through your Gmail at the approved time">${o.status === 'queued' ? 'Queued ✓' : (o.send_at && Date.parse(o.send_at) > Date.now() + 60e3) ? 'Queue for send time' : 'Send via Gmail'}</button>` : ''}
           ${o.status !== 'cancelled' ? html`<button class="amber" data-o="sent" id="b-sent" ${o.approval_valid || sent ? '' : 'disabled'} title="Enabled once the exact message is approved">${sent ? 'Marked as sent' : 'I sent it — mark as sent'}</button>` : ''}
           <button class="ghost" data-close>Close</button>
         </div>
@@ -384,6 +389,7 @@ export async function openOutreach(id, onChange = () => {}) {
       $('#preview').innerHTML = highlight(body, o.personal_detail);
       const dirty = Object.keys(changes()).length > 0;
       if ($('#b-sent') && !sent) $('#b-sent').disabled = dirty || !o.approval_valid;
+      if ($('#b-send')) $('#b-send').disabled = dirty || !o.approval_valid;
       if ($('#b-save')) $('#b-save').textContent = dirty ? 'Save changes •' : 'Save changes';
     };
     m.el.addEventListener('input', refresh);
@@ -405,6 +411,7 @@ export async function openOutreach(id, onChange = () => {}) {
         await api.post(`/outreach/${id}/approve`, { hash: r.current_hash });
         toast('Approved — send it yourself, then mark as sent', 'ok'); onChange(); await draw();
       });
+      if (a === 'send') await act(b, async () => { const r = await api.post(`/outreach/${id}/send`); toast(r.status === 'queued' ? `Queued — sends at ${fmtDateTime(r.send_at)}` : 'Sent and logged', 'ok'); onChange(); await draw(); }, 'Sending…');
       if (a === 'sent') await act(b, async () => { await api.post(`/outreach/${id}/sent`); toast('Marked as sent and logged', 'ok'); onChange(); await draw(); });
       if (a === 'delete') {
         if (!(await confirmBox('Delete this outreach draft?', 'Delete'))) return;

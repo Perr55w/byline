@@ -20,7 +20,7 @@ export async function refreshStatus() {
   try {
     state.status = await api.get('/status');
     const s = state.status;
-    const ai = s.provider.active === 'claude' ? html`<span class="dot ok"></span>Claude (${s.provider.model})` : html`<span class="dot warn"></span>Local drafting engine`;
+    const ai = s.provider.active === 'claude' ? html`<span class="dot ok"></span>Claude (${s.provider.model})` : s.provider.active === 'ollama' ? html`<span class="dot ok"></span>Ollama (${s.provider.model})` : html`<span class="dot warn"></span>Template drafting engine`;
     document.getElementById('rail-foot').innerHTML = String(html`
       <div>${ai}</div>
       <div><span class="dot ${s.publishers.linkedin.available ? 'ok' : ''}"></span>LinkedIn ${s.publishers.linkedin.available ? 'connected' : 'manual export'}</div>

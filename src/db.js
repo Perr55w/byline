@@ -156,7 +156,7 @@ CREATE INDEX IF NOT EXISTS idx_drafts_story ON drafts(story_id);
 `);
 
 // Additive migrations for databases created by earlier versions.
-for (const [table, col, def] of [['contacts', 'segment', "TEXT DEFAULT 'target_team'"], ['contacts', 'ksu_alumni', 'INTEGER DEFAULT 0'], ['briefs', 'delivered_json', "TEXT DEFAULT '{}'"]]) {
+for (const [table, col, def] of [['contacts', 'segment', "TEXT DEFAULT 'target_team'"], ['contacts', 'ksu_alumni', 'INTEGER DEFAULT 0'], ['briefs', 'delivered_json', "TEXT DEFAULT '{}'"], ['outreach', 'last_error', 'TEXT']]) {
   if (!db.prepare(`PRAGMA table_info(${table})`).all().some(c => c.name === col)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`);
 }
 
