@@ -17,7 +17,7 @@ const HOST = process.env.HOST || '127.0.0.1';
 const PUBLIC = path.resolve('public');
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml',
   '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif', '.mp4': 'video/mp4', '.mov': 'video/quicktime',
-  '.webm': 'video/webm', '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.m4a': 'audio/mp4', '.srt': 'text/plain; charset=utf-8', '.txt': 'text/plain; charset=utf-8', '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.ics': 'text/calendar' };
+  '.webm': 'video/webm', '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.m4a': 'audio/mp4', '.srt': 'text/plain; charset=utf-8', '.txt': 'text/plain; charset=utf-8', '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.woff2': 'font/woff2', '.ics': 'text/calendar' };
 
 const routes = [];
 const route = (method, pattern, handler) => {
@@ -43,6 +43,9 @@ function sendFile(res, file, download) {
   const headers = { 'Content-Type': MIME[ext] || 'application/octet-stream', 'Content-Length': stat.size, 'X-Content-Type-Options': 'nosniff' };
   if (ext === '.svg') headers['Content-Security-Policy'] = "default-src 'none'; style-src 'unsafe-inline'; font-src data:";
   if (download) headers['Content-Disposition'] = `attachment; filename="${path.basename(file)}"`;
+  // App code must never go stale in the browser; fonts and icons rarely change and can be cached.
+  if (['.html', '.js', '.css', '.webmanifest'].includes(ext)) headers['Cache-Control'] = 'no-cache';
+  else if (ext === '.woff2' || file.includes(`${path.sep}icons${path.sep}`)) headers['Cache-Control'] = 'public, max-age=604800';
   res.writeHead(200, headers);
   fs.createReadStream(file).pipe(res);
 }
