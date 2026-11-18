@@ -328,7 +328,7 @@ export function mountPlayer(el, { date, stories = [] } = {}) {
     if (!('mediaSession' in navigator)) return;
     const ms = navigator.mediaSession;
     try {
-      ms.metadata = new MediaMetadata({ title: `Byline — ${date} brief`, artist: 'Byline', album: mode === 'heart' ? 'Voice · Heart' : 'Voice · Browser',
+      ms.metadata = new MediaMetadata({ title: `Byline briefing · ${new Date(date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}`, artist: 'Byline', album: mode === 'heart' ? 'Voice · Heart' : 'Voice · Browser',
         artwork: [{ src: '/icons/apple-touch-icon.png', sizes: '180x180', type: 'image/png' }] });
       ms.setActionHandler('play', play);
       ms.setActionHandler('pause', pause);

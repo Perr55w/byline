@@ -266,7 +266,7 @@ export function scoreNum(v, { dec = false, flap = false, from = null } = {}) {
   const shown = dec ? n.toFixed(1) : String(Math.round(n));
   const [i, d] = shown.split('.');
   const t = (window.__byline?.threshold) ?? 55;
-  return html`<b class="score-num${flap ? ' flap' : ''}" data-v="${n}" ${from != null ? html`data-from="${from}"` : ''} style="${inkStyle(n, t)}" aria-label="Score ${shown}"><span class="int" aria-hidden="true">${i}</span>${d ? html`<span class="dec" aria-hidden="true">.${d}</span>` : ''}</b>`;
+  return html`<b class="score-num${flap ? ' flap' : ''}" data-v="${n}" ${from != null ? html`data-from="${from}"` : ''} style="${inkStyle(n, t)}" ><span class="sr-only">Score ${shown}</span><span class="int" aria-hidden="true">${i}</span>${d ? html`<span class="dec" aria-hidden="true">.${d}</span>` : ''}</b>`;
 }
 
 /** Stepped ink density: Martian weight and red-pencil mix in 5 bands, driven by value vs threshold. */
@@ -325,7 +325,7 @@ export function countUp(root = document) {
 
 /** Topics as run-in text ("AGENT ORCHESTRATION · EVALUATION"), not chips. */
 export const topicsLine = (topics = [], max = 3) => topics.length
-  ? html`<span class="topics">${topics.slice(0, max).map((t, k) => html`${k ? html`<i>·</i>` : ''}${t}`)}${topics.length > max ? html`<i>·</i>+${topics.length - max}` : ''}</span>` : '';
+  ? html`<span class="topics">${topics.slice(0, max).map((t, k) => html`${k ? html`<i>·</i>` : ''}<span class="t">${t}</span>`)}${topics.length > max ? html`<i>·</i>+${topics.length - max}` : ''}</span>` : '';
 
 
 // ---------- galley-proof skeletons (shown only when a tab takes longer than 200ms) ----------

@@ -56,7 +56,7 @@ export async function render(view) {
               <div class="row" style="gap:6px 14px">${topicsLine(it.topics)}<span class="when">${it.domains.length} source${it.domains.length > 1 ? 's' : ''} · ${it.domains.slice(0, 3).join(' · ')}</span></div>
               ${whyRanked(it)}
             </div>
-            <div class="score single" data-stamp style="--v:${Math.round(it.score)}">${scoreNum(it.score, { dec: true })}<small>Score</small><div class="galley-scale" aria-hidden="true" style="--t:${t.threshold}%"><b class="th"></b><i class="caret"></i></div></div>
+            <div class="score single" data-stamp style="--v:${Math.round(it.score)}">${scoreNum(it.score, { dec: true })}<small aria-hidden="true">Score</small><div class="galley-scale" aria-hidden="true" style="--t:${t.threshold}%"><b class="th"></b><i class="caret"></i></div></div>
           </article>`)}
         </div>` : ''}
         ${items.length > 1 ? html`<div class="fold-label">Below the fold</div><div class="below-fold">

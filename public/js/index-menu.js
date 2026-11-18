@@ -35,7 +35,7 @@ function hydrateRecent(r) {
 const tabItem = (n) => ({ kind: 'tabs', id: n.href, label: n.label, href: n.href, keys: n.key ? ['g', n.key] : null });
 const actionItem = (a) => ({ kind: 'actions', id: a.id, label: a.label, hint: a.hint || '', run: a.run });
 const storyItem = (s) => ({ kind: 'stories', id: s.id, label: s.title || `Story ${s.id}`, href: `#/story/${s.id}`, meta: (s.status || '').replace(/_/g, ' ') });
-const draftItem = (d) => ({ kind: 'drafts', id: d.id, label: d.title || `Draft ${d.id}`, href: `#/draft/${d.id}`, meta: [d.channel, (d.status || '').replace(/_/g, ' ')].filter(Boolean).join(' · ') });
+const draftItem = (d) => ({ kind: 'drafts', id: d.id, label: d.title || `Draft ${d.id}`, href: `#/draft/${d.id}`, meta: [d.channel, d.format, (d.status || '').replace(/_/g, ' ')].filter(Boolean).join(' · ') });
 const personItem = (c) => ({ kind: 'people', id: c.id, label: c.name, href: `#/person/${c.id}`, meta: [c.role, c.org || c.employer].filter(Boolean).join(' · '), extra: `${c.org || ''} ${c.employer || ''} ${c.role || ''}` });
 const uid = (it) => `${it.kind}:${it.id}`;
 

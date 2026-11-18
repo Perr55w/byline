@@ -46,7 +46,7 @@ async function renderFeed(el, view) {
   <section class="card ledger">
     ${stories.length ? stories.map((s, idx) => html`
       <div class="story" data-href="#/story/${s.id}">
-        <div class="score" ${idx < 3 ? 'data-stamp' : ''}>${s.viewed_score != null && Math.round(s.viewed_score) !== Math.round(s.score) ? html`<s class="was" aria-label="was ${Math.round(s.viewed_score)}">${Math.round(s.viewed_score)}</s>` : ''}${scoreNum(s.score, { flap: true, from: s.viewed_score != null && Math.round(s.viewed_score) !== Math.round(s.score) ? s.viewed_score : null })}${idx === 0 ? html`<small>Score</small>` : ''}</div>
+        <div class="score" ${idx === 0 || (s.viewed_score != null && s.viewed_score < settings.publish_threshold && s.score >= settings.publish_threshold) ? 'data-stamp' : ''}>${s.viewed_score != null && Math.round(s.viewed_score) !== Math.round(s.score) ? html`<s class="was"><span class="sr-only">previously </span>${Math.round(s.viewed_score)}</s>` : ''}${scoreNum(s.score, { flap: true, from: s.viewed_score != null && Math.round(s.viewed_score) !== Math.round(s.score) ? s.viewed_score : null })}${idx === 0 ? html`<small aria-hidden="true">Score</small>` : ''}</div>
         <div>
           <div class="story-title">${s.title}${demoFlag(s.is_demo)}</div>
           <div class="row" style="margin-top:7px;gap:6px 14px">
@@ -91,7 +91,7 @@ async function renderStory(el, view, id) {
       <h1 class="${s.title.length > 70 ? 'long' : ''}">${s.title}</h1>
       <p class="lede">${s.summary || ''}</p>
       <div class="row" style="margin-top:10px">
-        <span class="score inline single" data-stamp style="--v:${Math.round(s.score)}">${s.prev_score != null && Math.round(s.prev_score) !== Math.round(s.score) ? html`<s class="was" aria-label="was ${Math.round(s.prev_score)}">${Math.round(s.prev_score)}</s><span class="caret-mark" aria-hidden="true">‸</span>` : ''}${scoreNum(s.score, { dec: true, from: s.prev_score != null && Math.round(s.prev_score) !== Math.round(s.score) ? s.prev_score : null })}<small>Score</small><span class="galley-scale" aria-hidden="true" style="--t:${window.__byline?.threshold ?? 55}%"><b class="th"></b><i class="caret"></i></span></span>
+        <span class="score inline single" data-stamp style="--v:${Math.round(s.score)}">${s.prev_score != null && Math.round(s.prev_score) !== Math.round(s.score) ? html`<s class="was"><span class="sr-only">previously </span>${Math.round(s.prev_score)}</s><span class="caret-mark" aria-hidden="true">‸</span>` : ''}${scoreNum(s.score, { dec: true, from: s.prev_score != null && Math.round(s.prev_score) !== Math.round(s.score) ? s.prev_score : null })}<small aria-hidden="true">Score</small><span class="galley-scale" aria-hidden="true" style="--t:${window.__byline?.threshold ?? 55}%"><b class="th"></b><i class="caret"></i></span></span>
         ${topicsLine(s.topics, 6)}
         ${(s.companies || []).map(c => html`<span class="chip blue">${c}</span>`)}
         ${s.status === 'archived' ? html`<span class="chip">archived</span>` : ''}
