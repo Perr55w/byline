@@ -138,6 +138,7 @@ td.num, th.num { text-align: right; }
 }
 :root[data-theme="dark"] .score.single::before { filter: none; }
 .score.single.landed::before { opacity: .22; }
+:root[data-theme="light"] .score.single.landed::before { opacity: .55; }
 .galley-scale { position: relative; height: 12px; margin-top: 8px; background:
   linear-gradient(var(--ink-3), var(--ink-3)) 0 100% / 100% 1px no-repeat,
   repeating-linear-gradient(90deg, var(--ink-3) 0 1px, transparent 1px 10%) 0 100% / 100% 4px no-repeat; }
@@ -309,12 +310,13 @@ html { background-color: var(--paper); }
 .read-along[open] > summary::before { content: '▾ '; }
 /* list rows: the stamp sits under the score, small */
 .story .score { position: relative; }
-.story .pw-stamp { color: var(--ink); border-color: var(--ink-2); position: static; display: inline-block; margin-top: 8px; font-size: 8.5px; letter-spacing: .08em; padding: 3px 4px; border-width: 1.5px; }
+.story .pw-stamp { position: static; display: inline-block; margin-top: 8px; font-size: 8.5px; letter-spacing: .08em; padding: 3px 4px; border-width: 1.5px; }
 .story .pw-stamp::after { border-width: 1.5px; }
 
 /* Story page: the single score gets the full treatment */
 .score.inline.single { display: inline-flex; flex-direction: column; align-items: flex-end; font-size: 54px; line-height: .9; margin-right: 18px; padding-top: 22px; }
-.score.inline.single .pw-stamp { position: absolute; right: 0; top: -14px; margin: 0; }
+.score.inline.single { margin-top: 26px; padding-right: 8px; }
+.score.inline.single .pw-stamp { position: absolute; right: -8px; top: 4px; margin: 0; transform: rotate(-4deg); translate: 100% 0; }
 .score.inline.single .galley-scale { width: 110px; }
 .score.single .pw-stamp { left: auto; }
 /* skeleton geometry mirrors the real layouts */
@@ -346,3 +348,8 @@ html { background-color: var(--paper); }
 :root[data-theme="dark"] .toast { background: var(--paper-2); box-shadow: 0 0 0 1px var(--rule-strong), 3px 3px 0 #000; }
 /* long lists: skip rendering offscreen rows */
 main :is(.story, .hit, tbody tr, .source-row):nth-child(n+13) { content-visibility: auto; contain-intrinsic-size: auto 72px; }
+
+.nowrap { white-space: nowrap; }
+.card.pinned { border-top: 3px solid var(--pencil-red); }
+.lead-hl { background-position: 0 100%; }
+:root[data-theme="dark"] .lead-hl { background-position: 0 100%; }

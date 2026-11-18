@@ -1,5 +1,5 @@
 import { api } from '../api.js';
-import { html, on, act, toast, status, demoFlag, channelLabel, fmtDate, timeAgo, modal, scoreNum, topicsLine, plateImg, hydratePlates } from '../ui.js';
+import { html, on, act, toast, status, demoFlag, channelLabel, fmtDate, timeAgo, modal, scoreNum, topicsLine, plateImg, hydratePlates, titleWithFlag } from '../ui.js';
 
 const plural = (n, w) => `${n} ${n === 1 ? w : w.replace(/y$/, 'ie') + 's'}`;
 function whyRanked(it) {
@@ -63,7 +63,7 @@ export async function render(view) {
           ${items.slice(1).map(it => html`
           <article class="brief-item">
             <div>
-              <a href="#/story/${it.story_id}" class="story-title" style="color:var(--ink);font-size:var(--fs-md)">${it.title}</a> ${demoFlag(it.is_demo)}
+              <a href="#/story/${it.story_id}" class="story-title" style="color:var(--ink);font-size:var(--fs-md)">${titleWithFlag(it.title, it.is_demo)}</a>
               <div style="margin-top:6px">${topicsLine(it.topics, 2)}</div>
               <div class="when" style="margin-top:4px">${it.domains.length} source${it.domains.length > 1 ? 's' : ''}${it.qualifies ? ' · post-worthy' : ''}</div>
             </div>

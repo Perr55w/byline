@@ -168,6 +168,8 @@ export function timeAgo(d) {
 
 export const status = (s) => html`<span class="status ${s}">${(s || '').replace('_', ' ')}</span>`;
 export const evChip = (k) => html`<span class="chip ev-${k}">${({ announcement: 'Announcement', reporting: 'Independent reporting', research: 'Research', commentary: 'Commentary', community: 'Community / industry climate', application: 'Applied practice', own_work: 'My project' })[k] || k}</span>`;
+/** A headline whose last word is glued to the DEMO flag, so the flag never strands a word. */
+export const titleWithFlag = (title, demo) => { if (!demo) return html`${title}`; const i = String(title).lastIndexOf(' '); return html`${String(title).slice(0, i + 1)}<span class="nowrap">${String(title).slice(i + 1)}${demoFlag(true)}</span>`; };
 export const demoFlag = (on) => on ? html`<span class="demo-flag" title="Fictional sample data">DEMO</span>` : '';
 export const channelLabel = (c, f) => `${({ linkedin: 'LinkedIn', instagram: 'Instagram', video: 'Video', email: 'Email', note: 'Note' })[c] || c}${f ? ' · ' + f : ''}`;
 
@@ -270,7 +272,7 @@ export function scoreNum(v, { dec = false, flap = false, from = null } = {}) {
   const shown = dec ? n.toFixed(1) : String(Math.round(n));
   const [i, d] = shown.split('.');
   const t = (window.__byline?.threshold) ?? 55;
-  return html`<b class="score-num${flap ? ' flap' : ''}" data-v="${n}" ${from != null ? html`data-from="${from}"` : ''} style="${inkStyle(n, t)}" ><span class="sr-only">Score ${shown}</span><span class="int" aria-hidden="true">${i}</span>${d ? html`<span class="dec" aria-hidden="true">.${d}</span>` : ''}</b>`;
+  return html`<b class="score-num${flap ? ' flap' : ''}" data-v="${n}" ${from != null ? html`data-from="${from}"` : ''} style="${inkStyle(n, t)}" ><span class="sr-only">Score ${shown}.</span><span class="int" aria-hidden="true">${i}</span>${d ? html`<span class="dec" aria-hidden="true">.${d}</span>` : ''}</b>`;
 }
 
 /** Stepped ink density: Martian weight and red-pencil mix in 5 bands, driven by value vs threshold. */

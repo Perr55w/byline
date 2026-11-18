@@ -20,7 +20,7 @@ export async function render(el, ctx = {}) {
     </div>
     <div class="row"><button class="primary" data-act="add">Add employer</button></div>
   </div>
-  ${employers.length ? html`<div class="grid g3 reveal">${employers.map(e => html`<section class="card ${e.pinned ? 'accent' : ''}">
+  ${employers.length ? html`<div class="grid g3 reveal">${employers.map(e => html`<section class="card ${e.pinned ? 'pinned' : ''}">
     <div class="row between">
       <div><a href="#/employers/${e.id}" class="emp-name">${e.name}</a>${e.parent ? html`<div class="faint small">part of ${e.parent} · tracked separately</div>` : ''}</div>
       <button class="sm ${e.pinned ? 'amber' : 'ghost'}" data-pin="${e.id}" data-on="${e.pinned ? 1 : 0}" title="${e.pinned ? 'Unpin' : 'Pin to top'}">${e.pinned ? 'Pinned' : 'Pin'}</button>

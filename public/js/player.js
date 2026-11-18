@@ -45,6 +45,7 @@ export function mountPlayer(el, { date, stories = [] } = {}) {
   const dur = [];                          // real clip durations (seconds, at 1×)
   const urls = new Map();                  // chunk index -> Promise<url>
   let cps = CPS;
+  try { const saved = Number(localStorage.getItem('byline-tts-cps')); if (saved > 5 && saved < 40) cps = saved; } catch (e) { /* storage unavailable */ }
   // two audio elements, ping-ponged: one plays, the other preloads the next chunk (also unlockable on iOS)
   const els = [new Audio(), new Audio()];
   const holds = [null, null];              // chunk index loaded in each element
@@ -212,6 +213,7 @@ export function mountPlayer(el, { date, stories = [] } = {}) {
       dur[i] = a.duration;
       const known = chunks.map((c, k) => (dur[k] != null ? [c.text.length, dur[k]] : null)).filter(Boolean);
       cps = known.reduce((s, [l]) => s + l, 0) / known.reduce((s, [, t]) => s + t, 0) || CPS;
+      try { localStorage.setItem('byline-tts-cps', String(cps)); } catch (e) { /* storage unavailable */ }
       renderTicks();
     });
     a.addEventListener('ended', () => { if (slot === active && holds[slot] === cur && state === 'playing') go(cur + 1, 0); });
@@ -328,7 +330,7 @@ export function mountPlayer(el, { date, stories = [] } = {}) {
     if (!('mediaSession' in navigator)) return;
     const ms = navigator.mediaSession;
     try {
-      ms.metadata = new MediaMetadata({ title: `Byline briefing · ${new Date(date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}`, artist: 'Byline', album: mode === 'heart' ? 'Voice · Heart' : 'Voice · Browser',
+      ms.metadata = new MediaMetadata({ title: `Byline briefing · ${new Date(date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}`, artist: mode === 'heart' ? 'Heart · Kokoro' : 'Byline', album: mode === 'heart' ? 'Voice · Heart' : 'Voice · Browser',
         artwork: [{ src: '/icons/apple-touch-icon.png', sizes: '180x180', type: 'image/png' }] });
       ms.setActionHandler('play', play);
       ms.setActionHandler('pause', pause);

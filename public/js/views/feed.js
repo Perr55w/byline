@@ -1,5 +1,5 @@
 import { api } from '../api.js';
-import { html, on, act, toast, evChip, demoFlag, status, channelLabel, timeAgo, fmtDate, pct, modal, scoreNum, topicsLine } from '../ui.js';
+import { html, on, act, toast, evChip, demoFlag, status, channelLabel, timeAgo, fmtDate, pct, modal, scoreNum, topicsLine, titleWithFlag } from '../ui.js';
 
 const COLLECTIONS = ['AI product management', 'Business analysis', 'Data analytics', 'Career watchlist'];
 
@@ -48,7 +48,7 @@ async function renderFeed(el, view) {
       <div class="story" data-href="#/story/${s.id}">
         <div class="score" ${idx === 0 || (s.viewed_score != null && s.viewed_score < settings.publish_threshold && s.score >= settings.publish_threshold) ? 'data-stamp' : ''}>${s.viewed_score != null && Math.round(s.viewed_score) !== Math.round(s.score) ? html`<s class="was"><span class="sr-only">previously </span>${Math.round(s.viewed_score)}</s>` : ''}${scoreNum(s.score, { flap: true, from: s.viewed_score != null && Math.round(s.viewed_score) !== Math.round(s.score) ? s.viewed_score : null })}${idx === 0 ? html`<small aria-hidden="true">Score</small>` : ''}</div>
         <div>
-          <div class="story-title">${s.title}${demoFlag(s.is_demo)}</div>
+          <div class="story-title">${titleWithFlag(s.title, s.is_demo)}</div>
           <div class="row" style="margin-top:7px;gap:6px 14px">
             ${topicsLine(s.topics)}
             <span class="when">${s.article_count} article${s.article_count > 1 ? 's' : ''} · ${s.domain_count} source${s.domain_count > 1 ? 's' : ''} · ${timeAgo(s.updated_at)}</span>
