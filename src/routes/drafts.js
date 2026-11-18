@@ -8,6 +8,7 @@ import { checkDraft, blockingFlags } from '../editorial.js';
 import { generateVisual, saveSvg, cardSvg, diagramSvg } from '../visual.js';
 import { publishers } from '../publishers/index.js';
 import { sentences, truncate } from '../text.js';
+import { hashFile } from '../blurhash.js';
 
 const bad = (msg, status = 400) => Object.assign(new Error(msg), { status });
 
@@ -276,6 +277,15 @@ export function registerDrafts(route) {
     saveDraft(d.id, { image_id: id }, 'new visual');
     return fullDraft(d.id);
   });
+  route('GET', '/api/images/:id/plate', ({ params }) => {
+    const im = get('SELECT id, filename, mime, blurhash, ar FROM images WHERE id = ?', params.id);
+    if (!im) throw bad('Image not found', 404);
+    if (!im.blurhash && /^image\//.test(im.mime || '')) {
+      const bh = hashFile(path.join(MEDIA_DIR, im.filename));
+      if (bh) { run('UPDATE images SET blurhash = ?, ar = ? WHERE id = ?', bh.hash, bh.ar, im.id); Object.assign(im, { blurhash: bh.hash, ar: bh.ar }); }
+    }
+    return { id: im.id, blurhash: im.blurhash, ar: im.ar };
+  });
   route('GET', '/api/images', ({ query }) => all(`SELECT * FROM images ${query.kind ? 'WHERE mime LIKE ?' : ''} ORDER BY id DESC LIMIT 200`, ...(query.kind ? [`${query.kind}/%`] : [])).map(hydrate));
   route('POST', '/api/images', ({ body }) => {
     if (!body.data || !body.filename) throw bad('File data required');
@@ -288,6 +298,8 @@ export function registerDrafts(route) {
     const mime = body.mime || { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif', '.svg': 'image/svg+xml', '.mp4': 'video/mp4', '.mov': 'video/quicktime', '.webm': 'video/webm', '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.m4a': 'audio/mp4' }[ext];
     const r = run('INSERT INTO images(filename, mime, origin, source_url, attribution, license, generated, alt, rights_json, created_at) VALUES(?,?,?,?,?,?,0,?,?,?)',
       filename, mime, body.origin || 'upload', body.source_url || null, body.attribution || 'Uploaded by me', body.license || 'Own work', body.alt || '', JSON.stringify(rights), now());
+    const bh = /^image\//.test(mime || '') ? hashFile(path.join(MEDIA_DIR, filename)) : null;
+    if (bh) run('UPDATE images SET blurhash = ?, ar = ? WHERE id = ?', bh.hash, bh.ar, Number(r.lastInsertRowid));
     return get('SELECT * FROM images WHERE id = ?', Number(r.lastInsertRowid));
   });
   route('POST', '/api/images/import', async ({ body }) => {
@@ -301,6 +313,8 @@ export function registerDrafts(route) {
     const filename = `src-${Date.now()}${ext}`;
     fs.writeFileSync(path.join(MEDIA_DIR, filename), Buffer.from(await res.arrayBuffer()));
     const r = run('INSERT INTO images(filename, mime, origin, source_url, attribution, license, generated, alt, created_at) VALUES(?,?,?,?,?,?,0,?,?)', filename, mime, 'sourced', body.source_url || body.url, body.attribution, body.license, body.alt || '', now());
+    const bh = hashFile(path.join(MEDIA_DIR, filename));
+    if (bh) run('UPDATE images SET blurhash = ?, ar = ? WHERE id = ?', bh.hash, bh.ar, Number(r.lastInsertRowid));
     return get('SELECT * FROM images WHERE id = ?', Number(r.lastInsertRowid));
   });
   route('PATCH', '/api/images/:id', ({ params, body }) => {

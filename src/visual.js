@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { MEDIA_DIR, run, now } from './db.js';
 import { numericFacts, truncate } from './text.js';
+import { hashFile } from './blurhash.js';
 
 // Proof Desk palette for generated images (matches the app tokens).
 const C = { paper: '#F3EEE4', sheet: '#FBF8F2', ink: '#1C1A16', ink2: '#4A453C', ink3: '#6B6457', rule: '#D6CDBB', ruleStrong: '#B9AD96', red: '#B3301A', blue: '#1F5F9E',
@@ -99,7 +100,10 @@ export function saveSvg(svg, { alt, origin, source_url = null, attribution = 'Ge
   fs.writeFileSync(path.join(MEDIA_DIR, filename), svg);
   const r = run('INSERT INTO images(filename, mime, origin, source_url, attribution, license, generated, alt, created_at) VALUES(?,?,?,?,?,?,1,?,?)',
     filename, 'image/svg+xml', origin, source_url, attribution, license, alt, now());
-  return Number(r.lastInsertRowid);
+  const id = Number(r.lastInsertRowid);
+  const bh = hashFile(path.join(MEDIA_DIR, filename));
+  if (bh) run('UPDATE images SET blurhash = ?, ar = ? WHERE id = ?', bh.hash, bh.ar, id);
+  return id;
 }
 
 /** Recommend and create the best visual for a story: verified chart if numbers exist, else a title card. */
