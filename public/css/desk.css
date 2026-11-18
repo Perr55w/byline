@@ -207,7 +207,7 @@ button.done { border-color: var(--ink); }
 .modal-wrap.as-sheet { place-items: end stretch; padding: 0; background: color-mix(in srgb, var(--scrim) calc((1 - var(--p, 0)) * 100%), transparent); }
 .modal-wrap.as-sheet .modal {
   width: 100%; max-height: 88vh; box-shadow: 0 -2px 0 var(--ink); border: 0; border-top: 1px solid var(--ink); clip-path: none; filter: none;
-  padding: 26px 16px calc(18px + env(safe-area-inset-bottom, 0px)); transform: translateY(var(--drag, 0px)); animation: sheet-up 280ms var(--ease-press) both; touch-action: pan-y;
+  padding: 26px 16px calc(18px + env(safe-area-inset-bottom, 0px)); transform: translateY(var(--drag, 0px)); animation: sheet-up 280ms var(--ease-press) backwards; touch-action: pan-y;
 }
 .modal-wrap.as-sheet .modal::before { /* tear-off perforation */
   content: ''; position: absolute; left: 0; right: 0; top: 10px; height: 4px;
@@ -250,7 +250,8 @@ button.done { border-color: var(--ink); }
 @media (pointer: coarse) {
   .folios a { min-height: 44px; display: inline-flex; align-items: center; }
   button.sm, .toast-undo, .desk-switch, .index-btn { position: relative; }
-  button.sm::before, .toast-undo::before, .index-btn::before { content: ''; position: absolute; inset: -8px -4px; }
+  button.sm::before, .toast-undo::before { content: ''; position: absolute; inset: -8px -4px; }
+  .index-btn::before { content: ''; position: absolute; inset: -11px -6px; }
   .desk-switch::before { content: ''; position: absolute; inset: -11px -6px; }
   button[aria-busy="true"]::before { display: none; }
 }
@@ -336,3 +337,12 @@ html { background-color: var(--paper); }
 @media (max-width: 760px) { .brief-item.lead { grid-template-columns: minmax(0, 1fr) 88px; } }
 .story-title { text-wrap: balance; }
 .topics .t { white-space: nowrap; }
+
+/* sheet grip: the drag handle owns the gesture */
+.sheet-grip { display: none; }
+.modal-wrap.as-sheet .sheet-grip { display: block; position: absolute; left: 0; right: 0; top: 0; height: 44px; touch-action: none; cursor: grab; z-index: 2; }
+.modal-wrap.as-sheet .modal { padding-top: 34px; }
+/* Night toasts need an edge against the dark page */
+:root[data-theme="dark"] .toast { background: var(--paper-2); box-shadow: 0 0 0 1px var(--rule-strong), 3px 3px 0 #000; }
+/* long lists: skip rendering offscreen rows */
+main :is(.story, .hit, tbody tr, .source-row):nth-child(n+13) { content-visibility: auto; contain-intrinsic-size: auto 72px; }

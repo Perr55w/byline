@@ -434,7 +434,7 @@ main.press .below-fold { position: relative; }
 main.press .below-fold::before { content: ''; position: absolute; left: 0; right: 0; top: -3px; height: 3px; background: var(--paper); transform-origin: right; animation: rule-draw 360ms var(--ease-rule) var(--row-start) reverse both; }
 
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { animation-duration: 1ms !important; animation-delay: 0s !important; animation-iteration-count: 1 !important; transition-duration: 1ms !important; scroll-behavior: auto !important; }
+  *, *::before, *::after { animation: none !important; transition-duration: 1ms !important; scroll-behavior: auto !important; }
   .pressbar.on::after { display: none; }
   .spinner::before { clip-path: none; }
 }

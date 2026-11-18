@@ -117,26 +117,30 @@ export function modal(content, { wide = false, onClose } = {}) {
     // predictive back: a history entry per sheet so the system back gesture closes it
     history.pushState({ sheet: Date.now() }, ''); pushed = true;
     window.addEventListener('popstate', onPop);
+    // a real grip (touch-action: none) owns the drag; the sheet body keeps native scrolling
+    const grip = document.createElement('div');
+    grip.className = 'sheet-grip'; grip.setAttribute('aria-hidden', 'true');
+    el.prepend(grip);
     let y0 = 0, dy = 0, t0 = 0, dragging = false;
-    el.addEventListener('pointerdown', (e) => {
-      const r = el.getBoundingClientRect();
-      if (e.pointerType === 'mouse' || (el.scrollTop > 0 && e.clientY - r.top > 44)) return;
-      dragging = true; y0 = e.clientY; t0 = performance.now(); el.setPointerCapture(e.pointerId); el.classList.add('dragging');
+    const settle = () => { el.classList.add('spring'); el.style.setProperty('--drag', '0px'); wrap.style.setProperty('--p', '0'); setTimeout(() => el.classList.remove('spring'), 280); };
+    grip.addEventListener('pointerdown', (e) => {
+      dragging = true; dy = 0; y0 = e.clientY; t0 = performance.now(); grip.setPointerCapture(e.pointerId); el.classList.add('dragging');
     });
-    el.addEventListener('pointermove', (e) => {
+    grip.addEventListener('pointermove', (e) => {
       if (!dragging) return;
       const raw = e.clientY - y0;
       dy = raw > 0 ? raw : raw * .2;
       el.style.setProperty('--drag', `${dy}px`);
       wrap.style.setProperty('--p', String(Math.max(0, Math.min(1, dy / el.offsetHeight))));
     });
-    el.addEventListener('pointerup', () => {
+    const end = (cancelled) => {
       if (!dragging) return; dragging = false; el.classList.remove('dragging');
       const v = dy / Math.max(1, performance.now() - t0);
-      if (dy > 120 || v > .6) close();
-      else { el.classList.add('spring'); el.style.setProperty('--drag', '0px'); wrap.style.setProperty('--p', '0'); setTimeout(() => el.classList.remove('spring'), 280); }
+      if (!cancelled && (dy > 120 || v > .6)) close(); else settle();
       dy = 0;
-    });
+    };
+    grip.addEventListener('pointerup', () => end(false));
+    grip.addEventListener('pointercancel', () => end(true));
   }
   document.body.append(wrap);
   requestAnimationFrame(() => el.focus({ preventScroll: true }));

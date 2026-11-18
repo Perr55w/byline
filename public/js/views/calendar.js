@@ -129,6 +129,8 @@ export async function render(view, { params = [] } = {}) {
     dragId = t.dataset.id;
     e.dataTransfer.setData('text/plain', t.dataset.id);
     e.dataTransfer.effectAllowed = 'move';
+    const ghost = t.cloneNode(true); ghost.classList.add('cal-ghost'); ghost.style.cssText = `width:${t.offsetWidth}px;left:-9999px;top:0`;
+    document.body.append(ghost); e.dataTransfer.setDragImage(ghost, 12, 10); setTimeout(() => ghost.remove(), 0);
     requestAnimationFrame(() => t.classList.add('lifted'));
   });
   on(el, 'dragend', '.cal-item', (e, t) => { t.classList.remove('lifted'); el.querySelectorAll('.drop').forEach(d => d.classList.remove('drop')); });

@@ -63,7 +63,7 @@ export async function refreshStatus({ flap = false } = {}) {
 function renderNav(active) {
   document.getElementById('nav').innerHTML = NAV.map(([group, items]) => `<span class="folio-group">${group}</span>` + items.map(([k, label, key]) =>
     `<a href="#/${k}" data-nav="${k}" data-key="g ${key}" class="${k === active ? 'active' : ''}"${k === active ? ' aria-current="page"' : ''}>${label}${k === 'studio' ? '<span class="badge" style="display:none"></span>' : ''}${k === active ? '<i class="folio-mark" aria-hidden="true"></i>' : ''}</a>`).join('')).join('');
-  document.querySelector('#nav a.active')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  requestAnimationFrame(() => document.querySelector('#nav a.active')?.scrollIntoView({ block: 'nearest', inline: 'nearest' }));
   const s = state.status;
   const badge = document.querySelector('[data-nav="studio"] .badge');
   if (badge && s?.counts.awaiting) { badge.textContent = s.counts.awaiting; badge.style.display = ''; }
@@ -117,7 +117,7 @@ plate.addEventListener('click', (e) => {
 function replayEntrance() {
   const el = document.getElementById('view');
   el.classList.remove('press', 'hero'); void el.offsetWidth; el.classList.add('press');
-  el.querySelectorAll('.score-num[data-counted]').forEach(n => { n.removeAttribute('data-counted'); n.classList.remove('landed'); n.closest('.score')?.classList.remove('landed'); });
+  el.querySelectorAll('.score-num[data-counted]').forEach(n => { const i = n.querySelector('.int'); if (i) { i.dataset.final = i.dataset.final || i.textContent; i.textContent = String(Math.round(Number(n.dataset.from || 0))); } n.removeAttribute('data-counted'); n.classList.remove('landed'); n.closest('.score')?.classList.remove('landed'); });
   countUp(el);
   clearTimeout(route.settle); route.settle = setTimeout(() => el.classList.remove('press', 'hero'), 1700);
 }
@@ -178,11 +178,11 @@ async function route() {
     page.classList.add('current');
     renderNav(ALIAS[key] || key);
     main.dataset.route = key;
-    main.classList.remove('press', 'hero');
-    void main.offsetWidth;
+    // the page is a fresh element, so its entrance starts on its own; no forced reflow here
+    main.classList.remove('hero');
     main.classList.add('press');
     if (heroDue(key)) { main.classList.add('hero'); ink(); }
-    window.scrollTo({ top: 0, behavior: 'instant' });
+    if (window.scrollY) window.scrollTo({ top: 0, behavior: 'instant' });
   };
   const after = () => {
     decorate(page);
@@ -197,7 +197,7 @@ async function route() {
     skeleton.querySelector('.galley')?.classList.add('out');
     setTimeout(() => skeleton.remove(), 160);
     swap(); after();
-  } else if (old && document.startViewTransition && !reducedMotion() && !document.hidden) {
+  } else if (old && document.startViewTransition && !reducedMotion() && !document.hidden && !matchMedia('(max-width: 760px), (pointer: coarse)').matches) {
     runningVT?.skipTransition();
     const vt = runningVT = document.startViewTransition(swap);
     vt.updateCallbackDone.then(after, after);

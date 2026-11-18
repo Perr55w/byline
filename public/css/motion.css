@@ -42,7 +42,7 @@ main :is(.story, .brief-item, .source-row, .evidence, .hit, .stage, tbody tr):nt
 main :is(.story, .brief-item, .source-row, .evidence, .hit, .stage, tbody tr):nth-child(7) { --i: 6; }
 main :is(.story, .brief-item, .source-row, .evidence, .hit, .stage, tbody tr):nth-child(n+8) { --i: 7; }
 @supports (animation-timeline: view()) {
-  @media (prefers-reduced-motion: no-preference) {
+  @media (prefers-reduced-motion: no-preference) and (min-width: 761px) {
     main :is(.story, .source-row, .hit, tbody tr, .cal-item):nth-child(n+9) { animation: slug-in linear both; animation-timeline: view(); animation-range: entry 0% cover 25%; }
     main .stack > section:nth-child(n+3) { animation: slug-in linear both; animation-timeline: view(); animation-range: entry 0% cover 20%; }
   }
@@ -60,6 +60,11 @@ main.press section > h3::after, main.press .card > .row.between > h3::after { tr
 /* Feed — wire copy: titles teletype in; scores flap (countUp) */
 main.press[data-route="feed"] .story .story-title { animation: type-in 380ms steps(24, end) calc(var(--row-start) + 60ms + var(--i, 0) * 45ms) both; }
 main.press[data-route="feed"] .story:nth-child(n+9) .story-title { animation: none; }
+
+/* Studio tab — proofs pulled off the stone, status stamps land after */
+main.press[data-route="studio"] tbody tr:nth-child(-n+8) > * { animation: none; }
+main.press[data-route="studio"] tbody tr:nth-child(-n+8) { animation: proof-pull 380ms var(--ease-press) calc(var(--row-start) + var(--i, 0) * 45ms) both; }
+main.press[data-route="studio"] tbody tr:nth-child(-n+8) .status { animation: stamp-land 220ms var(--ease-stamp) calc(var(--row-start) + 200ms + var(--i, 0) * 45ms) both; }
 
 /* Story — the dossier opens: evidence slips slide up one after another */
 main.press[data-route="story"] .evidence { animation: slug-in 320ms var(--ease-press) calc(var(--row-start) + var(--i, 0) * 60ms) both; }
@@ -96,6 +101,8 @@ main.press:is([data-route="people"], [data-route="person"]) :is(tbody tr, .card,
 /* Campaigns — galleys on the stone: long slugs slide up, slow and heavy */
 main.press[data-route="campaigns"] :is(.card, tbody tr) { animation: galley-up 520ms var(--ease-press) calc(var(--row-start) + var(--i, 0) * 70ms) both; }
 @keyframes galley-up { from { opacity: 0; transform: translateY(22px); } to { opacity: 1; transform: none; } }
+
+main.press[data-route="campaigns"] .empty { animation: galley-up 520ms var(--ease-press) var(--row-start) both; }
 
 /* Performance — tally: axis, then bars, then counts */
 main.press[data-route="performance"] :is(.bar, .bars i, .chart-bar, .track-bar b) { transform-origin: 0 100%; animation: tally 520ms var(--ease-press) calc(var(--row-start) + 200ms + var(--i, 0) * 50ms) both; }
@@ -154,3 +161,19 @@ html.doc-hidden * { animation-play-state: paused !important; }
 }
 /* a desk switch wipes the whole sheet: nothing is captured as its own layer */
 html.theme-wipe .page.current, html.theme-wipe .masthead, html.theme-wipe .folio-mark { view-transition-name: none; }
+
+/* Performance empty state: axis draws, three ghost bars rise, then the copy */
+main[data-route="performance"] .empty { position: relative; padding-top: 70px; }
+main[data-route="performance"] .empty::before { content: ''; position: absolute; left: 0; top: 58px; width: 180px; height: 1px; background: var(--ink-3); transform-origin: left; }
+main[data-route="performance"] .empty::after { content: ''; position: absolute; left: 14px; top: 8px; width: 140px; height: 50px; transform-origin: 0 100%;
+  background: linear-gradient(var(--rule-strong), var(--rule-strong)) 0 100% / 22px 60% no-repeat, linear-gradient(var(--rule-strong), var(--rule-strong)) 50px 100% / 22px 90% no-repeat, linear-gradient(var(--rule-strong), var(--rule-strong)) 100px 100% / 22px 40% no-repeat; }
+main.press[data-route="performance"] .empty::before { animation: rule-draw 300ms var(--ease-rule) var(--row-start) both; }
+main.press[data-route="performance"] .empty::after { animation: tally 520ms var(--ease-press) calc(var(--row-start) + 220ms) both; }
+main.press[data-route="performance"] .empty { animation: fade 280ms ease-out calc(var(--row-start) + 600ms) both; }
+/* Sources: stamp the real status marks; cap per page, not per table */
+main.press[data-route="sources"] :is(.source-row, tbody tr) :is(.dot, .chip) { animation: stamp-land 220ms var(--ease-stamp) calc(var(--row-start) + 260ms + var(--i, 0) * 45ms) both; }
+main.press[data-route="sources"] .card:nth-of-type(n+3) :is(td, .dot, .chip),
+main.press[data-route="sources"] tbody tr:nth-child(n+9) :is(td, .dot, .chip) { animation: none !important; }
+/* Runs: only the first eight rows type their timestamp, one per row */
+main.press[data-route="runs"] tbody tr :is(.mono) { animation: none; }
+main.press[data-route="runs"] tbody tr:nth-child(-n+8) td:first-child .mono, main.press[data-route="runs"] tbody tr:nth-child(-n+8) td.when { animation: type-in 320ms steps(20, end) calc(var(--row-start) + 120ms + var(--i, 0) * 45ms) both; }
