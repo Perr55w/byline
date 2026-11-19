@@ -1,7 +1,7 @@
 // Offline fallback for the app shell. Network first: whenever the server is reachable you get the
 // current version; the cached copy is used only when offline. Bump VERSION when the shell changes.
 const VERSION = 'byline-shell-v5';
-const SHELL = ['/', '/styles.css', '/css/career.css', '/css/people.css', '/css/control.css', '/css/desk.css', '/css/motion.css', '/css/index.css', '/css/player.css', '/js/index-menu.js', '/js/player.js', '/js/app.js', '/js/api.js', '/js/ui.js', '/js/fx/surface.js', '/js/fx/micro.js', '/css/fx-micro.css', '/css/fx-surface.css', '/manifest.webmanifest', '/icons/icon-192.png'];
+const SHELL = ['/', '/styles.css', '/css/career.css', '/css/people.css', '/css/control.css', '/css/desk.css', '/css/motion.css', '/css/index.css', '/css/player.css', '/js/index-menu.js', '/js/player.js', '/js/app.js', '/js/api.js', '/js/ui.js', '/js/fx/surface.js', '/js/fx/micro.js', '/js/fx/type.js', '/css/fx-type.css', '/css/fx-micro.css', '/css/fx-surface.css', '/manifest.webmanifest', '/icons/icon-192.png'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(VERSION).then(c => c.addAll(SHELL.map(u => new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting()));

@@ -2,6 +2,7 @@ import { api } from './api.js';
 import { html, toast, countUp, reducedMotion, inField, stampChanged, galleyProof } from './ui.js';
 import { initLiveScreen, paintNewsprint } from './fx/surface.js';
 import { squish, spatter, lattice } from './fx/micro.js';
+import { castHeading, typeDek, flapTo, inkPressure, unfold } from './fx/type.js';
 
 // [key, label, g-shortcut]
 const NAV = [
@@ -57,7 +58,7 @@ export async function refreshStatus({ flap = false } = {}) {
       ? `No. ${doy} · ${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`
       : `Vol. 1 · No. ${doy} · ${d.toLocaleDateString('en-US', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' }).replace(/,/g, '')}`;
     const dl = document.getElementById('dateline');
-    if (flap) flapIssue(dl, text); else if (dl.textContent !== text) typeDateline(dl, text);
+    if (dl.dataset.text !== text) { flapTo(dl, text, { animate: flap || !!dl.dataset.text }); dl.dataset.text = text; }
     const badge = document.querySelector('[data-nav="studio"] .badge');
     if (badge) { badge.textContent = s.counts.awaiting || ''; badge.style.display = s.counts.awaiting ? '' : 'none'; }
   } catch (e) { /* server restarting */ }
@@ -103,6 +104,7 @@ function toggleDesk() { window.__byline.setTheme(themeNow() === 'dark' ? 'light'
 document.getElementById('theme-toggle').addEventListener('click', toggleDesk);
 paintSwitch();
 squish(document.getElementById('theme-toggle'));
+inkPressure(document.querySelector('.nameplate'), { rest: { wght: 700, opsz: 72 }, max: { wght: 800, opsz: 72 } });
 paintNewsprint();
 const live = initLiveScreen(document.querySelector('header.masthead'));
 window.__byline.live = live;
@@ -128,6 +130,7 @@ function replayEntrance() {
   el.classList.remove('press', 'hero'); void el.offsetWidth; el.classList.add('press');
   el.querySelectorAll('.score-num[data-counted]').forEach(n => { const i = n.querySelector('.int'); if (i) { i.dataset.final = i.dataset.final || i.textContent; i.textContent = String(Math.round(Number(n.dataset.from || 0))); } n.removeAttribute('data-counted'); n.classList.remove('landed'); n.closest('.score')?.classList.remove('landed'); });
   countUp(el);
+  const h1 = el.querySelector('.page.current .page-head h1'); if (h1) castHeading(h1, { hero: true });
   clearTimeout(route.settle); route.settle = setTimeout(() => el.classList.remove('press', 'hero'), 1700);
 }
 
@@ -191,6 +194,14 @@ async function route() {
     main.classList.remove('hero');
     main.classList.add('press');
     if (heroDue(key)) { main.classList.add('hero'); ink(); }
+    const h1 = page.querySelector('.page-head h1');
+    if (h1) {
+      const cast = castHeading(h1, { hero: main.classList.contains('hero') });
+      const dek = page.querySelector('.page-head .live-dek');
+      if (dek) typeDek(dek, { after: cast });
+    }
+    const fold = page.querySelector('.below-fold');
+    if (fold) unfold(fold);
     if (window.scrollY) window.scrollTo({ top: 0, behavior: 'instant' });
   };
   const after = () => {
@@ -207,15 +218,15 @@ async function route() {
     skeleton.querySelector('.galley')?.classList.add('out');
     setTimeout(() => skeleton.remove(), 160);
     swap(); after();
-  } else if (old && !reducedMotion() && !document.hidden) {
+  } else if (old && !reducedMotion() && !document.hidden && !matchMedia('(max-width: 760px), (pointer: coarse)').matches) {
     // DOM transition (no full-page snapshot): the old page lifts away in place, the folio mark glides by FLIP
     const markFrom = document.querySelector('.folio-mark')?.getBoundingClientRect();
     main.querySelectorAll('.page.leaving').forEach(p => p.remove());
     old.classList.remove('current'); old.classList.add('leaving');
     old.style.top = `${old.offsetTop}px`;
-    old.addEventListener('animationend', () => old.remove(), { once: true });
-    setTimeout(() => old.remove(), 400);
     const keep = old; old = null; // swap() must not remove it
+    keep.addEventListener('animationend', () => keep.remove(), { once: true });
+    setTimeout(() => keep.remove(), 400);
     swap();
     page.classList.add('entering');
     setTimeout(() => page.classList.remove('entering'), 400);
