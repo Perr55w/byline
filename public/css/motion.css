@@ -25,7 +25,7 @@
 ::view-transition-new(masthead) { animation: none; }
 .page.current { view-transition-name: page; }
 ::view-transition-old(page) { animation: page-lift 180ms var(--ease-rule) both; }
-::view-transition-new(page) { animation: fade 1ms linear 170ms both; }
+::view-transition-new(page) { animation: fade 1ms linear 180ms both; }
 html[data-dir="back"]::view-transition-old(page) { animation: page-back 200ms var(--ease-rule) both; }
 ::view-transition-group(page) { animation-duration: 0s; }
 .folio-mark { position: absolute; left: 10px; right: 10px; bottom: 0; height: 3px; background: var(--band-mark); view-transition-name: folio-mark; pointer-events: none; }
