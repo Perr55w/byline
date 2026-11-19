@@ -402,3 +402,5 @@ main :is(.story, .hit, tbody tr, .source-row):nth-child(n+13) { content-visibili
 .nameplate { min-width: 100px; } @media (max-width: 760px) { .nameplate { min-width: 82px; } }
 .nameplate { padding-right: .12em; }
 :root[data-theme="dark"] .card.accent .plate img { filter: grayscale(1) sepia(.5) brightness(.6) contrast(1.15); }
+/* Night lead: a halftone pencil underline instead of a flat marker bar */
+:root[data-theme="dark"] .lead-hl { background-image: radial-gradient(circle, var(--pencil-red) .9px, transparent 1.3px); background-size: 4px 4px; background-repeat: repeat-x; background-position: 0 calc(100% - .02em); animation: none; padding-bottom: .06em; }

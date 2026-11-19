@@ -312,7 +312,7 @@ export function countUp(root = document) {
       const x = Math.min(1, (now - t0) / dur), e = 1 - (1 - x) ** 4;
       const cur = from + (to - from) * e;
       const txt = String(Math.round(x < 1 ? Math.floor(cur) : Math.round(to)));
-      if (el.classList.contains('flap') && intEl.textContent !== txt) { intEl.classList.remove('tick'); void intEl.offsetWidth; intEl.classList.add('tick'); }
+      if (el.classList.contains('flap') && intEl.textContent !== txt && !(el.__lastTick > now - 70)) { el.__lastTick = now; intEl.animate([{ transform: 'scaleY(.6)' }, { transform: 'none' }], { duration: 90, easing: 'steps(2, end)' }); }
       intEl.textContent = x < 1 ? txt : finalInt;
       const b = inkBand(cur, t), key = b.w * 1000 + b.h;
       if (key !== band) { band = key; el.style.setProperty('--w', b.w); el.style.setProperty('--heat', `${b.h}%`); }

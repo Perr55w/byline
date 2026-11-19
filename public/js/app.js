@@ -58,7 +58,15 @@ export async function refreshStatus({ flap = false } = {}) {
       ? `No. ${doy} · ${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`
       : `Vol. 1 · No. ${doy} · ${d.toLocaleDateString('en-US', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' }).replace(/,/g, '')}`;
     const dl = document.getElementById('dateline');
-    if (dl.dataset.text !== text) { flapTo(dl, text, { animate: true }); dl.dataset.text = text; }
+    if (dl.dataset.text !== text) {
+      // only the issue number flaps; volume and date are plain type
+      const m = text.match(/^(.*?)(No\. \d+)(.*)$/);
+      if (!dl.querySelector('.dl-issue')) dl.innerHTML = '<span class="dl-pre"></span><span class="dl-issue"></span><span class="dl-post"></span>';
+      dl.querySelector('.dl-pre').textContent = m ? m[1] : '';
+      dl.querySelector('.dl-post').textContent = m ? m[3] : text;
+      flapTo(dl.querySelector('.dl-issue'), m ? m[2] : '', { animate: true });
+      dl.dataset.text = text;
+    }
     const badge = document.querySelector('[data-nav="studio"] .badge');
     if (badge) { badge.textContent = s.counts.awaiting || ''; badge.style.display = s.counts.awaiting ? '' : 'none'; }
   } catch (e) { /* server restarting */ }
@@ -153,6 +161,7 @@ let runningVT = null;
 async function route() {
   if (history.state?.sheet) return; // a sheet's history entry; the sheet handles it
   const seq = route.seq = (route.seq || 0) + 1;
+  const scrolledAtStart = window.scrollY; // read before rendering: reading it after forces a full layout
   const [name = 'today', ...params] = location.hash.replace(/^#\/?/, '').split('/');
   const key = ROUTES[name] ? name : 'today';
   const dir = direction();
@@ -193,7 +202,7 @@ async function route() {
     // the page is a fresh element, so its entrance starts on its own; no forced reflow here
     main.classList.remove('hero');
     main.classList.add('press');
-    if (heroDue(key)) { main.classList.add('hero'); ink(); }
+    if (heroDue(key)) { main.classList.add('hero'); requestAnimationFrame(() => setTimeout(ink, 0)); }
     const h1 = page.querySelector('.page-head h1');
     if (h1) {
       const hero = main.classList.contains('hero');
@@ -207,8 +216,8 @@ async function route() {
       setTimeout(() => { dek?.classList.remove('fx-wait'); row?.classList.remove('fx-wait'); }, 2000); // never stay hidden
     }
     const fold = page.querySelector('.below-fold');
-    if (fold) unfold(fold);
-    if (window.scrollY) window.scrollTo({ top: 0, behavior: 'instant' });
+    if (fold) requestAnimationFrame(() => setTimeout(() => unfold(fold), 0)); // measure after the first paint
+    if (scrolledAtStart) window.scrollTo({ top: 0, behavior: 'instant' });
   };
   const after = () => {
     // keep the main thread clear while the hero heading is being set
@@ -228,8 +237,9 @@ async function route() {
     // DOM transition (no full-page snapshot): the old page lifts away in place, the folio mark glides by FLIP
     const markFrom = document.querySelector('.folio-mark')?.getBoundingClientRect();
     main.querySelectorAll('.page.leaving').forEach(p => p.remove());
+    const oldTop = old.getBoundingClientRect().top - main.getBoundingClientRect().top - main.clientTop; // measure before it leaves the flow
+    old.style.top = `${oldTop}px`;
     old.classList.remove('current'); old.classList.add('leaving');
-    old.style.top = `${old.offsetTop}px`;
     const keep = old; old = null; // swap() must not remove it
     keep.addEventListener('animationend', () => keep.remove(), { once: true });
     setTimeout(() => keep.remove(), 400);

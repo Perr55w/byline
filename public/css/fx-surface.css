@@ -63,3 +63,4 @@
 
 /* hero: the plate develops after the headline has been set, so it is seen */
 main.hero .plate.fx-dev.fx-run img, :root[data-theme="dark"] main.hero .plate.fx-dev.fx-run::after { animation-delay: 600ms; }
+:root[data-theme="dark"] .card.accent .plate.fx-dev::after { filter: url(#fx-duo-night) brightness(.62) contrast(1.15); }

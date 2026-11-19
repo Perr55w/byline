@@ -13,7 +13,10 @@
    under prefers-reduced-motion every function leaves the final static state. */
 
 const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
-const token = (name, fallback) => (getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback);
+// easing tokens never change at runtime: read once, lazily, so no render pays a style recalc
+const tokenCache = {};
+const token = (name, fallback) => { if (!tokenCache[name]) { const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim(); if (v) tokenCache[name] = v; } return tokenCache[name] || fallback; };
+(window.requestIdleCallback || setTimeout)(() => ['--ease-press', '--ease-stamp', '--ease-rule'].forEach(n => token(n, 'ease')));
 const EASE = {
   press: () => token('--ease-press', 'cubic-bezier(.16, 1, .3, 1)'),
   stamp: () => token('--ease-stamp', 'cubic-bezier(.3, 1.5, .6, 1)'),
@@ -77,14 +80,16 @@ export async function castHeading(h1, { hero = false, delay = 0 } = {}) {
   const words = [...h1.querySelectorAll('.fx-w')];
   // phone: one rule under the whole heading (no per-word layout reads)
   const narrow = matchMedia('(max-width: 760px), (pointer: coarse)').matches;
-  const lines = narrow ? [{ left: 0, right: h1.clientWidth, bottom: h1.clientHeight, words }] : measureLines(h1, words);
+  if (!narrow) await new Promise(r => requestAnimationFrame(r)); // measure after the page has painted
+  if (!h1.isConnected) return;
+  const lines = narrow ? [{ css: true, words }] : measureLines(h1, words);
 
-  const ruleMs = hero ? 360 : 260, wordMs = hero ? 640 : 440, stagger = hero ? 90 : 60, lineGap = 60;
-  const fs = parseFloat(getComputedStyle(h1).fontSize) || 48;
+  const ruleMs = hero ? 360 : 260, wordMs = hero ? 640 : 440, stagger = hero ? 90 : Math.min(60, 300 / Math.max(1, words.length)), lineGap = 60;
+  const fs = narrow ? 0 : (parseFloat(getComputedStyle(h1).fontSize) || 48);
   const anims = [];
   const rules = lines.map((l, i) => {
     const r = document.createElement('i'); r.className = 'fx-rule'; r.setAttribute('aria-hidden', 'true');
-    r.style.cssText = `left:${l.left}px;width:${Math.max(0, l.right - l.left)}px;top:${Math.round(l.bottom + fs * 0.08)}px`;
+    r.style.cssText = l.css ? 'left:0;width:100%;bottom:-.08em' : `left:${l.left}px;width:${Math.max(0, l.right - l.left)}px;top:${Math.round(l.bottom + fs * 0.08)}px`;
     h1.prepend(r); // under the words in paint order
     anims.push(r.animate([{ transform: 'scaleX(0)' }, { transform: 'scaleX(1)' }], { duration: ruleMs, delay: delay + i * lineGap, easing: EASE.rule(), fill: 'backwards' }));
     return r;
@@ -231,7 +236,7 @@ function flapCell(cell, final, startDelay) {
       c.classList.add('fx-flapping');
       for (const ch of seq) {
         g.textContent = ch;
-        await done(g.animate([{ transform: 'perspective(160px) rotateX(-84deg)' }, { transform: 'none' }], { duration: 90, easing: 'cubic-bezier(.3, 0, .2, 1)' }));
+        await done(g.animate([{ transform: 'perspective(160px) rotateX(-50deg)', opacity: .55 }, { transform: 'none', opacity: 1 }], { duration: 90, easing: 'cubic-bezier(.3, 0, .2, 1)' }));
       }
       c.classList.remove('fx-flapping');
       resolve();

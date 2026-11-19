@@ -35,8 +35,8 @@ h1[data-fx-cast="run"] .fx-wi { will-change: transform; }
 /* ---------------------------------------------------------------- 4 Issue flap */
 .fx-flapline { display: inline-block; white-space: pre; }
 .fx-cell { position: relative; display: inline-block; background: var(--band); }
-.fx-cell::after { content: ''; position: absolute; left: 0; right: 0; top: 50%; height: 1px; margin-top: -.5px; background: var(--band-mark); opacity: 0; pointer-events: none; }
-.fx-cell.fx-flapping::after { opacity: 1; }
+.fx-cell::after { content: ''; position: absolute; left: 0; right: 0; top: 50%; height: 1px; margin-top: -.5px; background: var(--band-muted); opacity: 0; pointer-events: none; }
+.fx-cell.fx-flapping::after { opacity: .35; }
 .fx-g { display: inline-block; transform-origin: 50% 50%; backface-visibility: hidden; }
 
 /* ---------------------------------------------------------------- 5 Ink pressure */
