@@ -79,7 +79,7 @@ export async function render(view, { params = [] } = {}) {
         <div>${(run.stages || []).map((s, i, arr) => {
           const attempt = arr.slice(0, i + 1).filter(x => x.stage === s.stage).length;
           return html`<div class="stage ${s.status}">
-            <div class="row between"><span class="row"><span class="stage-name">${s.stage}</span>${attempt > 1 ? html`<span class="chip">attempt ${attempt}</span>` : ''}${runChip(s.status)}</span>
+            <div class="row between"><span class="row"><span class="stage-mark" data-mark="${s.status}" style="display:inline-flex;min-width:44px;height:18px"></span><span class="stage-name">${s.stage}</span>${attempt > 1 ? html`<span class="chip">attempt ${attempt}</span>` : ''}${runChip(s.status)}</span>
               <span class="mono faint">${fmtDateTime(s.started_at)} · ${dur(s.started_at, s.finished_at)}</span></div>
             ${s.error ? html`<div class="ctl-err" style="margin-top:6px">${s.error}</div>` : ''}
             <div style="margin-top:6px">${stageSummary(s.stage, s.detail)}</div>
@@ -126,6 +126,9 @@ export async function render(view, { params = [] } = {}) {
       </section>
     </div>
   </div>`);
+
+  // proof marks on stage rows: dashed ring while running, red-pencil check + "stet" when done, struck cross on failure
+  import('../fx/micro.js').then(({ statusMark }) => el.querySelectorAll('.stage-mark[data-mark]').forEach((m, i) => statusMark(m, m.dataset.mark, { delay: 260 + i * 90 })));
 
   on(el, 'click', '[data-run]', (e, tr) => go(tr.dataset.run));
   on(el, 'submit', '[data-form="run"]', async (e, f) => {

@@ -80,7 +80,7 @@ body {
   color: var(--ink);
   font: 400 var(--fs-base)/1.55 var(--body);
   -webkit-font-smoothing: antialiased;
-  background-color: var(--paper);
+  background-color: transparent; /* html carries the paper; the atmosphere layers sit between */
   /* newsprint grain + soft top vignette: static, no blend modes */
   /* newsprint grain + soft top vignette: one static background layer, no blend modes, nothing above content */
   background-image: none;

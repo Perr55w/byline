@@ -1,3 +1,4 @@
+import { developPlates } from './fx/surface.js';
 // Shared UI helpers. Views build HTML with the `html` tag (auto-escaped) and wire events with `on`.
 
 const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
@@ -395,6 +396,7 @@ export function plateImg(file, { alt = '', ar = null, cls = '' } = {}) {
   return html`<span class="plate ${cls}" data-plate="${file}" style="${ar ? `aspect-ratio:${ar}` : ''}"><img src="/media/${file}" alt="${alt}" loading="lazy" decoding="async"></span>`;
 }
 export function hydratePlates(root = document) {
+  developPlates(root);
   root.querySelectorAll('.plate[data-plate]:not([data-hyd])').forEach(async (el) => {
     el.dataset.hyd = '1';
     const img = el.querySelector('img');

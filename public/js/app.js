@@ -1,5 +1,6 @@
 import { api } from './api.js';
 import { html, toast, countUp, reducedMotion, inField, stampChanged, galleyProof } from './ui.js';
+import { initLiveScreen, paintNewsprint } from './fx/surface.js';
 
 // [key, label, g-shortcut]
 const NAV = [
@@ -91,7 +92,7 @@ function applyTheme(next) {
   const roller = document.createElement('div');
   const vt = document.startViewTransition(() => { swap(); roller.className = 'ink-roller'; document.body.append(roller); });
   vt.ready.catch(() => {});
-  vt.finished.catch(() => {}).finally(() => { root.classList.remove('theme-wipe'); roller.remove(); });
+  vt.finished.catch(() => {}).finally(() => { root.classList.remove('theme-wipe'); roller.remove(); live?.shock(); });
 }
 window.__byline.setTheme = (pref) => {
   try { localStorage.setItem('byline-theme', pref); } catch (e) { /* storage unavailable */ }
@@ -100,6 +101,9 @@ window.__byline.setTheme = (pref) => {
 function toggleDesk() { window.__byline.setTheme(themeNow() === 'dark' ? 'light' : 'dark'); }
 document.getElementById('theme-toggle').addEventListener('click', toggleDesk);
 paintSwitch();
+paintNewsprint();
+const live = initLiveScreen(document.querySelector('header.masthead'));
+window.__byline.live = live;
 
 // ---------------------------------------------------------------- nameplate: inking the plate
 const plate = document.querySelector('.nameplate');
@@ -107,6 +111,7 @@ function ink() {
   if (reducedMotion()) return;
   plate.style.setProperty('--np-w', `${plate.offsetWidth}px`);
   plate.classList.remove('inking'); void plate.offsetWidth; plate.classList.add('inking');
+  window.__byline.live?.shock();
   setTimeout(() => plate.classList.remove('inking'), 900);
 }
 plate.addEventListener('click', (e) => {
@@ -278,6 +283,7 @@ export async function stagedRun(promise) {
     bar.style.setProperty('--f', '1');
     setTimeout(() => { bar.classList.remove('staged', 'on'); bar.innerHTML = ''; bar.style.removeProperty('--f'); cap.remove(); shell.classList.remove('running'); }, 420);
     refreshStatus({ flap: true });
+    window.__byline.live?.shock();
   }
 }
 window.__byline.stagedRun = stagedRun;

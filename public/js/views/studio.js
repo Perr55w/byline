@@ -423,15 +423,29 @@ async function editor(el, id) {
         download(`byline-${id}-caption.txt`, exp.text);
       });
       if (a === 'dl-notes') { const exp = await api.get(`/drafts/${id}/export`); download(`byline-${id}-source-notes.md`, exp.source_notes, 'text/markdown'); }
-      if (a === 'publish') {
-        if (!await confirmBox(`Publish this exact approved version to ${channelLabel(d.channel)} now?`, 'Publish')) return;
-        await act(btn, async () => { d = await api.post(`/drafts/${id}/publish`, { confirm_hash: d.current_hash }); paint(); toast('Published', 'ok'); });
-      }
+      if (a === 'publish') return; // hold-to-print (wired below) replaces the confirm dialog; a click alone never publishes
       if (a === 'mark-published') await act(btn, async () => { d = await api.post(`/drafts/${id}/mark-published`, {}); paint(); toast('Marked as published', 'ok'); });
       if (a === 'adapt') await act(btn, async () => { const r = await api.post(`/drafts/${id}/adapt`, { channel: btn.dataset.channel, format: btn.dataset.format }); location.hash = `#/draft/${r.draft_id}`; }, 'Adapting…');
       if (a === 'render') await act(btn, async () => { const r = await api.post(`/drafts/${id}/render`, { orientation: d.meta?.orientation, burn_captions: el.querySelector('#burn')?.checked !== false }); d = r.draft; paint(); toast(`Rendered ${Math.round(r.duration)}s MP4`, 'ok'); }, 'Rendering…');
       if (a === 'archive') { d = await api.patch(`/drafts/${id}`, { status: d.status === 'archived' ? 'draft' : 'archived' }); paint(); }
     } catch (err) { toast(err.message, 'err'); }
+  });
+
+  // --- publish: hold to print. Holding the button for 900 ms is the confirmation (no dialog). ---
+  async function publishNow() {
+    const slow = setTimeout(() => document.getElementById('pressbar')?.classList.add('on'), 300);
+    try {
+      d = await api.post(`/drafts/${id}/publish`, { confirm_hash: d.current_hash });
+      toast('Published', 'ok');
+      setTimeout(paint, 1100); // let the "✓ Published" stamp land before the panel re-sets
+      return true;
+    } catch (err) { toast(err.message, 'err'); return false; }
+    finally { clearTimeout(slow); document.getElementById('pressbar')?.classList.remove('on'); }
+  }
+  import('../fx/micro.js').then(({ holdToPress }) => {
+    const wire = () => el.querySelectorAll('[data-act="publish"]:not([data-hold])').forEach(b => holdToPress(b, { ms: 900, hint: `Hold to publish to ${channelLabel(d.channel)}`, onComplete: publishNow }));
+    wire();
+    new MutationObserver(wire).observe(el, { childList: true, subtree: true });
   });
 
   function recordNarration() {

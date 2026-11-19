@@ -1,0 +1,62 @@
+/* Surface effects: Plate develops, Live screen, Re-screen.
+   Effects adapted from React Bits (MIT + Commons Clause), David Haz.
+   HalftoneReveal -> CSS dot mask; DotGrid -> canvas overlay; Dither -> Bayer mask band on the desk wipe. */
+
+/* ---------------------------------------------------------------- #6 Plate develops */
+@property --fx-p { syntax: '<number>'; inherits: false; initial-value: 0; }
+
+/* 45-degree screen: two 8px dot lattices offset by half a cell (pitch ~5.7px).
+   The farthest point from any dot centre is 4px, so --fx-r >= 4.6px is solid. */
+.plate.fx-dev img, .plate.fx-dev::after {
+  /* coverage grows with r^2, so a cubic of the eased progress spreads the develop across the whole 800ms */
+  --fx-r: calc(-1px + 5.6px * var(--fx-p) * var(--fx-p) * var(--fx-p));
+  --fx-dots:
+    radial-gradient(circle, #000 var(--fx-r), transparent calc(var(--fx-r) + .7px)) 0 0 / 8px 8px,
+    radial-gradient(circle, #000 var(--fx-r), transparent calc(var(--fx-r) + .7px)) 4px 4px / 8px 8px;
+}
+/* Proof: the colour plate itself is screened */
+.plate.fx-dev img { opacity: 1; transition: none; -webkit-mask: var(--fx-dots); mask: var(--fx-dots); }
+.plate.fx-dev.fx-run img { animation: fx-develop 800ms var(--ease-press) both; }
+@keyframes fx-develop { from { --fx-p: 0; } to { --fx-p: 1; } }
+
+/* Night: an ink-on-sheet duotone plate develops over bare sheet, then lifts off the colour image */
+:root[data-theme="dark"] .plate.fx-dev { background-image: none !important; background-color: var(--sheet); }
+:root[data-theme="dark"] .plate.fx-dev img { opacity: 0; -webkit-mask: none; mask: none; animation: none; }
+:root[data-theme="dark"] .plate.fx-dev::after {
+  content: ''; position: absolute; inset: 0; pointer-events: none;
+  background: var(--fx-src) var(--fx-pos, center) / var(--fx-fit, cover) no-repeat;
+  filter: url(#fx-duo-night);
+  -webkit-mask: var(--fx-dots); mask: var(--fx-dots);
+}
+:root[data-theme="dark"] .plate.fx-dev.fx-run::after { animation: fx-develop 800ms var(--ease-press) both; }
+:root[data-theme="dark"] .plate.fx-dev.fx-lift img { opacity: 1; }
+:root[data-theme="dark"] .plate.fx-dev.fx-lift::after { --fx-p: 1.2; animation: fx-lift 280ms var(--ease-press) both; }
+@keyframes fx-lift { to { opacity: 0; } }
+
+/* ---------------------------------------------------------------- #7 Live screen */
+.fx-live-screen { position: absolute; inset: 0; width: 100%; height: 100%; z-index: -1; pointer-events: none; display: block; }
+.masthead.fx-live { isolation: isolate; }
+
+/* ---------------------------------------------------------------- #9 Re-screen (theme wipe) */
+/* The new desk prints in behind the red roller with a 40px ordered-dither (8x8 Bayer, 4px cells) leading band.
+   Same 460ms --ease-rule as the roller; the roller runs 40px further so the band clears the sheet. */
+@property --fx-wipe { syntax: '<length>'; inherits: false; initial-value: 0px; }
+:root.theme-wipe::view-transition-new(root) {
+  --fx-band: 40px;
+  -webkit-mask-image: linear-gradient(#000, #000), url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='40' shape-rendering='crispEdges'%3E%3Cpath d='M0 0h4v4h-4zM4 0h4v4h-4zM8 0h4v4h-4zM12 0h4v4h-4zM16 0h4v4h-4zM20 0h4v4h-4zM24 0h4v4h-4zM0 4h4v4h-4zM4 4h4v4h-4zM8 4h4v4h-4zM12 4h4v4h-4zM16 4h4v4h-4zM20 4h4v4h-4zM24 4h4v4h-4zM28 4h4v4h-4zM0 8h4v4h-4zM8 8h4v4h-4zM16 8h4v4h-4zM24 8h4v4h-4zM0 12h4v4h-4zM4 12h4v4h-4zM8 12h4v4h-4zM12 12h4v4h-4zM20 12h4v4h-4zM24 12h4v4h-4zM28 12h4v4h-4zM0 16h4v4h-4zM8 16h4v4h-4zM16 16h4v4h-4zM24 16h4v4h-4zM4 20h4v4h-4zM20 20h4v4h-4zM0 24h4v4h-4zM8 24h4v4h-4zM16 24h4v4h-4zM24 24h4v4h-4zM0 32h4v4h-4zM16 32h4v4h-4z'/%3E%3C/svg%3E");
+          mask-image: linear-gradient(#000, #000), url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='40' shape-rendering='crispEdges'%3E%3Cpath d='M0 0h4v4h-4zM4 0h4v4h-4zM8 0h4v4h-4zM12 0h4v4h-4zM16 0h4v4h-4zM20 0h4v4h-4zM24 0h4v4h-4zM0 4h4v4h-4zM4 4h4v4h-4zM8 4h4v4h-4zM12 4h4v4h-4zM16 4h4v4h-4zM20 4h4v4h-4zM24 4h4v4h-4zM28 4h4v4h-4zM0 8h4v4h-4zM8 8h4v4h-4zM16 8h4v4h-4zM24 8h4v4h-4zM0 12h4v4h-4zM4 12h4v4h-4zM8 12h4v4h-4zM12 12h4v4h-4zM20 12h4v4h-4zM24 12h4v4h-4zM28 12h4v4h-4zM0 16h4v4h-4zM8 16h4v4h-4zM16 16h4v4h-4zM24 16h4v4h-4zM4 20h4v4h-4zM20 20h4v4h-4zM0 24h4v4h-4zM8 24h4v4h-4zM16 24h4v4h-4zM24 24h4v4h-4zM0 32h4v4h-4zM16 32h4v4h-4z'/%3E%3C/svg%3E");
+  -webkit-mask-repeat: no-repeat, repeat-x; mask-repeat: no-repeat, repeat-x;
+  -webkit-mask-size: 100% max(0px, calc(var(--fx-wipe) - var(--fx-band))), 32px var(--fx-band);
+          mask-size: 100% max(0px, calc(var(--fx-wipe) - var(--fx-band))), 32px var(--fx-band);
+  -webkit-mask-position: 0 0, 0 calc(var(--fx-wipe) - var(--fx-band));
+          mask-position: 0 0, 0 calc(var(--fx-wipe) - var(--fx-band));
+  animation: fx-reprint 460ms var(--ease-rule) both;
+}
+:root.theme-wipe::view-transition-new(roller) { animation: fx-roller-down 460ms var(--ease-rule) both; }
+@keyframes fx-reprint { from { --fx-wipe: 0px; } to { --fx-wipe: calc(100vh + 40px); } }
+@keyframes fx-roller-down { from { transform: translateY(0); } to { transform: translateY(calc(100vh + 40px)); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .plate.fx-dev img, .plate.fx-dev::after { animation: none !important; -webkit-mask: none !important; mask: none !important; }
+  .fx-live-screen { display: none; }
+}
