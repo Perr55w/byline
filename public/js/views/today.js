@@ -116,7 +116,9 @@ export async function render(view) {
   on(el, 'click', '[data-act]', async (e, btn) => {
     const a = btn.dataset.act;
     if (a === 'run') await act(btn, async () => {
+      const tc = window.__byline?.lattice?.(btn, { label: 'Going to press' });
       const r = await (window.__byline?.stagedRun || ((p) => p))(api.post('/runs', {}));
+      if (tc) { r.status === 'done' ? tc.done('Printed') : tc.error('Stopped'); await new Promise(res => setTimeout(res, 700)); }
       toast(r.status === 'done' ? 'Daily run finished' : `Run failed at ${r.failed_stage}: ${r.error}`, r.status === 'done' ? 'ok' : 'err');
       render(view);
     }, 'Running…');

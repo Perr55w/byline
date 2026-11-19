@@ -1,6 +1,7 @@
 import { api } from './api.js';
 import { html, toast, countUp, reducedMotion, inField, stampChanged, galleyProof } from './ui.js';
 import { initLiveScreen, paintNewsprint } from './fx/surface.js';
+import { squish, spatter, lattice } from './fx/micro.js';
 
 // [key, label, g-shortcut]
 const NAV = [
@@ -101,6 +102,7 @@ window.__byline.setTheme = (pref) => {
 function toggleDesk() { window.__byline.setTheme(themeNow() === 'dark' ? 'light' : 'dark'); }
 document.getElementById('theme-toggle').addEventListener('click', toggleDesk);
 paintSwitch();
+squish(document.getElementById('theme-toggle'));
 paintNewsprint();
 const live = initLiveScreen(document.querySelector('header.masthead'));
 window.__byline.live = live;
@@ -247,6 +249,7 @@ document.addEventListener('counted', (e) => {
   if (!holder || !holder.hasAttribute('data-stamp') || e.detail.value < e.detail.threshold) return;
   if (document.querySelectorAll('.pw-stamp').length >= 3 || holder.querySelector('.pw-stamp')) return;
   holder.insertAdjacentHTML('beforeend', '<span class="pw-stamp">Post-worthy</span>');
+  setTimeout(() => spatter(holder.querySelector('.pw-stamp')), 180);
 });
 
 // ---------------------------------------------------------------- honest stage-driven pressbar + press-run band
@@ -287,6 +290,7 @@ export async function stagedRun(promise) {
   }
 }
 window.__byline.stagedRun = stagedRun;
+window.__byline.lattice = lattice;
 
 // ---------------------------------------------------------------- prefetch: hover/touch on folios, idle import of the rest
 const warmed = new Set();

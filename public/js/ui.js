@@ -244,7 +244,7 @@ export async function act(btn, fn, label, { done } = {}) {
     const r = await fn();
     if (btn && btn.isConnected) {
       setBusy(btn, false);
-      if (done) { btn.dataset.label = btn.innerHTML; btn.innerHTML = `<span class="done-mark">✓ ${esc(done)}</span>`; btn.classList.add('done'); setTimeout(() => { if (btn.isConnected) { btn.innerHTML = btn.dataset.label; btn.classList.remove('done'); } }, 900); }
+      if (done) { btn.dataset.label = btn.innerHTML; btn.innerHTML = `<span class="done-mark">✓ ${esc(done)}</span>`; btn.classList.add('done'); import('./fx/micro.js').then(m => m.spatter(btn)).catch(() => {}); setTimeout(() => { if (btn.isConnected) { btn.innerHTML = btn.dataset.label; btn.classList.remove('done'); } }, 900); }
     }
     return r;
   } catch (e) { toast(e.message, 'err'); }
