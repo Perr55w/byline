@@ -11,7 +11,7 @@
        .lede                     the one-liner (F lede 18/27, max 68ch); wrap figures in <b>
        .page-head-actions        right-aligned actions on the h1 baseline
      .section-head               h2 row: <h2 class="t-h2"> + optional .section-meta on the right
-     .section-label              small mono label above a block (sparingly; no middot stacks)
+     .section-label              small sentence-case label above a block (Geist 12/16; sparingly)
      .grid-12 / .col-N           12-col grid, 16px gaps (4 cols on phone; .col-N spans full on phone)
      .stack / .stack-sm / .stack-lg   vertical rhythm (16 / 8 / 28)
      .cluster                    inline wrap row, 8px gap, centred
@@ -35,7 +35,7 @@
      .btn .btn--primary .btn--secondary .btn--ghost .btn--danger  (+ .btn--sm .btn--lg .btn--icon)
      .input .select .textarea   (.input--hero = 56px search bar); .field = label + control
      .chip .chip--topic .chip--main .chip--filter[aria-pressed]   topic + filter chips (999 radius)
-     .tag .tag--ok .tag--warn .tag--err .tag--neutral .tag--demo  status tags (mono 10, radius 5); text uses
+     .tag .tag--ok .tag--warn .tag--err .tag--neutral .tag--demo  status tags (Geist 12/16, sentence case, radius 5); text uses
                                  --ok-text / --warn-text / --err-text (AA on soft fills) — use those for any status text
      .seg / .seg-opt / .seg-thumb   segmented control (rail theme switch)
      .switch                     toggle (input[type=checkbox].switch)
@@ -76,7 +76,7 @@
 .section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin: 0 0 12px; }
 .section-head h2 { margin: 0; }
 .section-meta { color: var(--text-3); font: 450 var(--fs-meta)/var(--lh-meta) var(--font-sans); font-variant-numeric: tabular-nums; }
-.section-label { margin: 0 0 10px; font: 500 var(--fs-label)/var(--lh-label) var(--font-mono); letter-spacing: var(--tr-label); text-transform: uppercase; color: var(--text-3); }
+.section-label { margin: 0 0 10px; font: 500 12px/16px var(--font-sans); letter-spacing: 0; text-transform: none; color: var(--text-3); }
 h2.t-h2, h3.t-title, h3.t-title-lg { margin: 0; }
 
 .grid-12 { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: var(--gap); }
@@ -97,8 +97,9 @@ h2.t-h2, h3.t-title, h3.t-title-lg { margin: 0; }
 }
 .tile::before { content: ""; position: absolute; inset: -1px; z-index: -1; border-radius: inherit; box-shadow: var(--shadow-hover); opacity: 0; pointer-events: none;
   transition: opacity var(--dur-hover-out) var(--ease-fade); }
+/* hover light: a fixed top-centre pool (SPEC: a light reaction, not a cursor trail; the moving light is #bg-light) */
 .tile::after { content: ""; position: absolute; inset: 0; z-index: -1; border-radius: inherit; pointer-events: none; opacity: 0;
-  background: radial-gradient(560px circle at var(--mx, 50%) var(--my, 30%), var(--hover-spot), transparent 62%), linear-gradient(var(--hover-wash), var(--hover-wash));
+  background: radial-gradient(120% 90% at 50% 0%, var(--hover-spot), transparent 70%), linear-gradient(var(--hover-wash), var(--hover-wash));
   transition: opacity var(--dur-hover-out) var(--ease-fade); }
 .tile:not(.tile--static):hover, .tile:not(.tile--static):focus-within:has(:focus-visible) { transform: translateY(-2px); border-color: var(--hover-line);
   transition: transform var(--dur-hover-in) var(--ease-settle), border-color var(--dur-hover-in) var(--ease-fade); }
@@ -135,7 +136,9 @@ a.tile:focus-visible { box-shadow: var(--focus); border-radius: var(--r-tile); }
   font: 500 10.5px/1 var(--font-mono); letter-spacing: var(--tr-label); text-transform: uppercase; color: var(--text-3); border-bottom: 1px solid var(--line); }
 .table td { height: 48px; padding: 8px 16px; border-top: 1px solid var(--line); vertical-align: middle; color: var(--text-1); }
 .table tr:first-child td { border-top: 0; }
-.table .num, .table td.num, .table th.num { text-align: right; font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 13px; }
+.table .num, .table td.num, .table th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.table td.num, .table td .num { font-family: var(--font-mono); font-size: 13px; }
+.table th.num { font-size: var(--fs-label); letter-spacing: var(--tr-label); }
 .table tbody tr { transition: background-color var(--dur-micro) var(--ease-fade); }
 .table tbody tr:hover { background: var(--hover-row); }
 .table tbody tr.is-selected { background: var(--accent-soft); box-shadow: inset 2px 0 0 var(--accent); }
@@ -145,7 +148,10 @@ a.tile:focus-visible { box-shadow: var(--focus); border-radius: var(--r-tile); }
 .score-ring { position: relative; display: inline-grid; place-items: center; width: var(--ring-size, 96px); height: var(--ring-size, 96px); flex: none; color: var(--text-1); }
 .score-ring svg { position: absolute; inset: 0; width: 100%; height: 100%; transform: rotate(-90deg); overflow: visible; }
 .score-ring .ring-track { fill: none; stroke: var(--line-2); stroke-width: 3; }
-.score-ring .ring-arc { fill: none; stroke: var(--q, var(--q-3)); stroke-width: 3; stroke-linecap: round; transition: stroke var(--dur-micro); }
+.score-ring .ring-arc { fill: none; stroke: var(--q, var(--q-3)); stroke-width: 3; stroke-linecap: round; }
+/* above the bar the arc is stroked with a per-ring gradient, threshold colour → score colour (ui.js / quality.js) */
+.score-ring .ring-sub { transition: opacity var(--dur-fade) var(--ease-fade); }
+.score-ring.is-counting .ring-sub { opacity: 0; }
 .score-ring .ring-halo { fill: none; stroke: var(--q, var(--q-5)); stroke-width: 1; opacity: 0; }
 .score-ring[data-q=below] .ring-arc { stroke-width: 2; }
 .score-ring[data-q=below] .ring-track { stroke-dasharray: 1 3; stroke: var(--line-ctl); opacity: .6; }
@@ -156,15 +162,16 @@ a.tile:focus-visible { box-shadow: var(--focus); border-radius: var(--r-tile); }
 .count { display: inline-block; font-variant-numeric: tabular-nums; contain: layout paint; text-align: right; }
 .score-chip { display: inline-grid; place-items: center; min-width: 44px; height: 28px; padding: 0 8px; border-radius: var(--r-ctl); flex: none;
   font: 600 var(--fs-score-chip)/20px var(--font-sans); font-variant-numeric: tabular-nums; color: var(--text-1);
-  background: color-mix(in oklab, var(--q, var(--q-3)) 14%, var(--surface-solid)); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--q, var(--q-3)) 30%, transparent); }
-.score-chip[data-q=below] { background: transparent; color: var(--text-2); box-shadow: inset 0 0 0 1px var(--q, var(--q-1)); }
+  background: color-mix(in oklab, var(--q, var(--q-3)) 18%, var(--surface-solid)); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--q, var(--q-3)) 34%, transparent); }
+.score-chip[data-q=strong] { background: color-mix(in oklab, var(--q, var(--q-4)) 26%, var(--surface-solid)); }
+.score-chip[data-q=below] { background: transparent; color: var(--text-2); box-shadow: inset 0 0 0 1.5px var(--q, var(--q-1)); }
 .score-chip[data-q=top] { background: var(--q-5); color: var(--q-on5); box-shadow: var(--q-glow); }
 @media (forced-colors: active) { .score-chip, .score-ring .ring-arc { border: 1px solid CanvasText; stroke: CanvasText; } }
 .meter { position: relative; height: 4px; border-radius: 2px; background: var(--track); overflow: hidden; }
 .meter > i { position: absolute; inset: 0 auto 0 0; width: calc(var(--v, 0) * 100%); border-radius: inherit; background: var(--q, var(--accent)); }
 .kv { display: grid; grid-template-columns: max-content 1fr; gap: 8px 16px; margin: 0; font: 400 14px/20px var(--font-sans); }
 .kv dt { color: var(--text-3); } .kv dd { margin: 0; color: var(--text-1); }
-.divider-label { display: flex; align-items: center; gap: 12px; margin: 20px 0 10px; color: var(--text-3); font: 500 var(--fs-label)/1 var(--font-mono); letter-spacing: var(--tr-label); text-transform: uppercase; }
+.divider-label { display: flex; align-items: center; gap: 12px; margin: 20px 0 10px; color: var(--text-3); font: 500 12px/16px var(--font-sans); letter-spacing: 0; text-transform: none; }
 .divider-label::before, .divider-label::after { content: ""; flex: 1; height: 1px; background: var(--line-2); }
 .divider-label::before { flex: 0 0 16px; }
 
@@ -224,7 +231,7 @@ a.tile:focus-visible { box-shadow: var(--focus); border-radius: var(--r-tile); }
 .chip--filter:hover { color: var(--text-1); box-shadow: inset 0 0 0 1px var(--line-3); text-decoration: none; }
 .chip--filter[aria-pressed=true], .chip--filter.is-on { background: var(--accent-soft); color: var(--accent-text); box-shadow: inset 0 0 0 1px var(--accent-line); }
 .tag { display: inline-flex; align-items: center; gap: 5px; height: 20px; padding: 0 6px; border-radius: var(--r-tag); border: 1px solid var(--line-2);
-  color: var(--text-2); font: 500 10px/1 var(--font-mono); letter-spacing: .06em; text-transform: uppercase; white-space: nowrap; }
+  color: var(--text-2); font: 500 12px/16px var(--font-sans); letter-spacing: 0; text-transform: none; white-space: nowrap; }
 .tag--ok { color: var(--ok-text); border-color: color-mix(in oklab, var(--ok) 40%, transparent); background: var(--ok-soft); }
 .tag--warn { color: var(--warn-text); border-color: color-mix(in oklab, var(--warn) 40%, transparent); background: var(--warn-soft); }
 .tag--err { color: var(--err-text); border-color: color-mix(in oklab, var(--err) 40%, transparent); background: var(--err-soft); }
@@ -326,17 +333,26 @@ a.tile:focus-visible { box-shadow: var(--focus); border-radius: var(--r-tile); }
 .dossier { position: fixed; inset: 0; z-index: 50; pointer-events: none; }
 .dossier-scrim { position: absolute; inset: 0; background: var(--scrim); opacity: 0; pointer-events: auto; }
 .dossier-panel {
-  position: absolute; top: var(--shell-inset); bottom: var(--shell-inset); right: var(--shell-inset);
+  /* S6: the left edge rides --rail-w (its own copy, shell.css); width capped so ≥160px of page shows on the right */
+  position: absolute; top: var(--shell-inset); bottom: var(--shell-inset);
   left: calc(var(--shell-inset) + var(--rail-w) + var(--shell-inset));
+  width: min(1040px, calc(100vw - var(--rail-w) - 2 * var(--shell-inset) - 160px));
   border-radius: var(--r-shell); pointer-events: auto; overflow: hidden; contain: layout paint style; isolation: isolate;
   box-shadow: inset 0 0 0 1px var(--glass-border), var(--shadow-shell); outline: none;
 }
 .dossier-fill, .dossier-frost { position: absolute; inset: 0; z-index: -1; border-radius: inherit; pointer-events: none; }
-.dossier-fill { background: var(--surface-flight); transition: opacity 200ms var(--ease-fade); }
-.dossier-frost { background: var(--surface-glass-strong); -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat)); backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
-  opacity: 0; transition: opacity 200ms var(--ease-fade); }
-.dossier.frosted .dossier-frost { opacity: 1; }
-.dossier.frosted .dossier-fill { opacity: 0; }
+/* S4: the flight fill is opaque from frame 1 (independent of the scrim); the frost replaces it after landing */
+.dossier-fill { background: var(--surface-flight); opacity: 1; }
+/* the frost replaces the fill in one frame after landing (white .82 + blur vs white .94: the swap is not visible),
+   so the backdrop blur is computed once, not on every frame of a fade */
+.dossier-frost { display: none; background: var(--surface-glass-strong); -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat)); backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat)); }
+.dossier.frosted .dossier-frost { display: block; }
+.dossier.frosted .dossier-fill { opacity: 0; transition: none; }
+/* S5: closing drops the backdrop-filter layer at once and puts the opaque fill straight back */
+.dossier.closing .dossier-frost, .dossier.is-reflowing .dossier-frost { display: none; }
+.dossier.closing .dossier-fill, .dossier.is-reflowing .dossier-fill { opacity: 1; transition: none; }
+/* S3: an idle prebuild, attached only while it is rendered and measured */
+.dossier.is-prebuild { visibility: hidden; contain: strict; pointer-events: none; }
 .dossier-bar { position: absolute; z-index: 3; top: 12px; right: 12px; display: flex; gap: 4px; }
 .dossier-bar .btn { background: var(--surface-solid); }
 .dossier-scroll { position: absolute; inset: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
@@ -344,7 +360,7 @@ a.tile:focus-visible { box-shadow: var(--focus); border-radius: var(--r-tile); }
 .dossier [data-dossier-section] { opacity: 1; }
 .dossier-grab { display: none; }
 @media (max-width: 760px) {
-  .dossier-panel { left: 0; right: 0; bottom: 0; top: 8px; border-radius: var(--r-sheet) var(--r-sheet) 0 0; }
+  .dossier-panel { left: 0; right: 0; bottom: 0; top: 8px; width: auto; border-radius: var(--r-sheet) var(--r-sheet) 0 0; }
   .dossier-body { padding: 28px 16px calc(32px + env(safe-area-inset-bottom, 0px)); }
   .dossier-grab { display: block; position: absolute; z-index: 4; left: 0; right: 0; top: 0; height: 28px; touch-action: none; }
   .dossier-grab::before { content: ""; position: absolute; left: 50%; top: 8px; width: 36px; height: 4px; margin-left: -18px; border-radius: 2px; background: var(--line-3); }

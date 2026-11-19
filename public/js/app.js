@@ -58,10 +58,19 @@ function paintTheme() {
   document.querySelectorAll('[data-theme-toggle]').forEach(b => { b.setAttribute('aria-label', night ? 'Switch to Proof (light)' : 'Switch to Night (dark)'); b.dataset.tip = night ? 'Theme: Night' : 'Theme: Proof'; });
   $('theme-color-live')?.setAttribute('content', night ? '#121316' : '#F5F6F8');
 }
-let xfadeT = 0;
+let xfadeT = 0, midT = 0;
+// S7: surfaces cross-fade over --dur-theme; the ink keeps the old theme's tokens until the midpoint, then swaps in
+// one frame (a cross-faded ink would cross the cross-faded surface: ~1:1 contrast on some frame, whatever the curve).
 function applyTheme(next) {
   if (next === themeNow()) return;
-  if (!reducedMotion()) { root.classList.add('theme-xfade'); clearTimeout(xfadeT); xfadeT = setTimeout(() => root.classList.remove('theme-xfade'), DUR.theme + 60); }
+  const prev = themeNow();
+  clearTimeout(xfadeT); clearTimeout(midT);
+  root.classList.remove('theme-mid', 'ink-hold-proof', 'ink-hold-night');
+  if (!reducedMotion()) {
+    root.classList.add('theme-xfade', `ink-hold-${prev}`);
+    midT = setTimeout(() => { root.classList.remove('ink-hold-proof', 'ink-hold-night'); root.classList.add('theme-mid'); }, Math.round(DUR.theme / 2));
+    xfadeT = setTimeout(() => root.classList.remove('theme-xfade', 'theme-mid'), DUR.theme + 60);
+  }
   root.dataset.theme = next;
   paintTheme();
   repaintAll();
@@ -106,8 +115,9 @@ function setCollapsed(on, { persist = true } = {}) {
   bg.setRail(railRect(w), { animate: reducedMotion() ? 0 : DUR.layout });
   hideTip();
 }
-root.addEventListener('transitionend', (e) => {
-  if (e.target !== root || e.propertyName !== '--rail-w') return;
+const mainCol = $('main-col');
+mainCol.addEventListener('transitionend', (e) => {
+  if (e.target !== mainCol || e.propertyName !== '--rail-w') return;
   dossier.railDidChange();
   checkRailScroll();
   document.dispatchEvent(new CustomEvent('byline:rail', { detail: { collapsed: collapsed() } }));
@@ -187,31 +197,41 @@ function paintPill(s, t, th) {
   const pill = $('status-pill');
   if (!pill) return;
   const tz = s.timezone;
+  // segments carry a kind so the phone forms (S16) can drop the date and zero-valued figures, and at ≤400px the
+  // issue number too. Nothing is ever clipped: each form is its own string, picked by media query.
   const segs = [];
   const briefs = s.counts?.briefs ?? s.briefs;
-  if (t?.brief && briefs != null) segs.push(html`<span>No. <b>${briefs}</b></span>`);
-  if (t?.brief?.run_date) segs.push(html`<span>${fmtDay(t.brief.run_date, tz)}</span>`);
+  if (t?.brief && briefs != null) segs.push({ k: 'no', h: html`<span>No. <b>${briefs}</b></span>` });
+  if (t?.brief?.run_date) segs.push({ k: 'date', h: html`<span>${fmtDay(t.brief.run_date, tz)}</span>` });
   const r = t?.last_run;
   if (r) {
     const failed = r.status === 'failed', running = r.status === 'running';
     const readNone = r.stats?.collect && r.stats.collect.sources === 0;
     const dot = failed ? 'err' : readNone ? 'warn' : 'ok';
     const when = r.finished_at || r.started_at;
-    segs.push(html`<span class="run-dot ${dot}" aria-hidden="true"></span><span>${failed ? 'Run failed' : running ? 'Running' : 'Ran'} ${when ? html`<b>${fmtTime(when, tz)}</b>` : ''}</span>`);
-    if (r.stats?.collect?.new != null) segs.push(html`<span><b>${r.stats.collect.new}</b> new</span>`);
+    segs.push({ k: 'run', h: html`<span class="run-dot ${dot}" aria-hidden="true"></span><span>${failed ? 'Run failed' : running ? 'Running' : 'Ran'} ${when ? html`<b>${fmtTime(when, tz)}</b>` : ''}</span>`,
+      s: html`<span class="run-dot ${dot}" aria-hidden="true"></span><span>${failed ? 'Failed ' : running ? 'Running ' : ''}${when ? html`<b>${fmtTime(when, tz)}</b>` : ''}</span>` });
+    if (r.stats?.collect?.new != null) segs.push({ k: 'new', zero: !r.stats.collect.new, h: html`<span><b>${r.stats.collect.new}</b> new</span>` });
   }
   const ranked = t?.ranked ?? r?.stats?.rank?.ranked;
-  if (ranked != null) segs.push(html`<span><b>${ranked}</b> ranked</span>`);
-  if (t?.cleared != null) segs.push(html`<span><b>${t.cleared}</b> above ${th}</span>`);
-  if (!segs.length) segs.push(html`<span>No runs yet</span>`);
-  const text = segs.map(String).join(String(sep));
+  if (ranked != null) segs.push({ k: 'ranked', zero: !ranked, h: html`<span><b>${ranked}</b> ranked</span>` });
+  if (t?.cleared != null) segs.push({ k: 'cleared', h: html`<span><b>${t.cleared}</b> above ${th}</span>` });
+  if (!segs.length) segs.push({ k: 'none', h: html`<span>No runs yet</span>` });
+  const join = (list, short) => list.map(x => String(short && x.s ? x.s : x.h)).join(String(sep));
+  const long = join(segs, false);
+  const shortList = segs.filter(x => x.k !== 'date' && !x.zero);
+  const tinyList = shortList.filter(x => x.k !== 'no');
+  const text = `<span class="pill-form pill-long">${long}</span><span class="pill-form pill-short" aria-hidden="true">${join(shortList, true)}</span><span class="pill-form pill-tiny" aria-hidden="true">${join(tinyList, true)}</span>`;
   const holder = pill.querySelector('.pill-text');
-  if (holder.innerHTML !== text) holder.innerHTML = text;
+  if (holder.innerHTML !== text) {
+    holder.innerHTML = text;
+    try { localStorage.setItem('byline-pill', text); } catch (e) { /* storage unavailable */ }
+  }
   const notes = [];
   if (t?.brief && t.brief.run_date !== s.today) notes.push(`This brief is from ${fmtDay(t.brief.run_date)}; no run yet today.`);
   if (r?.stats?.collect?.sources === 0) notes.push('The last run read 0 sources.');
   pill.title = notes.join(' ');
-  pill.setAttribute('aria-label', `Run status: ${holder.textContent.replace(/\s+/g, ' ').trim()}${notes.length ? '. ' + notes.join(' ') : ''}`);
+  pill.setAttribute('aria-label', `Run status: ${holder.querySelector('.pill-long').textContent.replace(/\s+/g, ' ').trim()}${notes.length ? '. ' + notes.join(' ') : ''}`);
 }
 function paintRailStatus(s) {
   const el = $('rail-status'); if (!el) return;
@@ -274,11 +294,10 @@ function enterTargets(page) {
   }
   return out;
 }
-function leave(old, { quick = false, top = null } = {}) {
+function leave(old, { quick = false } = {}) {
   if (!old) return;
   old.__mod?.destroy?.(old);
-  if (top == null) top = old.offsetTop; // the single read of a transition (pre-read by routeTo when it can)
-  old.style.top = `${top}px`;
+  // both pages share #view's one grid cell: the old page leaves in place, no position write, no layout read (S2)
   old.classList.remove('current', 'entering', 'in');
   if (quick) old.classList.add('skeleton-page');
   old.classList.add('leaving');
@@ -295,28 +314,46 @@ function showSkeleton(key, old) {
   if (!reducedMotion()) sk.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 240, easing: EASE.fade });
   return sk;
 }
-function swapIn(page, old, { key, hash, fromSkeleton, oldTop = null, scrolled = window.scrollY > 0 }) {
+// the new page's head actions / chips wait with the lede instead of showing at full opacity on frame 0 (S2)
+const HEAD_ENTER = '.page-head .btn, .page-head .actions, .page-head .page-head-actions, .page-head .chips, .chips, [data-enter]';
+const ENTER_BASE = 120; // ≈ when the old page (220ms, --ease-fade) is below .3 opacity
+function swapIn(page, old, { key, hash, fromSkeleton, scrolled = window.scrollY > 0 }) {
   const motion = !reducedMotion() && !document.hidden;
-  if (old) { if (motion) leave(old, { quick: fromSkeleton, top: oldTop }); else { old.__mod?.destroy?.(old); old.remove(); } }
+  if (old) { if (motion) leave(old, { quick: fromSkeleton }); else { old.__mod?.destroy?.(old); old.remove(); } }
   page.classList.remove('is-pending');
   page.classList.add('current');
+  // the pending page is opacity 0 (not visibility:hidden, which re-laid out every text node in the swap frame);
+  // it comes up over 200ms so nothing inside it, animated or not, appears at full opacity on frame 0
+  if (motion) page.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 200, easing: 'linear' });
   cur.page = page; cur.key = key; cur.hash = hash;
   view.dataset.route = key;
   if (scrolled) window.scrollTo({ top: 0, behavior: 'instant' });
   const h1 = page.querySelector('.page-head h1') || page.querySelector('h1');
   if (motion) {
     const items = enterTargets(page);
+    const base = old && !fromSkeleton ? ENTER_BASE : 0;
+    page.style.setProperty('--enter-base', `${base}ms`);
+    page.style.setProperty('--enter-head', `${base + 160}ms`);
     items.forEach((el, i) => { el.classList.add('enter-item'); el.style.setProperty('--i', String(Math.min(i, 8))); });
+    const heads = [];
+    for (const el of page.querySelectorAll(HEAD_ENTER)) {
+      if (el.closest('.enter-item') || heads.some(h => h.contains(el))) continue;
+      if (el.closest('.page-head h1')) continue;
+      heads.push(el);
+    }
+    heads.forEach((el, i) => { el.classList.add('enter-head'); el.style.setProperty('--i', String(Math.min(i, 3))); });
+    items.push(...heads);
     page.classList.add('entering');
     if (fromSkeleton) page.classList.add('from-skeleton');
     requestAnimationFrame(() => requestAnimationFrame(() => { if (page.isConnected) page.classList.add('in'); }));
     settleT = setTimeout(() => {
       page.classList.remove('entering', 'in', 'from-skeleton');
-      items.forEach(el => { el.classList.remove('enter-item'); el.style.removeProperty('--i'); });
-    }, 600 + 8 * DUR.staggerItem + 200);
+      items.forEach(el => { el.classList.remove('enter-item', 'enter-head'); el.style.removeProperty('--i'); });
+      page.style.removeProperty('--enter-base'); page.style.removeProperty('--enter-head');
+    }, base + 600 + 8 * DUR.staggerItem + 200);
     if (h1) {
       const head = h1.closest('.page-head');
-      enterHeading(h1, { variant: firstRoute ? 'load' : 'tab', key, lede: head?.querySelector('.lede, .live-dek'), eyebrow: head?.querySelector('.eyebrow, .kicker') });
+      enterHeading(h1, { variant: firstRoute ? 'load' : 'tab', key, delay: firstRoute ? 0 : base, lede: head?.querySelector('.lede, .live-dek'), eyebrow: head?.querySelector('.eyebrow, .kicker') });
     }
   }
   firstRoute = false;
@@ -331,7 +368,7 @@ async function routeTo(key, params, hash) {
   const seq = ++cur.seq;
   settleInFlight();
   setActive(key);
-  bg.setMode(BG_FULL.has(key) ? 'full' : 'dim');
+  bg.setMode(BG_FULL.has(key) ? 'full' : key === 'draft' ? 'still' : 'dim'); // the draft editor is a writing surface: still field
   bg.hold(450);
   heatFromToday.last = null; // a view (Map) may have set its own heat: Today's comes back on the next status paint
   const old = cur.page && cur.page.isConnected ? cur.page : view.querySelector('.page.current');
@@ -354,8 +391,6 @@ async function routeTo(key, params, hash) {
   clearTimeout(slow);
   await nextFrame();
   if (seq !== cur.seq) { page.remove(); return; }
-  const prevPage = sk || old;
-  const oldTop = prevPage && prevPage.isConnected ? prevPage.offsetTop : null;
   const scrolled = window.scrollY > 0;
   if (!reducedMotion() && !document.hidden) prepareHeading(page.querySelector('.page-head h1') || page.querySelector('h1'));
   if (sk) {
@@ -363,7 +398,7 @@ async function routeTo(key, params, hash) {
     if (wait > 0) await sleep(wait);
     if (seq !== cur.seq) { page.remove(); return; }
   }
-  swapIn(page, sk || old, { key, hash, fromSkeleton: !!sk, oldTop: sk ? null : oldTop, scrolled: sk ? window.scrollY > 0 : scrolled });
+  swapIn(page, sk || old, { key, hash, fromSkeleton: !!sk, scrolled: sk ? window.scrollY > 0 : scrolled });
   refreshStatus();
 }
 
@@ -417,21 +452,29 @@ function decorate(scope) {
   }
 }
 
-// tile hue tint follows the pointer (rect read once per enter; one style write per frame on the hovered tile)
-let hoverTile = null, hoverRect = null, tintRaf = 0, tintX = 0, tintY = 0;
-document.addEventListener('pointermove', (e) => {
-  if (e.pointerType === 'touch') return;
-  const t = e.target.closest?.('.tile:not(.tile--static)');
-  if (t !== hoverTile) { hoverTile = t; hoverRect = t ? t.getBoundingClientRect() : null; }
-  if (!t) return;
-  tintX = e.clientX - hoverRect.left; tintY = e.clientY - hoverRect.top;
-  if (!tintRaf) tintRaf = requestAnimationFrame(() => { tintRaf = 0; if (hoverTile) { hoverTile.style.setProperty('--mx', `${tintX.toFixed(0)}px`); hoverTile.style.setProperty('--my', `${tintY.toFixed(0)}px`); } });
-}, { passive: true });
-addEventListener('scroll', () => { hoverTile = null; }, { passive: true });
+// S13b: the field steps back under the page head. Its rect is read in a ResizeObserver callback (layout is clean
+// there), re-armed on every route; bg.js applies the scroll offset per draw.
+let bandHead = null;
+const bandRO = typeof ResizeObserver === 'function' ? new ResizeObserver(() => {
+  if (!bandHead?.isConnected) { bg.setBand(null); return; }
+  const r = bandHead.getBoundingClientRect();
+  bg.setBand({ x: r.left, y: r.top + window.scrollY, w: r.width, h: r.height });
+}) : null;
+document.addEventListener('byline:routed', (e) => {
+  if (!bandRO) return;
+  bandRO.disconnect();
+  bandHead = e.detail?.page?.querySelector('.page-head') || null;
+  if (bandHead) bandRO.observe(bandHead); else bg.setBand(null);
+});
 
-// top bar: the crumb gives way once content scrolls under the sticky pill
-let scrolledState = false;
-addEventListener('scroll', () => { const s = window.scrollY > 8; if (s !== scrolledState) { scrolledState = s; root.classList.toggle('scrolled', s); } }, { passive: true });
+// (tile hover is pure CSS: a fixed top-centre light, no per-pointermove writes — S12)
+
+// top bar: the crumb gives way and the bg-coloured backing fades in once content scrolls under the pill (S15)
+let scrolledState = false, scrollRaf = 0;
+addEventListener('scroll', () => {
+  if (scrollRaf) return;
+  scrollRaf = requestAnimationFrame(() => { scrollRaf = 0; const s = window.scrollY > 8; if (s !== scrolledState) { scrolledState = s; root.classList.toggle('scrolled', s); } });
+}, { passive: true });
 
 // ---------------------------------------------------------------- staged run (Today "Run now"): progress in the status pill
 export async function stagedRun(promise) {

@@ -77,15 +77,17 @@ export const evidenceQualifier = (c) => c.independent_outlets ? `backed by ${plu
  * has ≥ 15 characters and ≥ 3 words ("Study" or "Hands-on" never qualify).
  */
 export function shortTitle(title = '') {
-  const t = String(title).trim();
-  const m = t.match(/^(.*?)(?::\s| — )/);
-  if (m && m[1].trim().length >= 15 && wc(m[1]) >= 3) return m[1].trim();
+  // a leading GitHub-style "org/" (as in "acme/agent-kit v2: …") is dropped; the cut is the text before the first
+  // ':', ' — ' or ',' when that part is at least 20 characters (round 1, S17c); else the title capped at 60
+  const t = String(title).trim().replace(/^[A-Za-z0-9_.-]+\/(?=[A-Za-z0-9_.-]+(?:[\s:,]|$))/, '');
+  const m = t.match(/^(.*?)(?::\s| — |,\s)/);
+  if (m && m[1].trim().length >= 20) return m[1].trim();
   if (t.length <= 60) return t;
   return t.slice(0, 59).replace(/\s+\S*$/, '') + '…';
 }
 
 // ---------- boilerplate + claim cleanup ----------
-export const BOILERPLATE = /^(this article is adapted|learn about|read on|today, we are excited|we['’]re (excited|highlighting)|features\b|bug fixes|\w+ is an ai safety)/i;
+export const BOILERPLATE = /^(this article is adapted|learn about|read on|today, we are excited|we['’]re (excited|highlighting)|features\b|bug fixes|\w+ is an ai safety)|^today,? we(?:'|’)?re|^today,? we are (announcing|introducing|launching|excited)|^we are expanding our partnership/i;
 const wc = (s) => (String(s).match(/\S+/g) || []).length;
 
 /** True when a summary should never be used as a dek: F's regex, fewer than 8 words, or a newline list. */
@@ -230,7 +232,7 @@ const capLen = (t, n = 220) => {
   return (at > n * 0.55 ? cut.slice(0, at) : cut.replace(/\s+\S*$/, '')) + '…';
 };
 
-const SIGNAL_MAP = { ga: 'general availability', 'general availability': 'general availability', api: 'an API', sdk: 'an SDK', 'open-source': 'open source', 'open source': 'open source', price: 'pricing', costs: 'cost', available: 'availability' };
+const SIGNAL_MAP = { ga: 'general availability', 'general availability': 'general availability', api: 'an API', sdk: 'an SDK', 'open-source': 'open source', 'open source': 'open source', price: 'pricing', cost: 'cost or pricing', costs: 'cost or pricing', available: 'availability', standard: 'a standard' };
 /** Map practical-signal terms to plain words: ga → general availability, api → an API, sdk → an SDK. */
 export function mapSignals(hits = []) {
   const seen = new Set(), out = [];
@@ -258,7 +260,11 @@ export function findingLine(story = {}, articles = [], claims = []) {
   for (const c of cleaned) {
     const a = byId.get(c.article_id);
     if (!a || roleOf(a, od) !== 'independent') continue;
-    if (hasChallenge(c.clean)) return done(capLen(`Independent check: ${c.clean.replace(/[.!?]*$/, '.')}`), 'disagreement', { article_id: a.id, claim_id: c.id });
+    if (hasChallenge(c.clean)) {
+      const said = c.clean.replace(/[.!?]*$/, '.');
+      // no "Independent check: Independent testers…" stutter
+      return done(capLen(/^independent\b/i.test(said) ? said : `Independent check: ${said}`), 'disagreement', { article_id: a.id, claim_id: c.id });
+    }
   }
   // (b) best numeric claim from the most credible article (origin first, then credibility, then date)
   const ordered = [...articles].sort((x, y) => (x === origin ? -1 : y === origin ? 1 : 0) || rankOf(x.evidence_kind) - rankOf(y.evidence_kind) || dateOf(x) - dateOf(y) || x.id - y.id);

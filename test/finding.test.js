@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { mapSignals } from '../src/finding.js';
 import { findingLine, numberMarks, markedText, isBoilerplate, cleanClaim, usableClaim, sourceCounts, sourceLine, shortTitle, attribute, orgName, groupClaims } from '../src/finding.js';
 import { scoreFrom } from '../src/score.js';
 import { buildGraph, layout, mulberry32, seedFor } from '../src/maplayout.js';
@@ -66,7 +67,9 @@ test('findingLine: story 3 uses the research claim with all three numbers marked
 test('findingLine: an independent challenge beats everything (disagreement callout)', () => {
   const f = findingLine(story5.story, story5.articles, story5.claims);
   assert.equal(f.kind, 'disagreement');
-  assert.match(f.text, /^Independent check: .*smaller than the 38% Northwind reported\.$/);
+  // the claim already opens with "Independent …", so no "Independent check:" prefix (round 1 S17d)
+  assert.match(f.text, /^Independent .*smaller than the 38% Northwind reported\.$/);
+  assert.doesNotMatch(f.text, /^Independent check: Independent/);
   assert.equal(f.article_id, 2);
 });
 
@@ -137,7 +140,11 @@ test('claim grouping collapses near-duplicates across articles into "also report
 });
 
 test('shortTitle follows F: prefix before ":" when substantial, else capped at 60', () => {
-  assert.equal(shortTitle('Gemini at Work 2026: Introducing Gemini agent'), 'Gemini at Work 2026');
+  // round 1 S17c: the cut needs ≥ 20 characters before ':', ' — ' or ','; 'Gemini at Work 2026' (19) keeps the full title
+  assert.equal(shortTitle('Gemini at Work 2026: Introducing Gemini agent'), 'Gemini at Work 2026: Introducing Gemini agent');
+  assert.equal(shortTitle('Northwind AI releases Relay, an open-source agent orchestration framework with a built-in eval harness'), 'Northwind AI releases Relay');
+  assert.equal(shortTitle('Digital Standards Office publishes draft — guidance on audit logs for AI agents'), 'Digital Standards Office publishes draft');
+  assert.equal(shortTitle('acme/agent-orchestrator-kit v2.1: faster planning, new tools'), 'agent-orchestrator-kit v2.1');
   assert.equal(shortTitle('Study: 62% of enterprise AI pilots launched without defined success metrics'), 'Study: 62% of enterprise AI pilots launched without…');
 });
 
@@ -199,4 +206,13 @@ test('real DB: every v2 breakdown reconciles with its stored score and never say
     for (const k of ['base', 'penalty', 'source_pref', 'newest_hours', 'priorities', 'watch_terms', 'impact_hits', 'signal_quotes']) assert.ok(k in b, `story ${r.id} has ${k}`);
     assert.ok(!/credible independent/i.test(r.explanation), `story ${r.id} explanation`);
   }
+});
+
+test('round 1 S17d: boilerplate openers, signal words, no "Independent check: Independent…" stutter', () => {
+  assert.equal(isBoilerplate('Today we’re sharing the next chapter of our agent platform with many new things for builders'), true);
+  assert.equal(isBoilerplate("Today, we're announcing a new partnership that brings agents to every team in the company"), true);
+  assert.equal(isBoilerplate('Today we are introducing a new model for enterprise agents with better tool use and memory'), true);
+  assert.equal(isBoilerplate('We are expanding our partnership with Contoso to bring agents to more regulated industries'), true);
+  assert.deepEqual(mapSignals(['standard', 'cost', 'costs', 'GA']), ['a standard', 'cost or pricing', 'general availability']);
+  assert.equal(isBoilerplate('Acme cut agent task failures by 21% across 60 workflows in an independent test last month'), false);
 });

@@ -57,6 +57,10 @@ async function renderList(el, ctx) {
       : html`A campaign ties drafts and outreach to one story. No story is above your bar of <b>${T}</b> yet; you can still start one from a project.`;
   const freeBy = CHANNEL_ORDER.map(ch => [ch, free.filter(d => d.channel === ch)]).filter(([, a]) => a.length);
   const statusCounts = (list) => Object.entries(list.reduce((m, x) => ((m[x.status] = (m[x.status] || 0) + 1), m), {}));
+  const topicMap = new Map();
+  for (const st of candidates) { const t = st.main_topic || st.topics?.[0] || 'Unsorted'; const v = topicMap.get(t) || [t, 0, 0]; v[1]++; v[2] += (byStory.get(st.id) || []).length; topicMap.set(t, v); }
+  const topicRoll = [...topicMap.values()].sort((a, b) => b[1] - a[1] || b[2] - a[2]);
+  const nDraftsCand = topicRoll.reduce((n, x) => n + x[2], 0);
 
   const root = document.createElement('div');
   root.className = 'cp';
@@ -82,7 +86,14 @@ async function renderList(el, ctx) {
 
   <div class="cp-cols">
     <section class="tile tile--static tile--flush cp-cand" aria-labelledby="cp-cand-h">
-      <div class="section-head cp-pad"><h2 class="t-h2" id="cp-cand-h">${campaigns.length ? 'More stories that could anchor one' : 'Stories that could anchor a campaign'}</h2><span class="section-meta">${candidates.length} at or above ${T} · last 7 days</span></div>
+      <div class="section-head cp-pad"><h2 class="t-h2" id="cp-cand-h">${campaigns.length ? 'More stories that could anchor one' : 'Stories that could anchor a campaign'}</h2><span class="section-meta">last 7 days</span></div>
+      ${candidates.length ? html`<p class="cp-summary cp-pad">${(() => {
+        const withD = candidates.filter(s => (byStory.get(s.id) || []).length);
+        const nD = withD.reduce((n, s) => n + byStory.get(s.id).length, 0);
+        const none = candidates.length - withD.length;
+        return withD.length ? html`<b>${withD.length}</b> of these ${candidates.length} already ${withD.length === 1 ? 'has' : 'have'} drafts (${plural(nD, 'draft')} in all)${none ? html`; <b>${none}</b> ${none === 1 ? 'has' : 'have'} none yet.` : '.'}`
+          : html`None of these ${candidates.length} has a draft yet.`;
+      })()}</p>` : ''}
       ${candidates.length ? html`<ol class="cp-cand-list">${candidates.slice(0, 8).map(s => {
         const ds = byStory.get(s.id) || [];
         return html`<li class="cp-cand-row" data-row data-dossier-src>
@@ -92,10 +103,11 @@ async function renderList(el, ctx) {
             <p class="cp-cand-finding">${s.finding}</p>
             <p class="cp-cand-meta"><span class="chip chip--main">${s.main_topic || s.topics?.[0] || 'Unsorted'}</span><span class="cp-mono">${s.source_line}</span><span>${ds.length ? `${plural(ds.length, 'draft')} already written (${listJoin(CHANNEL_ORDER.filter(ch => ds.some(d => d.channel === ch)).map(ch => CH[ch]))})` : 'No drafts yet'}</span></p>
           </div>
-          <button class="btn btn--sm" data-act="new" data-story="${s.id}">Start campaign</button>
+          <button class="btn btn--ghost btn--sm cp-start" data-act="new" data-story="${s.id}" aria-label="Start a campaign from ${s.short_title || s.title}">${icon('plus')}Start campaign</button>
         </li>`;
       })}</ol>${candidates.length > 8 ? html`<p class="cp-more cp-pad">${candidates.length - 8} more above your bar in the <a href="#/feed">Feed</a>.</p>` : ''}`
       : html`<p class="cp-empty-line cp-pad">${cleared.length ? 'Every story above your bar already anchors a campaign.' : `No story in the last 7 days is at or above your bar of ${T}.`}</p>`}
+      <p class="cp-foot-note cp-pad">Each piece in a campaign keeps its own approval, and deleting a campaign keeps every piece. <a href="#/studio">Review approvals in Studio${icon('arrow-right')}</a></p>
     </section>
 
     <aside class="stack cp-aside">
@@ -103,14 +115,15 @@ async function renderList(el, ctx) {
         <h2 class="section-label" id="cp-free-h">Pieces waiting for a campaign</h2>
         <p class="cp-big"><span class="cp-big-n">${free.length}</span><span class="cp-big-of">${free.length === 1 ? 'draft' : 'drafts'} not in a campaign</span></p>
         ${freeBy.length ? html`<ul class="cp-bars">${freeBy.map(([ch, a]) => html`<li><span>${CH[ch]}</span><span class="meter"><i style="--v:${a.length / Math.max(1, free.length)}"></i></span><b>${a.length}</b></li>`)}</ul>` : ''}
-        <p class="cp-note">${statusCounts(free).map(([s, n]) => `${n} ${s.replace(/_/g, ' ')}`).join(' · ') || 'No unassigned drafts.'}</p>
+        <p class="cp-note">${statusCounts(free).sort((a, b) => a[1] - b[1]).map(([s, n]) => `${n} ${s === 'draft' ? (n === 1 ? 'draft' : 'drafts') : s.replace(/_/g, ' ')}`).join(' · ') || 'No unassigned drafts.'}</p>
         <div class="cp-rule"></div>
         <p class="cp-note"><b>${freeOut.length}</b> outreach ${freeOut.length === 1 ? 'message' : 'messages'} not linked to a campaign${freeOut.filter(o => o.status === 'sent').length ? ` (${freeOut.filter(o => o.status === 'sent').length} already sent)` : ''}.</p>
       </section>
-      <section class="tile tile--static cp-card-s" aria-labelledby="cp-how-h">
-        <h2 class="section-label" id="cp-how-h">How approvals work</h2>
-        <p class="cp-note">A campaign groups a story’s LinkedIn post, Instagram carousel, video and outreach. Each piece keeps its own approval: approving one never approves the others, and deleting a campaign keeps every piece.</p>
-      </section>
+      ${topicRoll.length ? html`<section class="tile tile--static cp-card-s" aria-labelledby="cp-top-h">
+        <h2 class="section-label" id="cp-top-h">These stories by main topic</h2>
+        <ul class="cp-topics">${topicRoll.map(([t, n, d]) => html`<li><span class="cp-topic-t">${t}</span><span class="meter"><i style="--v:${n / topicRoll[0][1]}"></i></span><b>${n}</b><span class="cp-topic-d">${d ? plural(d, 'draft') : 'no drafts'}</span></li>`)}</ul>
+        <p class="cp-note">${topicRoll[0][2] && nDraftsCand ? html`<b>${Math.round(topicRoll.reduce((m, x) => Math.max(m, x[2]), 0) / nDraftsCand * 100)}%</b> of the drafts for these stories sit under ${topicRoll.slice().sort((a, b) => b[2] - a[2])[0][0]}.` : 'Story counts per main topic; drafts are those already written for each topic’s stories.'}</p>
+      </section>` : ''}
     </aside>
   </div>`);
   el.replaceChildren(root);

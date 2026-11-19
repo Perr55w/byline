@@ -53,6 +53,33 @@ export async function render(view, ctx) {
 }
 
 // ================================================================ list
+// Deferred work waits until the router has swapped this page in (byline:routed names it) and two frames have
+// painted, so it never lands in the swap frame. A fallback timer covers a missed event.
+function afterSwap(el, fn, fallback = 1200) {
+  let done = false;
+  const run = () => {
+    if (done) return; done = true;
+    document.removeEventListener('byline:routed', onRouted); clearTimeout(t);
+    if (el.isConnected) requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(() => { if (el.isConnected) fn(); }, 0)));
+  };
+  const onRouted = (e) => { if (e.detail?.page?.contains(el)) run(); };
+  document.addEventListener('byline:routed', onRouted);
+  const t = setTimeout(run, fallback);
+}
+const angleLabel = (a) => (ANGLES.find(x => x[0] === a) || [, a || ''])[1];
+/** Consecutive identical paragraphs → [{ text, n }] (display only; the stored text is never changed). */
+function collapseRuns(text) {
+  const out = [];
+  for (const p of String(text || '').split(/\n{2,}/)) {
+    const k = p.trim();
+    if (!k) continue;
+    const last = out[out.length - 1];
+    if (last && last.text.trim() === k) last.n++; else out.push({ text: p, n: 1 });
+  }
+  return out;
+}
+const hasRuns = (text) => collapseRuns(text).some(r => r.n > 1);
+
 async function list(el, params) {
   const [drafts, st, found, slot] = await Promise.all([
     api.get('/drafts?all=1'),
@@ -73,6 +100,11 @@ async function list(el, params) {
   const count = (pred) => live.filter(pred).length;
   const inReview = count(d => d.status === 'in_review'), approved = count(d => d.status === 'approved'), scheduled = count(d => d.status === 'scheduled');
   const byCh = (c) => open.filter(d => d.channel === c).length;
+  const newest = (l) => [...l].sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at))[0] || null;
+
+  // the writing-surface card: the newest draft waiting on review; else the most recently edited open draft
+  const leadRow = newest(live.filter(d => d.status === 'in_review')) || newest(open.filter(d => d.status === 'draft' || d.status === 'approved'));
+  const lead = leadRow ? await api.get(`/drafts/${leadRow.id}`).catch(() => null) : null;
 
   // F §2 Studio headline + one-liner (first match wins), with honest fallbacks
   let h, l;
@@ -89,73 +121,115 @@ async function list(el, params) {
     l = html`<b>${open.length}</b> open ${open.length === 1 ? 'draft' : 'drafts'}: <b>${byCh('linkedin')}</b> LinkedIn, <b>${byCh('instagram')}</b> Instagram, <b>${byCh('video')}</b> video. ${tail}`;
   }
 
-  const rowHtml = (d, grouped) => {
-    const story = stories.get(d.story_id);
-    return html`<li><a class="st-row" href="#/draft/${d.id}" data-dossier-src>
-      ${glyph(d.channel)}
-      <span class="st-row-main">
-        <span class="st-row-t">${grouped ? channelLabel(d.channel, d.format) : (d.title || 'Untitled')}<span class="st-id">#${d.id}</span></span>
-        <span class="st-row-m">${grouped ? '' : html`${channelLabel(d.channel, d.format)} · `}${(ANGLES.find(a => a[0] === d.angle) || [, d.angle || ''])[1]}${!grouped && story ? html` · story ${Math.round(story.score)}` : ''}</span>
-      </span>
-      ${statusTag(d.status)}
-      <span class="st-row-plan">${d.status === 'published' && d.published_at ? html`<span class="st-k">published</span> ${dayShort(d.published_at.slice(0, 10))}` : d.planned_date ? html`<span class="st-k">planned</span> ${dayShort(d.planned_date)}` : html`<span class="st-k">no date</span>`}</span>
-      <span class="st-row-u"><time datetime="${d.updated_at}">${timeAgo(d.updated_at)}</time></span>
-      <span class="st-row-go" aria-hidden="true">${icon('arrow-right')}</span>
-    </a></li>`;
+  // ---- lead: title, a 3-line preview of the text, the approval checklist (existing approval data only), Open draft
+  const leadHtml = () => {
+    if (!lead) return '';
+    const story = stories.get(lead.story_id);
+    const advisory = lead.flags.length - lead.blocking;
+    const body = lead.sections.filter(s => !['sources', 'caption'].includes(s.kind)).map(s => collapseRuns(s.text).map(r => r.text.trim()).join('\n')).filter(Boolean).join('\n');
+    const waiting = lead.status === 'in_review';
+    return html`<article class="st-lead" aria-labelledby="st-lead-t">
+      <div class="st-lead-main">
+        <p class="st-lead-k">${glyph(lead.channel)}<span>${waiting ? 'Waiting on your review' : 'Latest draft'} · ${channelLabel(lead.channel, lead.format)} · edited ${timeAgo(lead.updated_at)}</span></p>
+        <h2 class="st-lead-t" id="st-lead-t"><a href="#/draft/${lead.id}">${lead.title || 'Untitled'}</a></h2>
+        <p class="st-lead-x">${body || 'No text yet.'}</p>
+        <div class="st-lead-acts">
+          <a class="btn btn--primary" href="#/draft/${lead.id}">Open draft ${icon('arrow-right')}</a>
+          ${story ? html`<a class="st-lead-story" href="#/story/${story.id}">${scoreChip(story.score, th)}<span>Story</span></a>` : ''}
+        </div>
+      </div>
+      <div class="st-lead-side">
+        <h3 class="st-lead-h">Before it can be approved</h3>
+        <ul class="st-checklist" aria-label="Approval checklist">
+          <li class="${lead.blocking ? 'is-err' : 'is-ok'}">${lead.blocking ? `${plural(lead.blocking, 'blocking flag')} to resolve` : 'No blocking flags'}</li>
+          <li class="${advisory ? 'is-warn' : 'is-ok'}">${advisory ? `${plural(advisory, 'advisory flag')} to review` : 'No advisory flags'}</li>
+          ${lead.channel === 'linkedin' ? html`<li class="${lead.image ? (lead.image.alt ? 'is-ok' : 'is-warn') : 'is-warn'}">${lead.image ? `Image attached${lead.image.alt ? ' with alt text' : ', alt text missing'}` : 'No image attached'}</li>` : ''}
+          <li class="${lead.approval_valid ? 'is-ok' : ''}">${lead.approval_valid ? `Approved ${timeAgo(lead.approved_at)}` : 'Not approved yet'}</li>
+          <li class="${lead.planned_date ? 'is-ok' : ''}">${lead.planned_date ? `Planned for ${dayShort(lead.planned_date)}` : 'No date planned'}</li>
+        </ul>
+        <p class="st-lead-note">Approval covers this exact text${lead.channel === 'video' ? ' and media' : ' and image'}. You approve it in the draft.</p>
+      </div>
+    </article>`;
   };
 
-  function rowsHtml() {
+  const rowHtml = (d, grouped, common) => {
+    const story = stories.get(d.story_id);
+    const name = grouped ? channelLabel(d.channel, d.format) : (d.title || 'Untitled');
+    const showAngle = d.angle && (!grouped || d.angle !== common);
+    const date = d.status === 'published' && d.published_at ? html`<span class="st-k">Published</span> ${dayShort(d.published_at.slice(0, 10))}`
+      : d.planned_date ? html`<span class="st-k">Planned</span> ${dayShort(d.planned_date)}` : null;
+    return html`<li class="st-row${grouped ? '' : ' st-row--solo'}" data-row="${d.id}">
+      ${glyph(d.channel)}
+      <span class="st-row-main">
+        <a class="st-row-t" href="#/draft/${d.id}" title="Draft #${d.id}">${name}<span class="sr-only">, draft #${d.id}</span></a>
+        ${!grouped || showAngle ? html`<span class="st-row-m">${grouped ? '' : html`${channelLabel(d.channel, d.format)}${showAngle || story ? ' · ' : ''}`}${showAngle ? `Angle: ${angleLabel(d.angle)}` : ''}${!grouped && story ? html`${showAngle ? ' · ' : ''}story ${Math.round(story.score)}` : ''}</span>` : ''}
+      </span>
+      ${statusTag(d.status)}
+      <span class="st-row-plan">${date || (d.status !== 'published' ? html`<button type="button" class="st-plan xbtn" data-plan="${d.id}" aria-label="Plan a date for ${name} (draft #${d.id})">${icon('calendar')}Plan</button>` : '')}</span>
+      <span class="st-row-u"><time datetime="${d.updated_at}">${timeAgo(d.updated_at)}</time></span>
+      <span class="st-row-go" aria-hidden="true">${icon('arrow-right')}</span>
+    </li>`;
+  };
+
+  // start/end slice the ordered groups: the first renders with the page, the rest right after the swap
+  function rowsHtml(start = 0, end = Infinity) {
     const shown = drafts.filter(d => (F.status === 'all' ? d.status !== 'archived' : d.status === F.status) && (F.channel === 'all' || d.channel === F.channel));
-    if (!shown.length) return html`<div class="empty st-empty"><h3>${drafts.length ? 'Nothing matches these filters.' : 'No drafts yet.'}</h3><p>${drafts.length ? `${STATUS_LABEL[F.status]} · ${F.channel === 'all' ? 'all channels' : channelLabel(F.channel)}: 0 drafts. Clear a filter to see the other ${live.length}.` : 'Open a story in the Feed or the Map and choose Draft a post. Drafts keep their sources attached.'}</p></div>`;
+    if (!shown.length) return start ? '' : html`<div class="empty st-empty"><h3>${drafts.length ? 'Nothing matches these filters.' : 'No drafts yet.'}</h3><p>${drafts.length ? `${STATUS_LABEL[F.status]} · ${F.channel === 'all' ? 'all channels' : channelLabel(F.channel)}: 0 drafts. Clear a filter to see the other ${live.length}.` : 'Open a story in the Feed or the Map and choose Draft a post. Drafts keep their sources attached.'}</p></div>`;
     const groups = new Map();
     for (const d of shown) { const k = d.story_id ? `s${d.story_id}` : d.project_id ? `p${d.project_id}` : `d${d.id}`; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(d); }
     const ordered = [...groups.entries()].sort((a, b) => {
       const rank = (l) => Math.min(...l.map(d => STATUS_ORDER.indexOf(d.status)));
       return rank(a[1]) - rank(b[1]) || Date.parse(b[1][0].updated_at) - Date.parse(a[1][0].updated_at);
     });
-    return html`${ordered.map(([k, list]) => {
+    return html`${ordered.slice(start, end).map(([k, list], i) => { const gi = start + i;
       list.sort((a, b) => STATUS_ORDER.indexOf(a.status) - STATUS_ORDER.indexOf(b.status) || Date.parse(b.updated_at) - Date.parse(a.updated_at));
       const story = stories.get(list[0].story_id);
-      if (list.length === 1 && !story) return html`<section class="st-group"><ul class="st-rows" role="list">${rowHtml(list[0], false)}</ul></section>`;
+      const cv = gi > 3 ? ' cv' : ''; // long lists only: a full-page capture still shows the first groups
+      if (list.length === 1 && !story) return html`<section class="st-group st-group--solo${cv}"><ul class="st-rows" role="list">${rowHtml(list[0], false)}</ul></section>`;
       const by = list.reduce((m, d) => { m[d.channel] = (m[d.channel] || 0) + 1; return m; }, {});
+      const angles = list.reduce((m, d) => { if (d.angle) m[d.angle] = (m[d.angle] || 0) + 1; return m; }, {});
+      const common = Object.entries(angles).sort((a, b) => b[1] - a[1])[0]?.[0] || null;
       const expanded = F.open.has(k) || list.length <= 6;
-      return html`<section class="st-group" aria-label="${story?.short_title || list[0].title}">
+      const title = story ? story.title : list[0].title;
+      return html`<section class="st-group${cv}" aria-label="${story?.short_title || list[0].title}">
         <header class="st-group-h">
           <div class="st-group-tx">
-            <h2 class="st-group-t">${story ? html`<a href="#/story/${story.id}">${story.short_title || story.title}</a>` : list[0].title}${story?.is_demo ? html` <span class="tag tag--demo">Demo</span>` : ''}</h2>
-            <p class="st-group-m">${plural(list.length, 'draft')}: ${Object.entries(by).map(([c, n]) => `${n} ${channelLabel(c)}`).join(', ')}${story ? html` · ${story.main_topic ? html`<span class="chip chip--topic">${story.main_topic}</span>` : ''} ${story.source_line}` : ''}</p>
+            <h2 class="st-group-t">${story ? html`<a href="#/story/${story.id}">${title}</a>` : title}${story?.is_demo ? html` <span class="tag tag--demo">Demo</span>` : ''}</h2>
+            <p class="st-group-m">${plural(list.length, 'draft')}: ${Object.entries(by).map(([c, n]) => `${n} ${channelLabel(c)}`).join(', ')}${common ? html` · Angle: ${angleLabel(common)}` : ''}${story ? html` · ${story.main_topic ? html`<span class="chip chip--topic">${story.main_topic}</span>` : ''} ${story.source_line}` : ''}</p>
           </div>
           ${story ? scoreChip(story.score, th) : ''}
         </header>
-        <ul class="st-rows" role="list">${(expanded ? list : list.slice(0, 5)).map(d => rowHtml(d, true))}</ul>
+        <ul class="st-rows" role="list">${(expanded ? list : list.slice(0, 5)).map(d => rowHtml(d, true, common))}</ul>
         ${list.length > 6 ? html`<button type="button" class="st-more xbtn" data-more="${k}" aria-expanded="${expanded}">${expanded ? 'Show fewer' : `Show ${list.length - 5} more drafts from this story`}</button>` : ''}
       </section>`;
     })}`;
   }
 
-  const chipBtn = (kind, key, label, n) => html`<button type="button" class="chip chip--filter" data-f="${kind}" data-v="${key}" aria-pressed="${F[kind] === key}">${label}${n != null ? html`<span class="st-n">${n}</span>` : ''}</button>`;
+  // one compact filter bar: status and channel as two small segmented groups on one row
+  const fBtn = (kind, key, label, n) => html`<button type="button" class="st-f xbtn" data-f="${kind}" data-v="${key}" aria-pressed="${F[kind] === key}">${label}${n != null ? html`<span class="st-f-n">${n}</span>` : ''}</button>`;
   const filtersHtml = () => html`
     <div class="st-filters" role="group" aria-label="Filter drafts">
-      <div class="cluster" role="group" aria-label="Status">${chipBtn('status', 'all', 'All', live.length)}${STATUS_ORDER.map(s => { const n = drafts.filter(d => d.status === s).length; return n || F.status === s ? chipBtn('status', s, STATUS_LABEL[s], n) : ''; })}</div>
-      <div class="cluster" role="group" aria-label="Channel">${[['all', 'All channels'], ['linkedin', 'LinkedIn'], ['instagram', 'Instagram'], ['video', 'Video']].map(([k, lb]) => chipBtn('channel', k, lb, k === 'all' ? null : drafts.filter(d => d.channel === k && d.status !== 'archived').length))}</div>
+      <div class="st-fgroup" role="group" aria-label="Status">${fBtn('status', 'all', 'All', live.length)}${STATUS_ORDER.map(s => { const n = drafts.filter(d => d.status === s).length; return n || F.status === s ? fBtn('status', s, STATUS_LABEL[s], n) : ''; })}</div>
+      <span class="st-fsep" aria-hidden="true"></span>
+      <div class="st-fgroup" role="group" aria-label="Channel">${[['all', 'All channels'], ['linkedin', 'LinkedIn'], ['instagram', 'Instagram'], ['video', 'Video']].map(([k, lb]) => fBtn('channel', k, lb, k === 'all' ? null : drafts.filter(d => d.channel === k && d.status !== 'archived').length))}</div>
     </div>`;
 
-  // side column: what needs you, and what you could write next
-  const queue = live.filter(d => d.status === 'in_review');
-  const approvedUns = live.filter(d => d.status === 'approved' && !d.planned_date);
+  // side column: what else needs you, and what you could write next
+  const queue = live.filter(d => d.status === 'in_review' && d.id !== lead?.id);
+  const approvedUns = live.filter(d => d.status === 'approved' && !d.planned_date && d.id !== lead?.id);
   const drafted = new Set(drafts.map(d => d.story_id).filter(Boolean));
   const ready = [...stories.values()].filter(s => s.score >= th && !drafted.has(s.id) && s.status !== 'archived').sort((a, b) => b.score - a.score);
-  const sideItem = (d) => html`<li><a class="st-side-row" href="#/draft/${d.id}">${glyph(d.channel)}<span class="st-side-t">${stories.get(d.story_id)?.short_title || d.title}<span class="st-side-m">${channelLabel(d.channel, d.format)} · #${d.id} · ${timeAgo(d.updated_at)}</span></span></a></li>`;
+  const sideItem = (d) => html`<li><a class="st-side-row" href="#/draft/${d.id}" title="Draft #${d.id}">${glyph(d.channel)}<span class="st-side-t">${stories.get(d.story_id)?.title || d.title}<span class="st-side-m">${channelLabel(d.channel, d.format)} · ${timeAgo(d.updated_at)}</span></span></a></li>`;
   const sideHtml = html`
-    <section class="tile tile--static st-side-tile" aria-labelledby="st-q-h">
-      <h2 class="st-side-h" id="st-q-h">Waiting on your review <span class="st-n">${queue.length}</span></h2>
+    ${queue.length || approvedUns.length || !lead ? html`<section class="tile tile--static st-side-tile" aria-labelledby="st-q-h">
+      <h2 class="st-side-h" id="st-q-h">${lead ? 'Also waiting on your review' : 'Waiting on your review'} <span class="st-n">${queue.length}</span></h2>
       ${queue.length ? html`<ul class="st-side-list" role="list">${queue.slice(0, 5).map(sideItem)}</ul>${queue.length > 5 ? html`<button type="button" class="st-more xbtn" data-f="status" data-v="in_review">All ${queue.length} in review</button>` : ''}`
-        : html`<p class="st-side-empty">Nothing is waiting. Submit a draft for review from its Review tab.</p>`}
+        : html`<p class="st-side-empty">Nothing else is waiting. Submit a draft for review from its Review tab.</p>`}
       ${approvedUns.length ? html`<h2 class="st-side-h">Approved, no date <span class="st-n">${approvedUns.length}</span></h2><ul class="st-side-list" role="list">${approvedUns.slice(0, 4).map(sideItem)}</ul>` : ''}
-    </section>
+    </section>` : ''}
     <section class="tile tile--static st-side-tile" aria-labelledby="st-r-h">
       <h2 class="st-side-h" id="st-r-h">Above your bar, no draft yet <span class="st-n">${ready.length}</span></h2>
-      ${ready.length ? html`<ul class="st-side-list" role="list">${ready.slice(0, 5).map(s => html`<li><a class="st-side-row st-side-row--story" href="#/story/${s.id}">${scoreChip(s.score, th)}<span class="st-side-t" data-shared="title">${s.short_title || s.title}${s.is_demo ? html` <span class="tag tag--demo">Demo</span>` : ''}<span class="st-side-m">${s.source_line}</span></span></a></li>`)}</ul>
+      ${ready.length ? html`<ul class="st-side-list" role="list">${ready.slice(0, 5).map(s => html`<li><a class="st-side-row st-side-row--story" href="#/story/${s.id}">${scoreChip(s.score, th)}<span class="st-side-t" data-shared="title">${s.title}${s.is_demo ? html` <span class="tag tag--demo">Demo</span>` : ''}<span class="st-side-m">${s.source_line}</span></span></a></li>`)}</ul>
         <p class="st-side-foot">Open one and choose Draft a post.</p>`
         : html`<p class="st-side-empty">Every story at or above ${th} already has a draft.</p>`}
     </section>
@@ -172,23 +246,54 @@ async function list(el, params) {
       <p class="lede">${l}</p>
     </header>
     <div class="st-list-layout" data-stagger>
-      <section class="tile tile--static tile--flush st-list" aria-label="Drafts">
-        <div class="st-list-bar">${filtersHtml()}</div>
-        <div class="st-groups">${rowsHtml()}</div>
-      </section>
-      <aside class="st-side" aria-label="Review queue and ideas">${sideHtml}</aside>
+      <div class="st-list-col">
+        ${leadHtml()}
+        <section class="tile tile--static tile--flush st-list" aria-label="Drafts">
+          <div class="st-list-bar">${filtersHtml()}</div>
+          <div class="st-groups">${rowsHtml(0, 1)}</div>
+        </section>
+      </div>
+      <aside class="st-side" aria-label="Review queue and ideas"></aside>
     </div>`);
 
+  let full = false; // the groups after the first two are in
   const repaint = () => {
+    full = true;
     try { sessionStorage.setItem('byline-studio-filter', JSON.stringify({ status: F.status, channel: F.channel })); } catch (e) { /* storage unavailable */ }
     el.querySelector('.st-list-bar').innerHTML = String(filtersHtml());
     const g = el.querySelector('.st-groups');
     g.innerHTML = String(rowsHtml());
-    if (!reduced()) enterItems(g.querySelectorAll('.st-group'), { stagger: 30, y: 4, duration: 380, fadeDuration: 260 });
+    if (!reduced()) enterItems([...g.querySelectorAll('.st-group')].slice(0, 6), { stagger: 30, y: 4, duration: 380, fadeDuration: 260 });
   };
   on(el, 'click', '[data-f]', (e, b) => { F[b.dataset.f] = b.dataset.v; repaint(); el.querySelector(`.st-list-bar [data-f="${b.dataset.f}"][data-v="${b.dataset.v}"]`)?.focus(); });
   on(el, 'click', '[data-more]', (e, b) => { const k = b.dataset.more; F.open.has(k) ? F.open.delete(k) : F.open.add(k); repaint(); el.querySelector(`[data-more="${k}"]`)?.focus(); });
-  requestAnimationFrame(() => { if (!reduced()) enterItems(el.querySelectorAll('.st-group'), { stagger: 30, cap: 6, delay: 240, y: 6, duration: 460, fadeDuration: 320 }); });
+  on(el, 'click', '[data-plan]', (e, b) => { e.preventDefault(); planDialog(drafts.find(d => d.id === Number(b.dataset.plan)), b, repaint); });
+  // after the swap: the remaining groups and the side column (the side is still faded out by the router's entrance)
+  afterSwap(el, () => {
+    if (!full) { full = true; el.querySelector('.st-groups').insertAdjacentHTML('beforeend', String(rowsHtml(1))); }
+    el.querySelector('.st-side').innerHTML = String(sideHtml);
+    if (!reduced()) enterItems([...el.querySelectorAll('.st-group')].slice(0, 6), { stagger: 30, delay: 120, y: 6, duration: 460, fadeDuration: 320 });
+  }, 400);
+}
+
+/** "Plan" on a row: choose a date for the draft (POST /drafts/:id/plan: the date only; status and approval stay). */
+async function planDialog(d, opener, done) {
+  if (!d) return;
+  const slot = await api.get(`/slots/next?channel=${d.channel}`).catch(() => ({}));
+  const m = modal(String(html`<h2>Plan a date</h2>
+    <p class="st-muted">${d.title || 'Untitled'} · ${channelLabel(d.channel, d.format)}</p>
+    <label class="field st-plan-field">Date<input class="input" type="date" id="st-plan-date" value="${slot?.date || ''}"></label>
+    <p class="st-muted">Planning sets the calendar date only. Scheduling for publishing still needs approval in the draft.</p>
+    <div class="modal-actions"><button type="button" class="btn btn--ghost" data-close>Cancel</button><button type="button" class="btn btn--primary" id="st-plan-go">Plan for this date</button></div>`));
+  m.el.querySelector('#st-plan-go').onclick = (ev) => act(ev.target, async () => {
+    const date = m.el.querySelector('#st-plan-date').value;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error('Pick a date first.');
+    const r = await api.post(`/drafts/${d.id}/plan`, { date });
+    d.planned_date = date;
+    m.close(); done();
+    toast(`Planned for ${dayShort(date)}`, 'ok', { undo: { revert: async () => { await api.post(`/drafts/${d.id}/plan`, { date: r.previous_date ?? null }); d.planned_date = r.previous_date ?? null; done(); } } });
+  }, 'Planning…');
+  void opener;
 }
 
 // ================================================================ slide rendering (Instagram)
@@ -235,7 +340,7 @@ async function editor(el, id) {
   let images = await api.get('/images').catch(() => []);
   const th = liveThreshold();
   const saveTimers = {};
-  const ui = { tab: (() => { try { return sessionStorage.getItem('byline-st-tab') || 'review'; } catch (e) { return 'review'; } })() };
+  const ui = { expanded: new Set(), tab: (() => { try { return sessionStorage.getItem('byline-st-tab') || 'review'; } catch (e) { return 'review'; } })() };
   if (!['review', 'preview', 'notes', 'media', 'sources', 'history'].includes(ui.tab)) ui.tab = 'review';
 
   // ---- flags: numbered once, in document order (section flags first, by section order; then general checks)
@@ -270,12 +375,21 @@ async function editor(el, id) {
     </div>
   </li>`;
 
-  const sectionHtml = (s) => {
+  // Consecutive identical paragraphs (e.g. one perspective note applied three times) show once with a marker.
+  // Display only: the textarea and the stored text keep every copy; "Show all" opens the full text to edit.
+  const collapsedHtml = (s) => html`<div class="st-collapsed" data-collapsed="${s.id}">
+    ${collapseRuns(s.text).map(r => html`<p class="st-collapsed-p">${r.text.trim()}${r.n > 1 ? html` <span class="st-rep" title="The stored text repeats this paragraph ${r.n} times in a row">repeated note ×${r.n}</span>` : ''}</p>`)}
+    <p class="st-collapsed-k">Shown once here; the text itself still has every copy. <button type="button" class="st-collapsed-go xbtn" data-act="expand" data-id="${s.id}">Show all and edit</button></p>
+  </div>`;
+  const isCollapsed = (s) => !ui.expanded.has(s.id) && hasRuns(s.text);
+
+  const sectionHtml = (s, i) => {
     const flags = sectionFlags(s.id);
     const isScene = s.kind === 'scene';
     const ro = s.locked ? raw('readonly') : '';
+    const col = isCollapsed(s);
     return html`
-    <section class="st-sec${s.locked ? ' is-locked' : ''}${flags.length ? ' is-flagged' : ''}" id="sec-${s.id}" data-sec="${s.id}" aria-labelledby="lbl-${s.id}">
+    <section class="st-sec${s.locked ? ' is-locked' : ''}${flags.length ? ' is-flagged' : ''}${i > 1 ? ' cv' : ''}" id="sec-${s.id}" data-sec="${s.id}" aria-labelledby="lbl-${s.id}">
       <header class="st-sec-h">
         <h3 class="st-sec-l" id="lbl-${s.id}">${s.label}</h3>
         <span class="st-sec-flags">${flags.length ? html`<span class="tag ${flags.some(f => f.blocking) ? 'tag--err' : 'tag--warn'}">${plural(flags.length, 'flag')}</span>` : ''}</span>
@@ -286,7 +400,8 @@ async function editor(el, id) {
           <button type="button" class="btn btn--ghost btn--sm" data-act="rewrite" data-id="${s.id}" ${s.locked ? raw('disabled') : ''}>Rewrite</button>
         </span>
       </header>
-      <div class="st-field">
+      ${col ? collapsedHtml(s) : ''}
+      <div class="st-field" ${col ? raw('hidden') : ''}>
         <div class="st-mirror" aria-hidden="true" data-mirror="${s.id}">${raw(mirrorHtml(s.text || '', flags))}</div>
         <textarea class="textarea st-text" rows="1" spellcheck="true" data-field="text" data-id="${s.id}" aria-labelledby="lbl-${s.id}" ${flags.length ? raw(`aria-describedby="fn-${s.id}"`) : ''} ${ro}>${s.text}</textarea>
       </div>
@@ -504,14 +619,23 @@ async function editor(el, id) {
   const metaHtml = () => {
     const sib = Object.values(d.siblings.reduce((g, x) => { const k = channelLabel(x.channel); (g[k] ||= { label: k, items: [] }).items.push(x); return g; }, {}));
     return html`${statusTag(d.status)}
-      ${d.story_id ? html`<a class="st-meta-a" href="#/story/${d.story_id}">Story #${d.story_id}${d.story?.score != null ? html` · ${Math.round(d.story.score)}` : ''}</a>` : ''}
+      ${d.story_id ? html`<a class="st-meta-a" href="#/story/${d.story_id}" title="Story #${d.story_id}">Open the story${d.story?.score != null ? html` · score ${Math.round(d.story.score)}` : ''}</a>` : ''}
       ${d.project ? html`<a class="st-meta-a" href="#/career">Project: ${d.project.title}</a>` : ''}
       ${d.meta?.adapted_from ? html`<a class="st-meta-a" href="#/draft/${d.meta.adapted_from}">Adapted from #${d.meta.adapted_from}</a>` : ''}
       ${d.meta?.generated_by ? html`<span class="st-k">engine ${d.meta.generated_by}</span>` : ''}
       ${sib.length ? html`<span><span class="st-k">also from this story:</span> ${sib.map((g, k) => html`${k ? ', ' : ''}<a class="st-meta-a" href="#/draft/${g.items[0].id}">${g.label}${g.items.length > 1 ? ` ×${g.items.length}` : ''}</a>`)}</span>` : ''}`;
   };
 
-  function paint() {
+  // inspector panes render on first show (only the open one is built with the page)
+  const paneHtml = (k) => k === 'review' ? html`<section class="st-block" aria-labelledby="st-ck-h"><div class="st-block-h"><h3 id="st-ck-h">Editorial &amp; affiliation checks</h3></div><div id="flags">${checksHtml()}</div></section>
+          <div id="approval">${approvalHtml()}</div>`
+    : k === 'preview' ? html`<div id="preview">${previewHtml()}</div>`
+    : k === 'notes' ? html`<div id="notes">${notesHtml()}</div>`
+    : k === 'media' ? (d.channel === 'video' ? html`<div id="vbrief">${videoBriefHtml()}</div>` : html`<div class="st-block-h"><h3>Visual</h3></div><div id="visual">${visualHtml()}</div>`)
+    : k === 'sources' ? html`<div id="sources">${sourcesHtml()}</div>`
+    : html`<div class="st-block-h"><h3>Version history</h3></div><div id="versions">${versionsHtml()}</div>`;
+
+  function paint({ first = false } = {}) {
     const long = (d.title || '').length > 70;
     el.innerHTML = String(html`
     <header class="page-head st-head st-head--ed">
@@ -523,14 +647,15 @@ async function editor(el, id) {
     </header>
     <div class="st-desk" data-stagger>
       <article class="st-sheet" aria-label="Draft text">
-        <div class="st-sheet-bar">
-          <label class="field st-inline">Format<select class="select" id="format">${(FORMATS[d.channel] || [d.format]).map(f => html`<option ${f === d.format ? raw('selected') : ''}>${f}</option>`)}</select></label>
-          <label class="field st-inline">Angle<select class="select" id="angle">${ANGLES.map(([k, l]) => html`<option value="${k}" ${k === d.angle ? raw('selected') : ''}>${l}</option>`)}</select></label>
+        <div class="st-sheet-bar" role="toolbar" aria-label="Draft settings">
+          <label class="st-inline"><span>Format</span><select class="select" id="format">${(FORMATS[d.channel] || [d.format]).map(f => html`<option ${f === d.format ? raw('selected') : ''}>${f}</option>`)}</select></label>
+          <label class="st-inline"><span>Angle</span><select class="select" id="angle">${ANGLES.map(([k, l]) => html`<option value="${k}" ${k === d.angle ? raw('selected') : ''}>${l}</option>`)}</select></label>
           <span class="st-bar-gap"></span>
-          <button type="button" class="btn btn--primary btn--sm" data-act="regen">Regenerate unlocked</button>
+          <button type="button" class="btn btn--secondary btn--sm" data-act="regen" title="Rewrites every unlocked section with this format and angle. Locked sections and your notes are kept; the earlier text goes to History." aria-describedby="st-regen-d">Regenerate unlocked</button>
+          <span class="sr-only" id="st-regen-d">Locked sections and your notes survive every regeneration.</span>
         </div>
-        <p class="st-sheet-note">Locked sections and your notes survive every regeneration. Flagged sentences are marked in the text; the numbered note sits under its section.</p>
-        <div id="sections">${d.sections.map(sectionHtml)}</div>
+        ${d.flags.some(f => f.section_id) ? html`<p class="st-sheet-note">Flagged sentences are marked in the text; the numbered note sits under its section.</p>` : ''}
+        <div id="sections">${(first ? d.sections.slice(0, 2) : d.sections).map(sectionHtml)}</div>
         <footer class="st-sheet-foot">
           <div>
             <h3 class="st-foot-h">Adapt to another format</h3>
@@ -547,19 +672,22 @@ async function editor(el, id) {
         </footer>
       </article>
       <aside class="st-insp" aria-label="Inspector">
-        <div class="st-tabs" role="tablist" aria-label="Inspector">${TABS.map(([k, l]) => html`<button type="button" class="st-tab xbtn" role="tab" id="tab-${k}" aria-controls="pane-${k}" aria-selected="${ui.tab === k}" tabindex="${ui.tab === k ? 0 : -1}" data-tab="${k}">${l}<span data-badge="${k}">${tabBadge(k)}</span></button>`)}</div>
-        <div class="st-pane" id="pane-review" role="tabpanel" aria-labelledby="tab-review" ${ui.tab !== 'review' ? raw('hidden') : ''}>
-          <section class="st-block" aria-labelledby="st-ck-h"><div class="st-block-h"><h3 id="st-ck-h">Editorial &amp; affiliation checks</h3></div><div id="flags">${checksHtml()}</div></section>
-          <div id="approval">${approvalHtml()}</div>
+        <div class="st-tabs-wrap" data-fade="end"><div class="st-tabs" role="tablist" aria-label="Inspector">${TABS.map(([k, l]) => html`<button type="button" class="st-tab xbtn" role="tab" id="tab-${k}" aria-controls="pane-${k}" aria-selected="${ui.tab === k}" tabindex="${ui.tab === k ? 0 : -1}" data-tab="${k}">${l}<span data-badge="${k}">${tabBadge(k)}</span></button>`)}</div></div>
+        <div class="st-insp-body">
+        ${TABS.map(([k]) => html`<div class="st-pane" id="pane-${k}" role="tabpanel" aria-labelledby="tab-${k}" ${ui.tab !== k ? raw('hidden') : ''}>${ui.tab === k ? paneHtml(k) : ''}</div>`)}
         </div>
-        <div class="st-pane" id="pane-preview" role="tabpanel" aria-labelledby="tab-preview" ${ui.tab !== 'preview' ? raw('hidden') : ''}><div id="preview">${previewHtml()}</div></div>
-        <div class="st-pane" id="pane-notes" role="tabpanel" aria-labelledby="tab-notes" ${ui.tab !== 'notes' ? raw('hidden') : ''}><div id="notes">${notesHtml()}</div></div>
-        <div class="st-pane" id="pane-media" role="tabpanel" aria-labelledby="tab-media" ${ui.tab !== 'media' ? raw('hidden') : ''}>${d.channel === 'video' ? html`<div id="vbrief">${videoBriefHtml()}</div>` : html`<div class="st-block-h"><h3>Visual</h3></div><div id="visual">${visualHtml()}</div>`}</div>
-        <div class="st-pane" id="pane-sources" role="tabpanel" aria-labelledby="tab-sources" ${ui.tab !== 'sources' ? raw('hidden') : ''}><div id="sources">${sourcesHtml()}</div></div>
-        <div class="st-pane" id="pane-history" role="tabpanel" aria-labelledby="tab-history" ${ui.tab !== 'history' ? raw('hidden') : ''}><div class="st-block-h"><h3>Version history</h3></div><div id="versions">${versionsHtml()}</div></div>
       </aside>
     </div>`);
     wireHold();
+    wireTabs();
+  }
+
+  // the tab strip scrolls sideways when it doesn't fit; a 16px fade marks the clipped side (no tab is ever cut silently)
+  function wireTabs() {
+    const t = el.querySelector('.st-tabs'), w = t?.parentElement;
+    if (!t) return;
+    const upd = () => { const max = t.scrollWidth - t.clientWidth; w.dataset.fade = max <= 1 ? 'none' : t.scrollLeft <= 1 ? 'end' : t.scrollLeft >= max - 1 ? 'start' : 'both'; };
+    t.addEventListener('scroll', upd, { passive: true }); // reads only on scroll: the initial state is the static "end" fade
   }
 
   function refreshPanels() {
@@ -589,15 +717,22 @@ async function editor(el, id) {
   }
   const reload = async () => { d = await api.get(`/drafts/${id}`); paint(); };
 
-  paint();
-  requestAnimationFrame(() => { if (!reduced()) enterItems(el.querySelectorAll('.st-sec'), { stagger: 40, cap: 8, delay: 220, y: 6, duration: 520, fadeDuration: 360 }); });
+  // first paint: the first two sections (the rest are below the fold, .cv) join right after the swap
+  paint({ first: true });
+  afterSwap(el, () => {
+    const box = el.querySelector('#sections');
+    if (box && box.children.length < d.sections.length) box.insertAdjacentHTML('beforeend', String(html`${d.sections.slice(box.children.length).map((x, i) => sectionHtml(x, i + box.children.length))}`));
+    if (!reduced()) enterItems([...el.querySelectorAll('.st-sec')].slice(0, 6), { stagger: 40, delay: 120, y: 6, duration: 520, fadeDuration: 360 }); });
 
   // ---------------------------------------------------------------- tabs (roving, arrow keys)
   function showTab(k, { focus = false } = {}) {
     ui.tab = k;
     try { sessionStorage.setItem('byline-st-tab', k); } catch (e) { /* storage unavailable */ }
-    el.querySelectorAll('.st-tab').forEach(t => { const on = t.dataset.tab === k; t.setAttribute('aria-selected', String(on)); t.tabIndex = on ? 0 : -1; if (on && focus) t.focus(); });
-    el.querySelectorAll('.st-pane').forEach(p => { const on = p.id === `pane-${k}`; p.hidden = !on; if (on && !reduced()) p.animate([{ opacity: 0, transform: 'translateY(4px)' }, { opacity: 1, transform: 'none' }], { duration: 260, easing: EASE.settle }); });
+    el.querySelectorAll('.st-tab').forEach(t => {
+      const on = t.dataset.tab === k; t.setAttribute('aria-selected', String(on)); t.tabIndex = on ? 0 : -1;
+      if (on) { if (focus) t.focus({ preventScroll: true }); const s = t.parentElement; const l = t.offsetLeft, r = l + t.offsetWidth; if (l < s.scrollLeft + 16 || r > s.scrollLeft + s.clientWidth - 16) s.scrollTo({ left: Math.max(0, l - 24), behavior: reduced() ? 'auto' : 'smooth' }); }
+    });
+    el.querySelectorAll('.st-pane').forEach(p => { const on = p.id === `pane-${k}`; p.hidden = !on; if (on && !p.firstElementChild) p.innerHTML = String(paneHtml(k)); if (on && !reduced()) p.animate([{ opacity: 0, transform: 'translateY(4px)' }, { opacity: 1, transform: 'none' }], { duration: 260, easing: EASE.settle }); });
     wireHold();
   }
   on(el, 'click', '[data-tab]', (e, t) => showTab(t.dataset.tab));
@@ -661,6 +796,13 @@ async function editor(el, id) {
       if (a === 'lock') { const s = d.sections.find(x => x.id === sid); s.locked = !s.locked; await saveSections(s.locked ? `lock ${s.label}` : `unlock ${s.label}`); paint(); el.querySelector(`[data-act="lock"][data-id="${CSS.escape(sid)}"]`)?.focus(); }
       if (a === 'rewrite') await act(btn, async () => { d = await api.post(`/drafts/${id}/regenerate`, { section_id: sid, angle: el.querySelector('#angle').value }); paint(); toast('Section rewritten — earlier text saved in History', 'ok'); }, 'Rewriting…');
       if (a === 'regen') await act(btn, async () => { d = await api.post(`/drafts/${id}/regenerate`, { format: el.querySelector('#format').value, angle: el.querySelector('#angle').value }); paint(); toast('Regenerated unlocked sections', 'ok'); }, 'Regenerating…');
+      if (a === 'expand' || (a === 'goto' && el.querySelector(`[data-collapsed="${CSS.escape(sid)}"]`))) {
+        ui.expanded.add(sid);
+        const box = el.querySelector(`[data-collapsed="${CSS.escape(sid)}"]`), sec = box?.closest('.st-sec');
+        box?.remove();
+        const f = sec?.querySelector('.st-field'); if (f) f.hidden = false;
+        if (a === 'expand') sec?.querySelector('.st-text')?.focus();
+      }
       if (a === 'goto') {
         const sec = el.querySelector(`#sec-${CSS.escape(sid)}`);
         sec?.scrollIntoView({ behavior: reduced() ? 'auto' : 'smooth', block: 'center' });

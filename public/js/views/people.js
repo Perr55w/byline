@@ -73,13 +73,16 @@ const dueTag = (d, today) => d < today ? html`<span class="tag tag--err">Overdue
   : d === today ? html`<span class="tag tag--warn">Today</span>`
   : html`<span class="tag tag--neutral">${dayLabel(d)}</span>`;
 
-function personCell(c, { link = true } = {}) {
+function personCell(c, { link = true, dnc = true, dup = false } = {}) {
   const demo = isDemoText(c.name) || isDemoText(c.org);
   const sub = [c.role, stripDemo(c.org)].filter(Boolean).join(' · ');
+  const seg = c.segment ? (SEGMENTS[c.segment] || c.segment) : '';
+  // The KSU tag is redundant when the segment line already says "KSU alumni".
+  const ksu = c.ksu_alumni && !/ksu/i.test(seg);
   return html`<div class="pp-who">
     <span class="pp-namerow">${link ? html`<a class="pp-name" href="#/person/${c.id}">${stripDemo(c.name)}</a>` : html`<span class="pp-name">${stripDemo(c.name)}</span>`}
-    <span class="pp-tags">${demoTag(demo)}${c.dnc ? html`<span class="tag tag--err">Do not contact</span>` : ''}${c.ksu_alumni ? html`<span class="tag tag--neutral">KSU</span>` : ''}</span></span>
-    <span class="pp-sub">${sub || html`<span class="ink-3">No public role recorded</span>`}${c.segment ? html`<span class="pp-dotsep" aria-hidden="true">·</span>${SEGMENTS[c.segment] || c.segment}` : ''}</span>
+    <span class="pp-tags">${demoTag(demo)}${dnc && c.dnc ? html`<span class="tag tag--err">Do not contact</span>` : ''}${ksu ? html`<span class="tag tag--neutral">KSU</span>` : ''}${dup ? html`<span class="tag tag--warn" title="Same name as another record">Possible duplicate</span>` : ''}</span></span>
+    <span class="pp-sub">${sub || html`<span class="ink-3">No role recorded</span>`}${seg ? html`<span class="pp-dotsep" aria-hidden="true">·</span>${seg}` : ''}</span>
   </div>`;
 }
 
@@ -102,6 +105,7 @@ async function renderList(el, ctx) {
   const otherStages = [...new Set(contacts.map(c => c.stage).filter(s => s && !STAGES.includes(s)))].map(s => [s, contacts.filter(c => c.stage === s).length]);
   const stageMax = Math.max(1, ...stageCounts.map(x => x[1]), ...otherStages.map(x => x[1]));
   const later = fu.due.filter(f => f.next_date > addDays(today, 6));
+  const hasEmp = contacts.some(c => c.employer);
   const w = fu.week;
 
   const fuRow = (f) => html`<li class="pp-fu" data-row>
@@ -138,12 +142,12 @@ async function renderList(el, ctx) {
       <section class="tile tile--static tile--flush pp-card" aria-labelledby="pp-c-h">
         <div class="section-head pp-pad"><h2 class="t-h2" id="pp-c-h">People</h2><span class="section-meta">${contacts.length} total · ${contacts.filter(c => (c.details || []).length).length} with sourced details</span></div>
         ${contacts.length ? html`<table class="table pp-table pp-table--people">
-          <thead><tr><th>Person</th><th>Stage</th><th class="pp-hide-sm pp-hide-md">Employer</th><th>Next step</th><th class="pp-hide-sm">Last contact</th></tr></thead>
-          <tbody>${contacts.map(c => html`<tr data-href="#/person/${c.id}" class="${dupIds.has(c.id) ? 'pp-dup' : ''}">
-            <td>${personCell(c)}${dupIds.has(c.id) ? html`<span class="pp-dupnote">Possible duplicate</span>` : ''}</td>
-            <td>${status(c.stage)}</td>
-            <td class="pp-hide-sm pp-hide-md">${c.employer || html`<span class="ink-3">—</span>`}</td>
-            <td class="pp-next">${c.next_step || html`<span class="ink-3">—</span>`}${c.next_date ? html`<span class="pp-date ${c.dnc ? '' : c.next_date < today ? 'is-late' : c.next_date === today ? 'is-today' : ''}"><time datetime="${c.next_date}">${dayLabel(c.next_date)}</time>${c.dnc ? ' · paused (do not contact)' : ''}</span>` : ''}</td>
+          <thead><tr><th class="pp-c-person">Person</th><th class="pp-c-stage">Stage</th>${hasEmp ? html`<th class="pp-c-emp pp-hide-sm pp-hide-md">Employer</th>` : ''}<th class="pp-c-next">Next step</th><th class="pp-c-last pp-hide-sm">Last contact</th></tr></thead>
+          <tbody>${contacts.map(c => html`<tr data-href="#/person/${c.id}" class="${dupIds.has(c.id) ? 'pp-dup' : ''} ${contacts.length > 20 ? 'cv-row' : ''}">
+            <td>${personCell(c, { dnc: false, dup: dupIds.has(c.id) })}</td>
+            <td class="pp-stagecell">${status(c.stage)}${c.dnc ? html`<span class="tag tag--err">Do not contact</span>` : ''}</td>
+            ${hasEmp ? html`<td class="pp-hide-sm pp-hide-md">${c.employer || html`<span class="ink-3">—</span>`}</td>` : ''}
+            <td class="pp-next">${c.next_step || html`<span class="ink-3">—</span>`}${c.next_date ? html`<span class="pp-date ${c.dnc ? '' : c.next_date < today ? 'is-late' : c.next_date === today ? 'is-today' : ''}"><time datetime="${c.next_date}">${dayLabel(c.next_date)}</time>${c.dnc ? ' · paused' : ''}</span>` : ''}</td>
             <td class="pp-hide-sm pp-mono">${c.last_interaction ? html`<time datetime="${c.last_interaction}">${dayLabel(c.last_interaction, { weekday: false })}</time>` : '—'}</td>
           </tr>`)}</tbody></table>`
         : html`<div class="pp-pad"><div class="empty"><h3>No people yet.</h3><p>Add someone whose public work you’ve actually read, with a source for every detail.</p></div></div>`}
@@ -154,7 +158,7 @@ async function renderList(el, ctx) {
         ${queue.length ? html`<table class="table pp-table">
           <thead><tr><th>To</th><th>Purpose</th><th class="pp-hide-sm">Channel</th><th class="pp-hide-sm">When</th><th>Status</th></tr></thead>
           <tbody>${queue.map(o => html`<tr data-outreach="${o.id}">
-            <td><button class="pp-linkbtn" data-outreach-open="${o.id}">${stripDemo(o.name)}</button>${dupIds.has(o.contact_id) ? html`<span class="pp-dupnote">duplicate contact</span>` : ''}${o.subject ? html`<span class="pp-sub">${o.subject}</span>` : ''}</td>
+            <td><button class="pp-linkbtn" data-outreach-open="${o.id}">${stripDemo(o.name)}</button>${dupIds.has(o.contact_id) ? html`<span class="pp-dupnote">Duplicate contact</span>` : ''}${o.subject ? html`<span class="pp-sub">${o.subject}</span>` : ''}</td>
             <td>${PURPOSES[o.purpose] || label(o.purpose)}</td>
             <td class="pp-hide-sm">${CHANNELS[o.channel] || o.channel}</td>
             <td class="pp-hide-sm pp-mono">${o.sent_at ? `sent ${whenLabel(o.sent_at, tz)}` : o.send_at ? `send ${whenLabel(o.send_at, tz)}` : '—'}</td>
@@ -163,13 +167,16 @@ async function renderList(el, ctx) {
       </section>
     </div>
 
-    <aside class="pp-aside stack">
+    <aside class="pp-aside pp-aside--sticky stack">
       ${w ? html`<section class="tile tile--static pp-card" aria-labelledby="pp-w-h">
         <h2 class="section-label" id="pp-w-h">This week’s outreach</h2>
         <p class="pp-big"><span class="pp-big-n">${w.sent}</span><span class="pp-big-of">of ${w.goal} sent</span></p>
         <div class="meter pp-meter" role="img" aria-label="${w.sent} of ${w.goal} messages sent this week"><i style="--v:${Math.min(1, w.goal ? w.sent / w.goal : 0)}"></i></div>
-        <p class="pp-note">${w.sent >= w.goal ? 'Goal met. Quality over volume from here.' : `${plural(w.goal - w.sent, 'more approved message')} to reach the weekly goal.`} ${fu.awaiting_reply.length ? `${fu.awaiting_reply.length} awaiting a reply.` : 'None awaiting a reply.'}</p>
+        <p class="pp-note">${w.sent >= w.goal ? 'Goal met. Quality over volume from here.' : `${plural(w.goal - w.sent, 'more approved message')} to reach the weekly goal.`}</p>
         ${sentToDup.length ? html`<p class="pp-note pp-note--warn">${plural(sentToDup.length, 'sent message')} went to duplicate “${stripDemo(dups[0][0].name)}” records.</p>` : ''}
+        <h3 class="pp-h4">Awaiting reply${fu.awaiting_reply.length ? ` · ${fu.awaiting_reply.length}` : ''}</h3>
+        ${fu.awaiting_reply.length ? html`<ul class="pp-mini">${fu.awaiting_reply.map(a => html`<li><a href="#/person/${a.id}">${stripDemo(a.name)}</a><span class="pp-sub">sent ${dayLabel((a.sent_at || '').slice(0, 10), { weekday: false })} · follow up ${dayLabel(a.suggested_follow_up)}</span></li>`)}</ul>`
+          : html`<p class="pp-note">No sent message is waiting on a reply.${queue.some(o => o.status === 'sent' && contacts.find(c => c.id === o.contact_id)?.dnc) ? ' Messages to people later marked do-not-contact are not tracked.' : ''} Logging a reply pauses reminders.</p>`}
       </section>` : ''}
 
       <section class="tile tile--static pp-card" aria-labelledby="pp-s-h">
@@ -177,11 +184,6 @@ async function renderList(el, ctx) {
         <ul class="pp-stages">${[...stageCounts, ...otherStages].map(([s, n]) => html`<li class="${n ? '' : 'is-zero'}"><span class="pp-stage-l">${label(s)}</span><span class="meter"><i style="--v:${n / stageMax}"></i></span><span class="pp-stage-n">${n}</span></li>`)}</ul>
       </section>
 
-      <section class="tile tile--static pp-card" aria-labelledby="pp-a-h">
-        <h2 class="section-label" id="pp-a-h">Awaiting reply</h2>
-        ${fu.awaiting_reply.length ? html`<ul class="pp-mini">${fu.awaiting_reply.map(a => html`<li><a href="#/person/${a.id}">${stripDemo(a.name)}</a><span class="pp-sub">sent ${dayLabel((a.sent_at || '').slice(0, 10), { weekday: false })} · follow up ${dayLabel(a.suggested_follow_up)}</span></li>`)}</ul>`
-          : html`<p class="pp-note">No sent message is waiting on a reply.${queue.some(o => o.status === 'sent' && contacts.find(c => c.id === o.contact_id)?.dnc) ? ' Messages sent to people later marked do-not-contact are not tracked.' : ''} Logging a reply pauses reminders automatically.</p>`}
-      </section>
 
       <section class="tile tile--static pp-card" aria-labelledby="pp-x-h">
         <h2 class="section-label" id="pp-x-h">Content → connection</h2>

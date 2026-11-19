@@ -87,3 +87,9 @@ export async function sampleAnimations(page, ms, action) {
   if (action) await action();
   return p;
 }
+
+/** Round 1 S18: per visible .tile on the current page, unused height under its last child (sorted, worst first). */
+export async function deadInterior(page) {
+  const { DEAD_INTERIOR } = await import('../gates/perf.mjs');
+  return page.evaluate(DEAD_INTERIOR);
+}

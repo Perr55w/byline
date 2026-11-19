@@ -6,6 +6,7 @@
 import { api } from '../api.js';
 import { html, raw, on, act, toast, confirmBox, timeAgo, useStyle, statusMark, icon } from '../ui.js';
 import { stagedRun } from '../app.js';
+import { enterItems } from '../motion.js';
 
 const STAGES = ['collect', 'cluster', 'rank', 'brief', 'draft'];
 const STAGE_LABEL = { collect: 'Collect', cluster: 'Cluster', rank: 'Rank', brief: 'Brief', draft: 'Draft' };
@@ -22,6 +23,21 @@ const tfmt = (iso, tz) => iso ? new Date(iso).toLocaleTimeString('en-US', { hour
 const dfmt = (iso, tz) => iso ? new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', ...(tz ? { timeZone: tz } : {}) }) : '';
 const dayLabel = (d) => d ? new Date(`${d}T12:00:00`).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', ...(d.slice(0, 4) !== String(new Date().getFullYear()) ? { year: 'numeric' } : {}) }) : '';
 
+/**
+ * Run `fn` once the page holding `el` has been swapped in (byline:routed) and the main thread is idle, so
+ * below-the-fold markup stays out of the tab-change frames (E1). Re-renders of a page already on screen
+ * run it on the next idle period.
+ */
+function afterEnter(view, el, fn) {
+  let done = false;
+  const run = () => { if (done) return; done = true; document.removeEventListener('byline:routed', onRouted); if (el.isConnected) fn(); };
+  const idle = () => (window.requestIdleCallback ? requestIdleCallback(run, { timeout: 500 }) : setTimeout(run, 60));
+  const onRouted = (e) => { if (e.detail?.page?.contains(el)) { document.removeEventListener('byline:routed', onRouted); requestAnimationFrame(() => setTimeout(idle, 0)); } };
+  if (view.closest?.('.page.current') || view.classList?.contains('current')) { idle(); return; }
+  document.addEventListener('byline:routed', onRouted);
+  setTimeout(run, 2500);
+}
+
 /** What a run did, from its stored stats (the list endpoint has no stage rows). */
 function facts(r) {
   const st = r.stats || {};
@@ -34,7 +50,9 @@ function facts(r) {
     return 'pending';
   });
   if (r.status === 'running') { const i = stages.indexOf('running'); stages.forEach((s, j) => { if (s === 'running' && j !== i) stages[j] = 'pending'; }); }
-  return { sources: c?.sources ?? null, collected: c?.collected ?? null, fresh: c?.new ?? null, failed: c?.failed?.length ?? null, skipped: c?.skipped?.length ?? null, ranked: st.rank?.ranked ?? null, items: st.brief?.items ?? null, failedStage, stages };
+  // U1: a finished run whose collect stage read 0 sources did nothing new; it must not look like a full success
+  const empty = r.status === 'done' && c != null && !c.sources;
+  return { empty, sources: c?.sources ?? null, collected: c?.collected ?? null, fresh: c?.new ?? null, failed: c?.failed?.length ?? null, skipped: c?.skipped?.length ?? null, ranked: st.rank?.ranked ?? null, items: st.brief?.items ?? null, failedStage, stages };
 }
 
 /** F §2 Runs headline + one-liner. */
@@ -68,6 +86,14 @@ function stageSummary(stage, d) {
   return html`<pre class="rn-code">${JSON.stringify(d, null, 2)}</pre>`;
 }
 
+const STATUS_WORD = { done: 'Done', failed: 'Failed', running: 'Running' };
+/** Run status tag: a run that read 0 sources says so ("Done · 0 sources read", amber), never a plain green "Done". */
+function statusTag(run) {
+  const collect = run.stats?.collect ?? run.stages?.find(x => x.stage === 'collect' && x.status === 'done')?.detail;
+  if (run.status === 'done' && collect && !collect.sources) return html`<span class="tag tag--warn">Done · 0 sources read</span>`;
+  return html`<span class="tag ${run.status === 'done' ? 'tag--ok' : run.status === 'failed' ? 'tag--err' : 'tag--warn'}">${STATUS_WORD[run.status] || run.status}</span>`;
+}
+
 function detailHtml(run, S) {
   if (!run) return html`<div class="empty"><h3>No run selected.</h3><p>Pick a run from the history below.</p></div>`;
   const tz = S.tz;
@@ -77,14 +103,15 @@ function detailHtml(run, S) {
       <div>
         <p class="eyebrow">${run.id === S.runs[0]?.id ? 'Latest run' : 'Selected run'}</p>
         <h2 class="t-h2" id="rn-detail-h">Run #${run.id} · ${dayLabel(run.run_date)}</h2>
-        <p class="rn-dmeta"><span class="tag ${run.status === 'done' ? 'tag--ok' : run.status === 'failed' ? 'tag--err' : 'tag--warn'}">${run.status}</span><span>${run.trigger}</span><span>started ${tfmt(run.started_at, tz)}, ${dfmt(run.started_at, tz)}</span><span>${dur(run.started_at, run.finished_at)}</span><span>${usd(run.cost_usd)}</span></p>
+        <p class="rn-dmeta">${statusTag(run)}<span>${run.trigger}</span><span>started ${tfmt(run.started_at, tz)}, ${dfmt(run.started_at, tz)}</span><span>${dur(run.started_at, run.finished_at)}</span><span>${usd(run.cost_usd)}</span></p>
       </div>
     </header>
     ${run.error ? html`<div class="rn-flag" role="note"><b>Failed:</b> ${run.error}</div>` : ''}
     <ol class="rn-timeline">${(run.stages || []).map((s, i, arr) => {
       const attempt = arr.slice(0, i + 1).filter(x => x.stage === s.stage).length;
+      const empty = s.stage === 'collect' && s.status === 'done' && s.detail && !s.detail.sources;
       return html`<li class="rn-stage" data-status="${s.status}">
-        <span class="rn-mark" data-mark="${s.status}"></span>
+        <span class="rn-mark${empty ? ' rn-mark--empty' : ''}" data-mark="${s.status}" ${empty ? raw('data-empty title="Done, but read 0 sources"') : ''}></span>
         <div class="rn-stage-b">
           <div class="rn-stage-h"><span class="rn-stage-n">${STAGE_LABEL[s.stage] || s.stage}</span>${attempt > 1 ? html`<span class="tag tag--neutral">attempt ${attempt}</span>` : ''}<span class="rn-stage-t">${dur(s.started_at, s.finished_at)}</span></div>
           ${s.error ? html`<p class="rn-err-t">${s.error}</p>` : ''}
@@ -108,20 +135,14 @@ function detailHtml(run, S) {
   </section>`;
 }
 
-function historyHtml(S) {
-  const tz = S.tz;
-  return html`<section class="rn-history" aria-labelledby="rn-hist-h">
-    <div class="section-head"><h2 class="t-h2" id="rn-hist-h">Run history</h2><span class="section-meta">${plural(S.runs.length, 'run')} · newest first</span></div>
-    ${S.runs.length ? html`<div class="tile tile--flush tile--static rn-table-tile"><table class="table rn-table">
-      <caption class="sr-only">Runs, newest first. Select a row to see its stages.</caption>
-      <thead><tr><th class="rn-c-st"><span class="sr-only">Status</span></th><th>Run</th><th>Trigger</th><th>Stages</th><th class="num">Read</th><th class="num">New</th><th class="num">Failed</th><th class="num">Ranked</th><th>Started</th><th class="num">Time</th><th class="num">Cost</th></tr></thead>
-      <tbody>${S.runs.map(r => {
-        const f = facts(r);
-        return html`<tr class="rn-row${r.id === S.selId ? ' is-selected' : ''}" data-run="${r.id}" data-row>
-          <td class="rn-c-st"><span class="rn-mark" data-mark="${r.status}"></span></td>
-          <td><a class="rn-link" href="#/runs/${r.id}" aria-current="${r.id === S.selId ? 'true' : 'false'}">#${r.id}<span>${dayLabel(r.run_date)}</span></a>${r.error ? html`<span class="rn-row-err">${r.error}</span>` : ''}</td>
+const FIRST_RUNS = 6; // history rows in the tab-change frame; the rest are appended after the swap (E1)
+function runRow(r, S) {
+  const tz = S.tz, f = facts(r);
+  return html`<tr class="rn-row${r.id === S.selId ? ' is-selected' : ''}" data-run="${r.id}" data-row>
+          <td class="rn-c-st"><span class="rn-mark${f.empty ? ' rn-mark--empty' : ''}" data-mark="${r.status}" ${f.empty ? raw('data-empty') : ''}></span></td>
+          <td><a class="rn-link" href="#/runs/${r.id}" aria-current="${r.id === S.selId ? 'true' : 'false'}">#${r.id}<span>${dayLabel(r.run_date)}</span></a>${r.error ? html`<span class="rn-row-err">${r.error}</span>` : f.empty ? html`<span class="rn-row-empty">Done · 0 sources read</span>` : ''}</td>
           <td class="rn-c-tr">${r.trigger}</td>
-          <td><span class="rn-strip" role="img" aria-label="${STAGES.map((s, i) => `${STAGE_LABEL[s]} ${f.stages[i] === 'done' ? 'done' : f.stages[i] === 'error' ? 'failed' : f.stages[i] === 'running' ? 'running' : 'not run'}`).join(', ')}">${STAGES.map((s, i) => html`<span class="rn-mark rn-mark--sm" data-mark="${f.stages[i]}" title="${STAGE_LABEL[s]}"></span>`)}</span></td>
+          <td><span class="rn-strip" role="img" aria-label="${STAGES.map((s, i) => `${STAGE_LABEL[s]} ${i === 0 && f.empty ? 'done, 0 sources read' : f.stages[i] === 'done' ? 'done' : f.stages[i] === 'error' ? 'failed' : f.stages[i] === 'running' ? 'running' : 'not run'}`).join(', ')}">${STAGES.map((s, i) => html`<span class="rn-mark rn-mark--sm${i === 0 && f.empty ? ' rn-mark--empty' : ''}" data-mark="${f.stages[i]}" ${i === 0 && f.empty ? raw('data-empty') : ''} title="${STAGE_LABEL[s]}${i === 0 && f.empty ? ': read 0 sources' : ''}"></span>`)}</span></td>
           <td class="num">${f.sources ?? '—'}</td>
           <td class="num${f.fresh ? ' rn-pos' : ''}">${f.fresh ?? '—'}</td>
           <td class="num${f.failed ? ' rn-neg' : ''}">${f.failed ?? '—'}</td>
@@ -130,7 +151,17 @@ function historyHtml(S) {
           <td class="num">${dur(r.started_at, r.finished_at)}</td>
           <td class="num">${usd(r.cost_usd)}</td>
         </tr>`;
-      })}</tbody></table></div>` : html`<div class="empty"><h3>No runs yet.</h3><p>Use Run now, or enable the daily schedule in Settings.</p></div>`}
+}
+const markAll = (root) => root.querySelectorAll('.rn-mark[data-mark]').forEach(m => { const sm = statusMark(m, m.dataset.mark); if (m.hasAttribute('data-empty')) sm?.setAttribute('aria-label', 'Done, 0 sources read'); });
+
+function historyHtml(S) {
+  const tz = S.tz;
+  return html`<section class="rn-history" aria-labelledby="rn-hist-h">
+    <div class="section-head"><h2 class="t-h2" id="rn-hist-h">Run history</h2><span class="section-meta">${plural(S.runs.length, 'run')} · newest first</span></div>
+    ${S.runs.length ? html`<div class="tile tile--flush tile--static rn-table-tile"><table class="table rn-table">
+      <caption class="sr-only">Runs, newest first. Select a row to see its stages.</caption>
+      <thead><tr><th class="rn-c-st"><span class="sr-only">Status</span></th><th>Run</th><th>Trigger</th><th>Stages</th><th class="num">Read</th><th class="num">New</th><th class="num">Failed</th><th class="num">Ranked</th><th>Started</th><th class="num">Time</th><th class="num">Cost</th></tr></thead>
+      <tbody data-rn-rows>${S.runs.slice(0, Math.max(FIRST_RUNS, S.runs.findIndex(r => r.id === S.selId) + 1)).map(r => runRow(r, S))}</tbody></table></div>` : html`<div class="empty"><h3>No runs yet.</h3><p>Use Run now, or enable the daily schedule in Settings.</p></div>`}
   </section>`;
 }
 
@@ -191,7 +222,19 @@ export async function render(view, { params = [] } = {}) {
   </div>
   ${historyHtml(S)}`);
 
-  el.querySelectorAll('.rn-mark[data-mark]').forEach(m => statusMark(m, m.dataset.mark));
+  markAll(el);
+  afterEnter(view, el, () => {
+    const body = el.querySelector('[data-rn-rows]');
+    if (!body) return;
+    const rest = S.runs.slice(body.children.length);
+    if (!rest.length) return;
+    const tmp = document.createElement('tbody');
+    tmp.innerHTML = rest.map(r => String(runRow(r, S))).join('');
+    markAll(tmp);
+    const rows = [...tmp.children];
+    body.append(...rows);
+    enterItems(rows, { stagger: 24, y: 4, duration: 360, cap: 6 });
+  });
 
   const go = (id) => { const h = `#/runs/${id}`; if (location.hash === h) render(view, { params: [String(id)] }); else location.hash = h; };
   on(el, 'click', 'tr[data-run]', (e, tr) => { if (e.target.closest('a')) return; go(tr.dataset.run); });

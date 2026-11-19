@@ -27,7 +27,8 @@
 
 /* ---------------------------------------------------------------- layout */
 .map-layout { display: grid; grid-template-columns: minmax(0, 1fr) 344px; gap: var(--gap); align-items: stretch; }
-.map-stage, .map-side { height: clamp(440px, calc(100dvh - 362px), 880px); }
+/* round-1 M4: both run to 12 px above the viewport's bottom; --map-top is the tile's measured top (map.js) */
+.map-stage, .map-side { height: max(520px, calc(100dvh - var(--map-top, 362px) - 12px)); }
 
 /* ---------------------------------------------------------------- stage */
 .map-stage {
@@ -42,7 +43,11 @@
 .map-canvas-host.is-dragging .map-canvas { cursor: grabbing; }
 
 /* labels: pooled, moved with transform; text halo in the surface colour keeps them legible over edges */
-.map-node-labels, .map-topic-labels { position: absolute; inset: 0; pointer-events: none; will-change: transform; transition: opacity 200ms var(--ease-fade); }
+.map-node-labels, .map-topic-labels { position: absolute; inset: 0; pointer-events: none; transition: opacity 200ms var(--ease-fade); }
+/* round-1 M7: layers are promoted only while the camera is live (map-engine sets .is-live on pointerdown / wheel /
+   camera motion and clears it 300 ms after it settles); at rest the Map holds no will-change */
+.map-canvas-host.is-live :is(.map-node-labels, .map-topic-labels) { will-change: transform; }
+.map-canvas-host.is-live .map-canvas { will-change: opacity; }
 .map-canvas-host.labels-off :is(.map-node-labels, .map-topic-labels) { opacity: 0; transition-duration: 90ms; }
 .map-label {
   position: absolute; left: 0; top: 0; height: 16px; white-space: nowrap;
@@ -53,14 +58,17 @@
 .map-label.on { opacity: 1; }
 .map-label.is-sel { color: var(--text-1); font-weight: 600; }
 .map-topic {
-  position: absolute; left: 0; top: 0; display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 9px; white-space: nowrap;
+  position: absolute; left: 0; top: 0; display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 10px; white-space: nowrap;
   border-radius: var(--r-chip); background: var(--surface-solid); box-shadow: inset 0 0 0 1px var(--line), 0 1px 2px var(--line);
   font: 500 12px/1 var(--font-sans); color: var(--text-2);
   opacity: 0; transition: opacity 260ms var(--ease-fade);
 }
 .map-topic b { font-weight: 500; }
-.map-topic i { font: 500 11px/1 var(--font-mono); font-style: normal; color: var(--text-3); font-variant-numeric: tabular-nums; }
-.map-topic.is-hot i { color: var(--accent-text); }
+/* the top-3 hot regions carry their rank from the side panel's list (no count: chips and panel own the counts) */
+.map-topic i { display: none; place-items: center; width: 16px; height: 16px; margin-left: -5px; border-radius: 50%; background: var(--accent-soft);
+  font: 600 10.5px/1 var(--font-mono); font-style: normal; color: var(--accent-text); font-variant-numeric: tabular-nums; }
+.map-topic.is-hot { color: var(--text-1); box-shadow: inset 0 0 0 1px var(--line-2), 0 1px 2px var(--line); }
+.map-topic.is-hot i { display: inline-grid; }
 .map-topic.on { opacity: 1; }
 .map-topic.dim { opacity: .4; }
 
@@ -131,7 +139,13 @@
 .map-list .empty { margin: 24px; }
 
 /* ---------------------------------------------------------------- side panel (solid) */
-.map-side { display: flex; flex-direction: column; gap: 24px; padding: 20px 20px 24px; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+.map-side { display: flex; flex-direction: column; gap: 20px; padding: 20px 20px 24px; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+/* a 28 px fade at the bottom while more of the panel is below (sentinel in map.js), so nothing reads as clipped */
+/* a sticky strip, not mask-image (a mask would fade the tile's own surface and border too) */
+.map-side-end { flex: none; height: 1px; margin-top: -20px; }
+.map-side-fade { position: sticky; bottom: -24px; z-index: 1; flex: none; height: 28px; margin: -49px -20px 0; pointer-events: none;
+  background: linear-gradient(to bottom, transparent, var(--surface)); opacity: 0; transition: opacity 200ms var(--ease-fade); }
+.map-side.has-more .map-side-fade { opacity: 1; }
 .map-sec { margin: 0; }
 .map-sec-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
 .map-h2 { margin: 0; color: var(--text-1); font: 460 var(--fs-title)/var(--lh-title) var(--font-serif); font-variation-settings: 'opsz' 20; letter-spacing: -0.004em; }
@@ -208,6 +222,7 @@
 @media (max-width: 1040px) {
   .map-layout { grid-template-columns: 1fr; }
   .map-side { height: auto; overflow: visible; }
+  .map-side-fade { display: none; }
 }
 @media (max-width: 760px) {
   .map-bar { flex-direction: column; align-items: stretch; gap: 10px; margin: -4px 0 12px; }
@@ -245,7 +260,6 @@
 
 /* motion canvas (map-engine): low-res frames while the camera moves; the sharp canvas returns at rest */
 .map-canvas--lo { pointer-events: none; }
-.map-canvas { will-change: opacity; } /* both canvases stay composited, so swapping them costs no raster */
 .map-canvas-host.is-moving .map-canvas:not(.map-canvas--lo) { opacity: 0; }
 @media (max-width: 760px) {
   .map-stage.is-list { height: auto; min-height: 200px; }

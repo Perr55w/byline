@@ -109,7 +109,10 @@ export function forcedLayoutsFromTrace(buf) {
   for (const e of events) { const k = `${e.pid}:${e.tid}`; if (mains.has(k) && e.name === 'Layout') { if (!byThread.has(k)) byThread.set(k, []); byThread.get(k).push(e); } }
   let layouts = [];
   for (const list of byThread.values()) if (list.length > layouts.length) layouts = list;
-  const forced = layouts.filter(l => (l.args?.beginData?.stackTrace || []).length);
+  // a layout forced by Playwright's own injected script (no URL on any frame: e.g. computeElementStyleVisibility from
+  // waitForSelector's visibility check) is the harness measuring itself, not the app (round 1)
+  const appFrame = (l) => (l.args?.beginData?.stackTrace || []).some(f => f.url && !/^(pptr|playwright|__playwright)/.test(f.url));
+  const forced = layouts.filter(l => (l.args?.beginData?.stackTrace || []).length && appFrame(l));
   const where = forced.map(l => { const f = l.args.beginData.stackTrace[0]; return `${(f.url || '').replace(/^https?:\/\/[^/]+/, '')}:${(f.lineNumber ?? 0) + 1} ${f.functionName || '(anonymous)'} ${((l.dur || 0) / 1000).toFixed(1)}ms`; });
   return { layouts: layouts.length, forced: forced.length, forcedMs: +(forced.reduce((s, e) => s + (e.dur || 0), 0) / 1000).toFixed(1), where };
 }

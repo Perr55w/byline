@@ -1,6 +1,6 @@
 /* =====================================================================
    Byline v4 — Employers (views/employers.js: #/employers coverage table, #/employers/:id activity).
-   One house palette: neutral bars, the accent only on the leading count. Tokens only.
+   One house palette: neutral-ink bars (blue is reserved for quality). Tokens only.
    ===================================================================== */
 
 .em-pad { padding: 20px 24px 0; }
@@ -38,14 +38,14 @@
 .em-topics { display: block; margin-top: 4px; color: var(--text-2); font: 400 13px/19px var(--font-sans); }
 .em-cov { width: 24%; padding-top: 16px !important; }
 .em-bar { display: grid; grid-template-columns: minmax(60px, 1fr) 24px; align-items: center; gap: 10px; }
-.em-bar .meter { height: 6px; border-radius: 3px; }
-.em-bar .meter > i { background: var(--text-3); }
-.em-bar.is-lead .meter > i { background: var(--accent); }
+.em-bar .meter { height: 6px; border-radius: 3px; background: var(--track); }
+.em-bar .meter > i { background: color-mix(in oklab, var(--text-3) 60%, transparent); }
 .em-bar b { color: var(--text-1); font: 500 13px/1 var(--font-mono); text-align: right; font-variant-numeric: tabular-nums; }
 .em-bar.is-zero b { color: var(--text-3); }
 .em-teams { min-width: 180px; }
-.em-team { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; margin-bottom: 4px; color: var(--text-1); font: 450 13.5px/20px var(--font-sans); }
-.em-team > span:first-child { margin-right: 2px; }
+.em-team { display: flex; flex-wrap: nowrap; align-items: center; gap: 6px; margin: -4px 0 2px; color: var(--text-1); font: 450 13.5px/20px var(--font-sans); white-space: nowrap; }
+.em-team-n { margin-right: 2px; overflow: hidden; text-overflow: ellipsis; }
+.em-team .btn--sm { padding-left: 8px; padding-right: 8px; }
 .em-addteam { margin-left: -10px; }
 .em-act { width: 1%; white-space: nowrap; }
 .em-act .cluster { flex-wrap: nowrap; gap: 6px; }
@@ -95,8 +95,4 @@
    ink with color-mix (tokens only). Shared-file request: fix .tag--ok/--warn/--demo in components.css. */
 :is(.cp-ok, .pp-note--ok) { color: var(--ok-text); }
 :is(.pp-note--warn, .pp-dupnote, .pp-date.is-today) { color: var(--warn-text); }
-/* E1 (tab change ≤ 50 ms at 4× CPU): skip layout of off-screen sections until they scroll near. Static tiles only
-   (paint containment would clip a hover shadow). */
-#view :is(.pp, .cp, .pf, .cr, .em) .tile--static { content-visibility: auto; contain-intrinsic-size: auto 360px; }
-@media (max-width: 760px) { #view .em-table tbody tr { content-visibility: auto; contain-intrinsic-size: auto 150px; } }
 @media (max-width: 760px) { .em-teams:not(:has(.em-team)) .em-addteam { margin-left: -10px; } .em-teams { min-width: 0; } }

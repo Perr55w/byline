@@ -11,7 +11,7 @@
 //   easeCount(t, k)                                                p = (1 − e^(−k t)) / (1 − e^(−k))
 //   EASE, DUR                                                      token values read once from tokens.css
 
-import { qualityColor, qualityTier } from './quality.js';
+import { qualityColor, qualityTier, paintRingGradient } from './quality.js';
 
 export const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -289,7 +289,7 @@ export function countTo(el, n, { ring = null, threshold, duration = DUR.count, d
   const paint = (v) => {
     el.textContent = fmt(v);
     if (arc) arc.style.strokeDashoffset = String(C * (1 - Math.max(0, Math.min(100, v)) / 100));
-    if (host) { host.style.setProperty('--q', qualityColor(v, threshold)); host.dataset.q = qualityTier(v, threshold); }
+    if (host) { host.style.setProperty('--q', qualityColor(v, threshold)); host.dataset.q = qualityTier(v, threshold); paintRingGradient(host, v, threshold); }
   };
   const k = `${key || el.dataset.countKey || el.closest('[data-count-key]')?.dataset.countKey || 'n'}:${final}`;
   if (reduced() || counted().has(k) || document.hidden) { paint(target); remember(k); return Promise.resolve(); }

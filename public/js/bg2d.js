@@ -6,7 +6,8 @@
 //   f.layout({ W, H, col, row, bw, bh })   dash grid for the viewport (CSS px) and backing size
 //   f.heat(grid64x40, [x, y, w, h])         topic heat sampled onto the dashes
 //   f.rail([x, y, w, h])                    dashes under the rail are skipped (the rail's "frost")
-//   f.draw({ col, I, t, scale, ptr, pool, poolS, pulse, rip })
+//   f.draw({ col, I, t, scale, ptr, near, band, pool, poolS, pulse, rip })
+//     near: pointer reaction strength (S13d, 160px smoothstep); band: [x, y, w, h] viewport rect dimmed to ×0.35 (S13b)
 export function createField(ctx) {
   const NB = 24;
   let D = null, L = null, heatGrid = null, heatBox = null, railRect = null;
@@ -75,7 +76,8 @@ export function createField(ctx) {
     const p1 = 0.1256637 * t, p2 = 0.1329136 * t, p3 = 0.0314159 * t;
     const cp1 = .55 * Math.cos(p1), sp1 = .55 * Math.sin(p1), cp2 = .30 * Math.cos(p2), sp2 = .30 * Math.sin(p2), cp3 = .15 * Math.cos(p3), sp3 = .15 * Math.sin(p3);
     const px = p.ptr.x, py = p.ptr.y, ps = p.ptr.s * (.5 + .5 * I);
-    const pool = p.pool, poolS = p.poolS, pu = p.pulse;
+    const pool = p.pool, poolS = p.poolS * ((c.pool ?? .07) / .07), pu = p.pulse;
+    const near = p.near || 0, band = p.band && p.band[2] > 0 ? p.band : null;
     const { cols, rows, n, x: X, y: Y, w: W, s1, c1, s2, c2, s3, c3 } = D;
     // pass 1: the satin (three sines), then the ripples on the dashes they reach
     for (let i = 0; i < n; i++) W[i] = s1[i] * cp1 - c1[i] * sp1 + s2[i] * cp2 - c2[i] * sp2 + s3[i] * cp3 + c3[i] * sp3;
@@ -107,8 +109,17 @@ export function createField(ctx) {
         if (pulsing) { const d = Math.hypot(x - pu.x, y - pu.y) - pu.p * 420; if (d < 140 && d > -140) pr = pu.a * Math.exp(-d * d / 968); }
         const he = D.heat[i], u = .5 + .5 * w;
         let a = aBase + aSpan * u * u + he * .10 + L * .16 + sheen * .22 + P * .12 + pr * .2;
-        const hot = Math.min(1, he * .85 + L * .5 + P * .6 + pr * .5);
+        let hot = Math.min(1, he * .85 + L * .5 + P * .6 + pr * .5);
         a *= 1 + (hratio - 1) * hot * hot;
+        if (near > .001) {
+          const ddx = x - px, ddy = y - py, d2 = ddx * ddx + ddy * ddy;
+          if (d2 < 25600) { const q = Math.sqrt(d2) / 160, N = near * (1 - q * q * (3 - 2 * q)); a += (Math.max(a, amax + .08) - a) * N; hot = Math.max(hot, .35 * N * 1.4); }
+        }
+        if (band) {
+          const qx = Math.max(band[0] - x, 0, x - band[0] - band[2]), qy = Math.max(band[1] - y, 0, y - band[1] - band[3]);
+          const d = Math.sqrt(qx * qx + qy * qy);
+          if (d < 48) { const q = d / 48; a *= .35 + .65 * (q * q * (3 - 2 * q)); }
+        }
         const g = hot > .45 ? 1 : 0;
         const bi = Math.max(0, Math.min(NB - 1, Math.round(a * NB / .6)));
         const len = 1 + .45 * he + .7 * L;

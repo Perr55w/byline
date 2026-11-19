@@ -61,6 +61,8 @@ test('/api/stories/:id: dossier payload follows F §3', async () => {
   assert.equal(d.why_ranked.length, 3);
   assert.ok(Array.isArray(d.drafts) && Array.isArray(d.projects) && Array.isArray(d.employer_connections));
   assert.equal(d.story.finding, relay.finding);
+  // round 1 S17e: every article says whether its summary is boilerplate (never shown as what the source said)
+  for (const a of d.articles) assert.equal(typeof a.summary_is_boilerplate, 'boolean');
 });
 
 test('/api/today: ranked, cleared, weighted topic counts, threshold and brief date', async () => {
@@ -83,6 +85,13 @@ test('/api/status: new counts, schedule flag, last run summary and issue number'
   assert.equal(s.last_run.status, 'done');
   assert.match(s.last_run.time_local, /^\d{1,2}:\d{2} [AP]M$/);
   assert.equal(s.issue.number, s.counts.briefs);
+  // round 1 S17a: Today's "Waiting on you" reads real counts, not the 12-row list
+  assert.equal(typeof s.counts.in_review, 'number');
+  assert.equal(typeof s.counts.drafts_open, 'number');
+  const drafts = (await api('GET', '/drafts')).data;
+  const list = Array.isArray(drafts) ? drafts : (drafts.drafts || drafts.items || []);
+  if (list.length && list.length < 200) assert.equal(s.counts.in_review, list.filter(d => d.status === 'in_review').length);
+  assert.ok(s.counts.in_review <= s.counts.drafts_open);
 });
 
 test('/api/search: stories carry score/topics/finding, claims carry story title, contacts type, counts per type', async () => {
@@ -150,6 +159,11 @@ test('/api/map: nodes for all stories, top-k edges, clusters, ETag/304, stable p
   for (const e of m.edges) { assert.ok(ids.has(e.a) && ids.has(e.b) && e.a < e.b); assert.ok(e.weight >= 0.9); assert.ok(e.reasons && 'companies' in e.reasons); }
   assert.ok(m.edges.length <= 4 * m.nodes.length);
   assert.ok(m.clusters.length >= 1 && m.clusters.every(c => 'x' in c && 'label' in c && c.heat >= 0 && c.heat <= 1));
+  // round 1 S17b/c: in_count (topic anywhere) beside count (main topic); a short_title on every node
+  const anywhere = (t) => m.nodes.filter(n => n.topics.includes(t)).length;
+  for (const c of m.clusters.filter(c => c.topic)) { assert.equal(c.in_count, anywhere(c.topic), c.topic); assert.ok(c.in_count >= c.count, c.topic); }
+  for (const h of m.hot_topics) assert.equal(h.in_count, anywhere(h.topic), h.topic);
+  for (const n of m.nodes) { assert.equal(typeof n.short_title, 'string'); assert.ok(n.short_title.length > 0 && n.short_title.length <= 60, n.short_title); }
   const etag = r1.headers.get('etag');
   assert.ok(etag);
   assert.equal((await api('GET', '/map', null, { 'If-None-Match': etag })).status, 304);

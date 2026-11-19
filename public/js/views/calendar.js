@@ -71,7 +71,7 @@ export async function render(view, { params = [] } = {}) {
   const S = {
     month: /^\d{4}-\d{2}$/.test(params[0] || '') ? params[0] : today.slice(0, 7),
     view: (() => { try { return localStorage.getItem('byline-cal-view') === 'week' ? 'week' : 'month'; } catch (e) { return 'month'; } })(),
-    week: null, selected: null, side: 'day', carry: null, openGroups: new Set(), trayReady: false,
+    week: null, selected: null, side: 'day', carry: null, openGroups: new Set(), trayReady: false, sideReady: false, bodyReady: false,
     drafts: new Map(), outreach: [], followups: [], unplanned: [], unplannedTotal: 0, history: [],
     settings: {}, nextSlot: null
   };
@@ -142,8 +142,8 @@ export async function render(view, { params = [] } = {}) {
   const draftLabel = (d) => `${shortTitle(d.title || 'Untitled')}: ${channelLabel(d.channel, d.format)}, ${STATE_WORD[chipState(d)]}${d.score != null ? `, story score ${Math.round(d.score)} (${qualityLabel(d.score, th)})` : ', no linked story'}`;
 
   const chip = (it, { wrap = false } = {}) => {
-    // month cells are narrow: "Jordan E." (full name in the tooltip, the side panel and the week view)
-    const nm = (n = '') => { const b = n.replace(/\s*\(demo\)\s*$/i, ''); if (wrap) return b; const p = b.split(/\s+/); return p.length > 1 ? `${p[0]} ${p[p.length - 1][0]}.` : b; };
+    // month cells are narrow: the full name up to 14 characters, else "Priya N." (full name in the title, the side panel and the week view)
+    const nm = (n = '') => { const b = n.replace(/\s*\(demo\)\s*$/i, ''); if (wrap || b.length <= 14) return b; const p = b.split(/\s+/); return p.length > 1 ? `${p[0]} ${p[p.length - 1][0]}.` : b; };
     if (it.kind === 'outreach') return html`<a class="cal-chip cal-chip--out${wrap ? ' cal-chip--wrap' : ''}" href="#/people" tabindex="-1" title="Outreach to ${it.name} (${it.channel}, ${it.status})${it.time ? ` at ${it.time}` : ''}">${glyph('outreach')}<span class="cal-chip-t">${wrap && it.time ? html`<span class="cal-time">${it.time}</span> ` : ''}${nm(it.name)}</span></a>`;
     if (it.kind === 'followup') return html`<a class="cal-chip cal-chip--out${wrap ? ' cal-chip--wrap' : ''}" href="#/people" tabindex="-1" title="Follow up with ${it.name}: ${it.next_step || ''}">${glyph('followup')}<span class="cal-chip-t">${nm(it.name)}</span></a>`;
     const movable = it.state !== 'published';
@@ -151,6 +151,15 @@ export async function render(view, { params = [] } = {}) {
       title="${it.title}\n${channelLabel(it.channel, it.format)} · ${it.status.replace('_', ' ')}${it.score != null ? ` · story ${Math.round(it.score)}` : ''}${movable ? ' · drag to move' : ''}">
       ${glyph(it.state === 'published' ? 'check' : it.channel)}<span class="cal-chip-t">${shortTitle(it.title || 'Untitled')}</span></div>`;
   };
+
+  // a day's news: "2 stories" plus one dot per story (up to 5) in its quality colour; hollow dots are below your bar
+  const newsMark = (nw) => html`<span class="cal-news" aria-hidden="true" title="${plural(nw.length, 'story', 'stories')} first seen this day:
+${nw.map(x => `${Math.round(x.score)}  ${x.short_title || x.title}`).join('\n')}">
+    <span class="cal-news-n">${nw.length}<span class="cal-news-w"> ${nw.length === 1 ? 'story' : 'stories'}</span></span>
+    <span class="cal-dots">${nw.slice(0, 5).map(x => html`<i data-q="${qTier(x.score)}" style="${q(x.score)}"></i>`)}</span></span>`;
+
+  const monthRows = () => { const first = `${S.month}-01`; const [y, m] = S.month.split('-').map(Number); return Math.ceil((dow(first) + new Date(Date.UTC(y, m, 0)).getUTCDate()) / 7); };
+  const bodyCls = () => S.view === 'week' ? ' is-week' : monthRows() >= 6 ? ' is-6' : '';
 
   function monthGrid(map) {
     const first = `${S.month}-01`;
@@ -175,13 +184,13 @@ export async function render(view, { params = [] } = {}) {
         row.push(html`<div class="cal-cell${out ? ' is-out' : ''}${c > 4 ? ' is-weekend' : ''}${day === today ? ' is-today' : ''}${day === S.selected ? ' is-selected' : ''}" role="gridcell" data-cell="${day}" data-drop="${day}"
           tabindex="${day === S.selected ? 0 : -1}" aria-selected="${day === S.selected}" aria-label="${label}">
           <span class="cal-num" aria-hidden="true">${Number(day.slice(8))}${day.slice(8) === '01' ? html`<span class="cal-mon"> ${fmt(day, { month: 'short' })}</span>` : ''}</span>
-          ${nw.length ? html`<span class="cal-news" aria-hidden="true" title="${plural(nw.length, 'story', 'stories')} first seen · top: ${nw[0].short_title} (${Math.round(nw[0].score)})"><i class="cal-news-q" data-q="${qTier(nw[0].score)}" style="${q(nw[0].score)}"></i>${nw.length}<span class="cal-news-w"> ${nw.length === 1 ? 'story' : 'stories'}</span></span>` : ''}
+          ${nw.length ? newsMark(nw) : ''}
           <div class="cal-chips">${shown.map(it => chip(it, { wrap: list.length === 1 }))}${more > 0 ? html`<button type="button" class="cal-more xbtn" data-act="day" data-day="${day}" tabindex="-1" title="${list.slice(shown.length).map(x => x.title || x.name).join('\n')}">+${more} more</button>` : ''}${open ? html`<span class="cal-open" aria-hidden="true">open slot</span>` : ''}</div>
         </div>`);
       }
       cells.push(html`<div class="cal-row" role="row">${row}</div>`);
     }
-    return html`<div class="cal-month" role="grid" aria-label="${monthYear(S.month)}" aria-describedby="cal-help" style="--rows:${rows}" data-grid>
+    return html`<div class="cal-month${rows >= 6 ? ' is-6' : ''}" role="grid" aria-label="${monthYear(S.month)}" aria-describedby="cal-help" style="--rows:${rows}" data-grid>
       <div class="cal-row cal-dow" role="row">${WEEKDAYS.map((d, i) => html`<div class="cal-dow-c${i > 4 ? ' is-weekend' : ''}" role="columnheader"><abbr title="${['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'][i]}">${d}</abbr></div>`)}</div>
       ${cells}
     </div>`;
@@ -189,7 +198,9 @@ export async function render(view, { params = [] } = {}) {
 
   function weekGrid(map) {
     const days = Array.from({ length: 7 }, (_, i) => addDays(S.week, i));
-    const lane = (key, label, fill) => html`<div class="cal-row cal-lane cal-lane--${key}" role="row"><div class="cal-lane-l" role="rowheader">${label}</div>${days.map((day, i) => {
+    const weekHas = (pred) => days.some(day => (map.get(day) || []).some(pred));
+    const empty = { posts: !weekHas(i => i.kind === 'draft'), outreach: !weekHas(i => i.kind !== 'draft') };
+    const lane = (key, label, fill) => html`<div class="cal-row cal-lane cal-lane--${key}${empty[key] ? ' is-empty' : ''}" role="row"><div class="cal-lane-l" role="rowheader">${label}</div>${empty[key] ? html`<span class="cal-lane-empty" aria-hidden="true">${key === 'posts' ? 'No posts planned' : 'No outreach planned'}</span>` : ''}${days.map((day, i) => {
       const list = map.get(day) || [];
       const body = fill(day, list);
       return html`<div class="cal-wcell${i > 4 ? ' is-weekend' : ''}${day === today ? ' is-today' : ''}${day === S.selected ? ' is-selected' : ''}" role="gridcell" data-cell="${day}" data-lane="${key}" ${key !== 'outreach' ? raw(`data-drop="${day}"`) : ''}
@@ -208,7 +219,7 @@ export async function render(view, { params = [] } = {}) {
       ${lane('news', 'Stories', (day) => {
         const nw = news.get(day) || [];
         if (!nw.length) return { say: 'no stories first seen', html: html`<span class="cal-slot is-off" aria-hidden="true">—</span>` };
-        return { say: `${plural(nw.length, 'story', 'stories')} first seen, top ${nw[0].short_title} at ${Math.round(nw[0].score)}`, html: html`<ul class="cal-wnews" role="list">${nw.slice(0, 3).map(x => html`<li><a href="#/story/${x.id}" tabindex="-1" title="${x.title}"><span class="cal-news-q" data-q="${qTier(x.score)}" style="${q(x.score)}" aria-hidden="true"></span><span class="cal-wnews-t">${x.short_title || x.title}</span><span class="cal-wnews-s">${Math.round(x.score)}</span></a></li>`)}</ul>${nw.length > 3 ? html`<span class="cal-wnews-more">+${nw.length - 3} more</span>` : ''}` };
+        return { say: `${plural(nw.length, 'story', 'stories')} first seen, top ${nw[0].short_title} at ${Math.round(nw[0].score)}`, html: html`<ul class="cal-wnews" role="list">${nw.slice(0, 5).map(x => html`<li><a href="#/story/${x.id}" tabindex="-1" title="${x.title}"><span class="cal-wnews-s" data-q="${qTier(x.score)}" style="${q(x.score)}">${Math.round(x.score)}</span><span class="cal-wnews-t">${x.short_title || x.title}</span></a></li>`)}</ul>${nw.length > 5 ? html`<span class="cal-wnews-more">+${nw.length - 5} more</span>` : ''}` };
       })}
     </div>`;
   }
@@ -218,11 +229,11 @@ export async function render(view, { params = [] } = {}) {
     const movable = state !== 'published';
     return html`<li class="cal-item" data-row="${d.id}">
       <span class="cal-qbar" data-q="${qTier(d.score)}" style="${q(d.score)}" aria-hidden="true"></span>
-      <button type="button" class="cal-pick xbtn" data-pick="${d.id}" ${movable ? raw('data-movable') : raw('aria-disabled="true"')} data-id="${d.id}" aria-label="${draftLabel(d)}" aria-describedby="${movable ? 'cal-help' : ''}">
+      <button type="button" class="cal-pick xbtn" title="Draft #${d.id}" data-pick="${d.id}" ${movable ? raw('data-movable') : raw('aria-disabled="true"')} data-id="${d.id}" aria-label="${draftLabel(d)}" aria-describedby="${movable ? 'cal-help' : ''}">
         ${glyph(d.channel)}
-        <span class="cal-pick-main">
+        <span class="cal-pick-main${inDay || !d.grouped ? '' : ' is-grouped'}">
           ${inDay || !d.grouped ? html`<span class="cal-pick-t">${d.title || 'Untitled'}</span>` : ''}
-          <span class="cal-pick-m">${channelLabel(d.channel, d.format)} <span class="cal-id">#${d.id}</span></span>
+          <span class="cal-pick-m">${channelLabel(d.channel, d.format)}</span>
         </span>
       </button>
       <span class="cal-item-tags">${statusTag(d.status)}${d.score != null && !d.grouped ? scoreChip(d.score, th) : ''}</span>
@@ -259,7 +270,7 @@ export async function render(view, { params = [] } = {}) {
     const others = list.filter(i => i.kind !== 'draft');
     const sub = list.length
       ? `${drafts.length ? plural(drafts.length, 'post') : 'No posts'}${others.length ? ` · ${plural(others.length, 'outreach item')}` : ''}${isPostingDay(day) ? ' · posting day' : ''}`
-      : `Nothing planned${isPostingDay(day) ? `. A posting day (${postingDays.join(', ')})` : ''}${day >= today ? '. Drag a draft here or use Schedule…' : '.'}`;
+      : `Nothing planned${isPostingDay(day) ? ` on this posting day` : ''}.${day >= today ? ' Drag a draft here from the tray, or use the calendar button on a draft.' : ''}`;
     return html`<section class="cal-day" aria-labelledby="cal-day-h">
       <h2 class="cal-day-h" id="cal-day-h"><time datetime="${day}">${dayLong(day)}</time>${day === today ? html` <span class="tag tag--neutral">Today</span>` : ''}</h2>
       <p class="cal-day-sub">${sub}</p>
@@ -331,7 +342,7 @@ export async function render(view, { params = [] } = {}) {
           </div>
           ${st.ics_path ? html`<button type="button" class="btn btn--ghost btn--sm cal-ics" data-act="ics" title="Copy the calendar feed (ICS) URL for Google Calendar, Outlook or Apple Calendar">Subscribe${icon('arrow-up-right')}</button>` : ''}
         </div>
-        <div class="cal-body">${S.view === 'month' ? monthGrid(map) : weekGrid(map)}</div>
+        <div class="cal-body${bodyCls()}" style="--rows:${monthRows()}">${S.bodyReady ? (S.view === 'month' ? monthGrid(map) : weekGrid(map)) : ''}</div>
         <footer class="cal-key" aria-label="Key">
           <span><i class="k k--draft"></i>draft</span><span><i class="k k--approved"></i>approved</span><span><i class="k k--scheduled"></i>scheduled</span>
           <span>${glyph('check')}published</span><span>${glyph('outreach')}outreach</span><span title="The left bar is the linked story's score against your bar of ${th}"><i class="k k--bar"></i>story score</span>
@@ -343,8 +354,8 @@ export async function render(view, { params = [] } = {}) {
           <button type="button" class="seg-opt" role="tab" id="cal-tab-day" aria-selected="${S.side === 'day'}" aria-controls="cal-pane" data-side="day">Day &amp; tray</button>
           <button type="button" class="seg-opt" role="tab" id="cal-tab-history" aria-selected="${S.side === 'history'}" aria-controls="cal-pane" data-side="history">History${S.history.length ? html` <span class="cal-count">${S.history.length}</span>` : ''}</button>
         </div>
-        <div class="cal-pane" id="cal-pane" role="tabpanel" aria-labelledby="cal-tab-${S.side}">${sidePane(map)}</div>
-        ${cadence(map)}
+        <div class="cal-pane" id="cal-pane" role="tabpanel" aria-labelledby="cal-tab-${S.side}">${S.sideReady ? sidePane(map) : ''}</div>
+        ${S.sideReady ? cadence(map) : ''}
       </aside>
     </div>
     <p class="sr-only" id="cal-help">To move a draft with the keyboard, focus it in the side panel and press Space or Enter, choose a day with the arrow keys, press Enter to drop or Escape to cancel. Each draft also has a Schedule menu.</p>
@@ -360,10 +371,11 @@ export async function render(view, { params = [] } = {}) {
 
   // Partial repaint (state change after a move / nav / selection): body, side and head text, no re-entrance.
   function repaint({ head = true } = {}) {
+    if (!S.sideReady) fillSide();
     const map = byDay();
     const body = el.querySelector('.cal-body');
     const scroll = el.querySelector('.cal-tray-list')?.scrollTop || 0;
-    if (body) body.innerHTML = String(S.view === 'month' ? monthGrid(map) : weekGrid(map));
+    if (body) { body.innerHTML = String(S.view === 'month' ? monthGrid(map) : weekGrid(map)); body.className = `cal-body${bodyCls()}`; body.style.setProperty('--rows', monthRows()); }
     const pane = el.querySelector('#cal-pane');
     if (pane) { pane.innerHTML = String(sidePane(map)); pane.setAttribute('aria-labelledby', `cal-tab-${S.side}`); }
     const tl = el.querySelector('.cal-tray-list'); if (tl) tl.scrollTop = scroll;
@@ -396,6 +408,23 @@ export async function render(view, { params = [] } = {}) {
 
   paint();
   // The tray (often 20+ rows) fills one frame after the tab settles, so the route swap lays out less.
+  // the grid and the side panel (day, tray shell, cadence) fill after the swap, while the router still holds the
+  // tiles faded out (enter-item delay ≥ 120 ms); the grid's height is fixed by CSS, so nothing moves
+  function fillBody() {
+    if (S.bodyReady || !el.isConnected) return;
+    S.bodyReady = true;
+    const body = el.querySelector('.cal-body');
+    if (body && !body.firstElementChild) body.innerHTML = String(S.view === 'month' ? monthGrid(byDay()) : weekGrid(byDay()));
+  }
+  function fillSide() {
+    if (S.sideReady || !el.isConnected) return;
+    fillBody();
+    S.sideReady = true;
+    const map = byDay();
+    const pane = el.querySelector('#cal-pane');
+    if (pane) pane.innerHTML = String(sidePane(map));
+    pane?.insertAdjacentHTML('afterend', String(cadence(map)));
+  }
   const fillTray = () => {
     if (S.trayReady || !el.isConnected) return;
     S.trayReady = true;
@@ -404,10 +433,29 @@ export async function render(view, { params = [] } = {}) {
     tl.innerHTML = String(trayList());
     if (!reduced()) enterItems([...tl.querySelectorAll('.cal-group, .cal-tray-list > .cal-items')].slice(0, 6), { stagger: 30, cap: 6, y: 4, duration: 380, fadeDuration: 280 });
   };
-  document.addEventListener('byline:routed', function once(e) { if (e.detail?.page?.contains(el)) { document.removeEventListener('byline:routed', once); requestAnimationFrame(() => setTimeout(fillTray, 0)); } });
-  setTimeout(fillTray, 1200); // fallback if the routed event never names this page
+  const enterBody = (delay = 0) => {
+    if (reduced()) return;
+    if (S.view === 'week') return enterItems(el.querySelectorAll('.cal-week > .cal-row'), { stagger: 24, delay, y: 4, duration: 380, fadeDuration: 260 }); // one per row
+    enterItems([...el.querySelectorAll('.cal-body .cal-chip, .cal-body .cal-news, .cal-body .cal-open, .cal-day .cal-item')].slice(0, 12), { stagger: 14, delay, y: 4, duration: 420, fadeDuration: 320 });
+  };
+  // byline:routed names this page → two frames painted → animate; one more frame → fill the tray (separate tasks)
+  let swapped = false;
+  const afterSwap = () => {
+    if (swapped) return; swapped = true;
+    document.removeEventListener('byline:routed', onRouted);
+    if (!el.isConnected) return;
+    requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(() => {
+      if (!el.isConnected) return;
+      fillBody();
+      enterBody(120);
+      const next = (fn) => requestAnimationFrame(() => setTimeout(fn, 0));
+      next(() => { fillSide(); next(fillTray); });
+    }, 0)));
+  };
+  const onRouted = (e) => { if (e.detail?.page?.contains(el)) afterSwap(); };
+  document.addEventListener('byline:routed', onRouted);
+  setTimeout(afterSwap, 1200); // fallback if the routed event never names this page
   const live = (t) => { const n = el.querySelector('#cal-live'); if (n) { n.textContent = ''; setTimeout(() => { n.textContent = t; }, 30); } };
-  requestAnimationFrame(() => { if (!reduced()) enterItems(el.querySelectorAll('.cal-body .cal-chip, .cal-day .cal-item'), { stagger: 14, cap: 18, delay: 260, y: 4, duration: 420, fadeDuration: 320 }); });
 
   // ---------------------------------------------------------------- navigation
   async function go({ month = S.month, week = S.week, selected = S.selected, focus = false } = {}) {
@@ -429,6 +477,7 @@ export async function render(view, { params = [] } = {}) {
     else { const w = addDays(S.week, 7 * n); const sel = w <= today && today <= addDays(w, 6) ? today : w; go({ week: w, month: sel.slice(0, 7), selected: sel }); }
   }
   function select(day, { focus = false } = {}) {
+    if (!S.sideReady) fillSide();
     S.selected = day;
     if (S.view === 'month' && !day.startsWith(S.month)) return go({ month: day.slice(0, 7), selected: day, week: mondayOf(day), focus });
     if (S.view === 'week' && (day < S.week || day > addDays(S.week, 6))) return go({ week: mondayOf(day), month: day.slice(0, 7), selected: day, focus });
@@ -451,7 +500,7 @@ export async function render(view, { params = [] } = {}) {
     S.view = b.dataset.view;
     try { localStorage.setItem('byline-cal-view', S.view); } catch (err) { /* storage unavailable */ }
     S.week = mondayOf(S.selected);
-    go().then(() => { if (!reduced()) enterItems(el.querySelectorAll('.cal-body [role=row]'), { stagger: 24, y: 4, duration: 360, fadeDuration: 260 }); });
+    go().then(() => { if (!reduced()) enterItems(el.querySelectorAll('.cal-body [role=row]'), { stagger: 24, cap: 12, y: 4, duration: 360, fadeDuration: 260 }); });
   });
   on(el, 'click', '[data-side]', (e, b) => { S.side = b.dataset.side; repaint({ head: false }); });
   on(el, 'click', '[data-act="day"]', (e, b) => { e.stopPropagation(); select(b.dataset.day); });

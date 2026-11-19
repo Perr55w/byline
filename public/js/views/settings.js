@@ -5,6 +5,7 @@
 import { api } from '../api.js';
 import { html, raw, on, act, toast, confirmBox, copy, icon, useStyle, timeAgo } from '../ui.js';
 import { refreshStatus } from '../app.js';
+import { reduced, EASE, enterItems } from '../motion.js';
 
 const ZONES = ['America/New_York', 'America/Chicago', 'America/Denver', 'America/Phoenix', 'America/Los_Angeles', 'America/Anchorage', 'Pacific/Honolulu',
   'America/Toronto', 'America/Sao_Paulo', 'Europe/London', 'Europe/Dublin', 'Europe/Paris', 'Europe/Berlin', 'Europe/Madrid', 'Africa/Lagos', 'Africa/Johannesburg',
@@ -20,10 +21,19 @@ const TOC = [
   ['Publishing', [['sg-posting', 'Posting rhythm'], ['sg-delivery', 'Brief delivery'], ['sg-media', 'Media']]],
   ['System', [['sg-access', 'Calendar feed & access'], ['sg-display', 'Display'], ['sg-security', 'Security'], ['sg-demo', 'Demo data'], ['sg-about', 'About']]]
 ];
+// Groups shown folded by default (G3): their sections render inside a disclosure that opens on click,
+// from the section nav, from the ⌘K Index (which focuses the matching h3 in the fold head) or #/settings/<id>.
+const FOLDED = { Writing: 'sg-g-writing', Publishing: 'sg-g-publishing', System: 'sg-g-system' };
+const SEC_GROUP = Object.fromEntries(TOC.flatMap(([g, items]) => items.map(([id]) => [id, g])));
 const splitTerms = (s) => s.split(',').map(t => t.trim()).filter(Boolean);
 const validZone = (tz) => { try { new Intl.DateTimeFormat('en', { timeZone: tz }); return true; } catch { return false; } };
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 const andList = (xs) => xs.length < 2 ? (xs[0] || '') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`;
+const sign = (v) => (Number(v) > 0 ? 'pos' : Number(v) < 0 ? 'neg' : 'zero');
+// The fill runs from the zero mark (50%) to the value, in a neutral line colour (G1: blue only on the thumb, on hover/focus).
+const fillVars = (v) => { const p = ((Number(v) + 2) / 4) * 100; return `--a:${Math.min(50, p).toFixed(1)}%;--b:${Math.max(50, p).toFixed(1)}%`; };
+const weightLabel = (v) => (Number(v) < 0 ? `−${Math.abs(Number(v)).toFixed(1)}` : Number(v).toFixed(1));
+const weightText = (v) => (Number(v) < 0 ? `${Math.abs(Number(v)).toFixed(1)} below zero, de-emphasized` : Number(v) === 0 ? '0, ignored' : `${Number(v).toFixed(1)}`);
 const fmtTime12 = (hhmm) => { const [h, m] = String(hhmm || '07:00').split(':').map(Number); return `${((h + 11) % 12) + 1}:${String(m).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`; };
 
 /** F §2 Settings headline + one-liner, from settings, /api/today (cleared), watchlists and the source summary. */
@@ -41,7 +51,7 @@ function headline(s, st, today, watch, summary) {
   };
 }
 
-export async function render(view) {
+export async function render(view, ctx = {}) {
   await useStyle('/css/v4/settings.css');
   let [s, st, today, watch, summary, sources] = await Promise.all([
     api.get('/settings'), api.get('/status'), api.get('/today').catch(() => null), api.get('/watchlists').catch(() => []),
@@ -73,6 +83,7 @@ export async function render(view) {
   const loadSecurity = () => api.get('/security').then(x => { sec = x; paintSecurity(); }).catch(() => {});
   const codeInput = (name, label) => html`<label class="field">${label}<input class="input sg-code" data-code="${name}" type="text" autocomplete="one-time-code" inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="6 digits"></label>`;
   const paintSecurity = () => {
+    const fact = el.querySelector('[data-fact="sg-security"]'); if (fact && sec) fact.textContent = facts()['sg-security'];
     const box = el.querySelector('[data-security]'); if (!box) return;
     if (!sec) { box.innerHTML = '<span class="spinner"><i aria-hidden="true"></i>Checking…</span>'; return; }
     const required = sec.totp_always ? 'at every sign-in' : 'when Byline is reached through a tunnel, proxy or another device';
@@ -105,11 +116,43 @@ export async function render(view) {
     return v;
   };
 
+  // G2: a section's Save stays secondary until something in it changes. G3: folded groups.
+  const dirty = new Set();
+  const openFolds = new Set();
+  const themeName = () => ({ light: 'Proof', dark: 'Night', system: 'Match system' }[themePref()] || 'Proof');
+  const clip = (t, n = 64) => { t = String(t || '').replace(/\s+/g, ' ').trim(); return t.length > n ? `${t.slice(0, n).replace(/\s+\S*$/, '')}…` : t; };
+  // One line of real current values per folded section, so a closed group still says what it holds.
+  const facts = () => ({
+    'sg-profile': `${wp.tone ? `Tone: ${clip(wp.tone, 40)}` : 'No tone set'} · ${wp.length || 'medium'} · ${plural(wp.samples.filter(x => String(x).trim()).length, 'sample')}`,
+    'sg-editorial': `${plural(s.editorial?.min_independent_sources ?? 2, 'supporting source')} to approve · numbers ${s.editorial?.block_unsupported_numbers ? 'blocked' : 'flagged'} · hype ${s.editorial?.block_hype ? 'blocked' : 'flagged'}`,
+    'sg-intro': s.intro_format ? `“${clip(s.intro_format, 54)}”` : 'Not set',
+    'sg-posting': `${(s.posting_days || []).join(' ') || 'No days'} · roundup ${s.schedule?.weekly_roundup_day || 'Fri'} · outreach ${s.outreach_goal_per_week ?? 3} a week`,
+    'sg-delivery': `Email ${s.delivery?.email ? 'on' : 'off'} · push ${s.delivery?.push ? 'on' : 'off'}`,
+    'sg-media': s.synthetic_media_opt_in ? 'Synthetic narration allowed (labelled)' : 'Off: your own recordings only',
+    'sg-access': st.auth ? 'Password sign-in on · calendar feed link' : 'No password: this computer only · calendar feed link',
+    'sg-display': `${themeName()} in this browser`,
+    'sg-security': sec ? `Password ${sec.password_set ? 'on' : 'not set'} · two-step ${sec.totp_enabled ? 'on' : 'off'}` : (st.auth ? 'Password on' : 'No password set'),
+    'sg-demo': st.counts?.demo_articles ? `${plural(st.counts.demo_articles, 'demo article')} loaded` : 'Not loaded',
+    'sg-about': 'Byline v4 · fonts and licences'
+  });
+  const foldHead = (g) => {
+    const id = FOLDED[g], open = openFolds.has(g), items = TOC.find(t => t[0] === g)[1], f = facts();
+    return html`<div class="sg-fold-t"><h2 class="sg-fold-h" id="${id}-h">${g}</h2>
+        <button class="btn btn--secondary btn--sm sg-fold-btn" type="button" data-fold-toggle="${g}" aria-expanded="${open}" aria-controls="${id}-b">${open ? 'Hide' : `Show ${items.length} sections`}${icon('chevron-right')}</button></div>
+      ${open ? '' : html`<ul class="sg-fold-list">${items.map(([sid, t]) => html`<li><h3 class="sg-fold-i" data-for="${sid}"><button type="button" class="sg-fold-a" data-open-sec="${sid}">${t}</button></h3><span class="sg-fold-v" data-fact="${sid}">${f[sid]}</span></li>`)}</ul>`}`;
+  };
+  // A closed fold's sections are kept as markup only and built on first open (no hidden DOM in the tab change).
+  const foldBodies = {};
+  const fold = (g, body) => { foldBodies[g] = String(body); return html`<section class="sg-fold${openFolds.has(g) ? ' is-open' : ' tile tile--static'}" id="${FOLDED[g]}" data-fold="${g}" aria-labelledby="${FOLDED[g]}-h">
+      <header class="sg-fold-head" data-fold-head="${g}">${foldHead(g)}</header>
+      <div class="sg-fold-b" id="${FOLDED[g]}-b"${openFolds.has(g) ? '' : raw(' hidden')}>${openFolds.has(g) ? body : ''}</div>
+    </section>`; };
+
   const section = (id, title, dek, body, { save = null, extra = '', wide = false } = {}) => html`
     <section class="sg-sec tile tile--static${wide ? ' sg-sec--wide' : ''}" id="${id}" aria-labelledby="${id}-h" data-sg-sec>
       <header class="sg-sec-head"><h2 class="sg-h" id="${id}-h">${title}</h2>${dek ? html`<p class="sg-dek">${dek}</p>` : ''}</header>
       <div class="sg-sec-body">${body}</div>
-      ${save || extra ? html`<footer class="sg-sec-foot">${extra}${save ? html`<button class="btn btn--primary" type="button" data-save="${save}">Save</button>` : ''}</footer>` : ''}
+      ${save || extra ? html`<footer class="sg-sec-foot">${extra}${save ? html`<span class="sg-dirty" data-dirty-note="${save}"${dirty.has(save) ? '' : raw(' hidden')}>Unsaved changes</span><button class="btn ${dirty.has(save) ? 'btn--primary' : 'btn--secondary'}" type="button" data-save="${save}">Save</button>` : ''}</footer>` : ''}
     </section>`;
 
   const healthHtml = () => {
@@ -139,8 +182,12 @@ export async function render(view) {
     </div>`;
   };
 
-  const paint = () => {
+  // E1: the tab-change frame carries the head, overview and ranking; Automation and the folded groups are
+  // appended right after the swap (one task later, before the ⌘K Index looks for a section heading).
+  let restHtml = '', restIn = true;
+  const paint = ({ rest = true } = {}) => {
     const hd = headline(s, st, today, watch, summary);
+    restIn = rest;
     el.innerHTML = String(html`
     <header class="page-head">
       <p class="eyebrow">Control · each section saves on its own</p>
@@ -157,7 +204,7 @@ export async function render(view) {
         <div class="sg-prio-head" aria-hidden="true"><span>Topic</span><span>Weight</span><span>Terms</span><span></span></div>
         <div data-prios>${s.priorities.map((x, i) => html`<div class="sg-prio">
           <input class="input" data-p="topic" value="${x.topic}" placeholder="Topic" aria-label="Topic ${i + 1}">
-          <div class="sg-w"><input type="range" min="-2" max="2" step="0.1" data-p="weight" value="${x.weight}" aria-label="Weight for ${x.topic || `topic ${i + 1}`}"><output class="sg-wv" data-sign="${x.weight > 0 ? 'pos' : x.weight < 0 ? 'neg' : 'zero'}">${Number(x.weight).toFixed(1)}</output></div>
+          <div class="sg-w" data-sign="${sign(x.weight)}"><input type="range" min="-2" max="2" step="0.1" data-p="weight" value="${x.weight}" style="${raw(fillVars(x.weight))}" aria-label="Weight for ${x.topic || `topic ${i + 1}`}" aria-valuetext="${weightText(x.weight)}"><output class="sg-wv" data-sign="${sign(x.weight)}">${weightLabel(x.weight)}</output></div>
           <input class="input" data-p="terms" value="${(x.terms || []).join(', ')}" placeholder="comma-separated terms" aria-label="Terms for ${x.topic || `topic ${i + 1}`}">
           <button class="btn btn--ghost btn--icon btn--sm" type="button" data-act="rm-prio" data-i="${i}" aria-label="Remove ${x.topic || 'topic'}">${icon('x')}</button>
         </div>`)}</div>
@@ -171,7 +218,7 @@ export async function render(view) {
         </div>
         ${today?.ranked != null ? html`<p class="sg-help">This week: <b>${today.cleared}</b> of ${today.ranked} ranked stories are at or above ${s.publish_threshold}.</p>` : ''}`, { save: 'threshold' })}
 
-      <p class="sg-group" aria-hidden="true">Automation</p>
+      <div class="sg-rest" data-sg-rest>${raw((restHtml = String(html`<p class="sg-group" aria-hidden="true">Automation</p>
       ${section('sg-schedule', 'Schedule', 'The server checks every minute; a failed scheduled run is retried from its failed stage up to 3 times, 10 minutes apart. Any IANA zone name works.', html`
         <label class="sg-toggle"><input type="checkbox" class="switch" data-f="schedule_enabled" ${s.schedule?.enabled ? raw('checked') : ''}><span>Run the daily workflow automatically</span></label>
         <div class="sg-grid2">
@@ -197,7 +244,7 @@ export async function render(view) {
           <div class="sg-spend"><span class="sg-spend-l">Spent this month</span><span class="sg-spend-v">$${(p.month_spend_usd || 0).toFixed(4)}</span>${p.over_budget ? html`<span class="tag tag--warn">limit reached</span>` : ''}</div>
         </div>`, { save: 'budget' })}
 
-      <p class="sg-group" aria-hidden="true">Writing</p>
+      ${fold('Writing', html`
       ${section('sg-profile', 'Writing profile', 'Samples guide style only: Byline never invents experiences or opinions.', html`
         <div class="sg-grid4">
           <label class="field">Tone<input class="input" data-f="wp_tone" value="${wp.tone || ''}" placeholder="clear, curious, practical"></label>
@@ -218,9 +265,9 @@ export async function render(view) {
         <div class="sg-grid2"><label class="field">Minimum supporting sources to approve<input class="input" type="number" min="0" max="5" data-f="ed_min" value="${s.editorial?.min_independent_sources ?? 2}"></label></div>`, { save: 'editorial' })}
 
       ${section('sg-intro', 'Intro format', 'Inserted at the top of outreach drafts. Keep it factual.', html`
-        <label class="field">One-line self-introduction used in outreach<textarea class="textarea" data-f="intro_format" rows="3">${s.intro_format || ''}</textarea></label>`, { save: 'intro' })}
+        <label class="field">One-line self-introduction used in outreach<textarea class="textarea" data-f="intro_format" rows="3">${s.intro_format || ''}</textarea></label>`, { save: 'intro' })}`)}
 
-      <p class="sg-group" aria-hidden="true">Publishing</p>
+      ${fold('Publishing', html`
       ${section('sg-posting', 'Posting rhythm', 'Posting days drive “Next open slot” in Studio and the open slots in your calendar feed. The weekly roundup is drafted automatically on its day (once per week).', html`
         <fieldset class="sg-days"><legend class="field">Posting days</legend>${DAYS.map(d => html`<label class="sg-day"><input type="checkbox" data-day="${d}" ${(s.posting_days || []).includes(d) ? raw('checked') : ''}><span>${d}</span></label>`)}</fieldset>
         <div class="sg-grid2">
@@ -236,9 +283,9 @@ export async function render(view) {
         <p class="sg-note"><span class="dot ${st.delivery?.push?.configured ? 'ok' : ''}"></span>${st.delivery?.push?.note || ''}</p>`, { save: 'delivery' })}
 
       ${section('sg-media', 'Media', 'Off by default. While off, Byline never generates a synthetic voice or a likeness of you: videos use your own recordings, on-screen text and captions. Turning it on only makes the option available; each video still needs its own approval, and generated media is always labelled.', html`
-        <label class="sg-toggle"><input type="checkbox" class="switch" data-f="synthetic" ${s.synthetic_media_opt_in ? raw('checked') : ''}><span>Allow synthetic narration and likeness in videos</span></label>`, { save: 'media' })}
+        <label class="sg-toggle"><input type="checkbox" class="switch" data-f="synthetic" ${s.synthetic_media_opt_in ? raw('checked') : ''}><span>Allow synthetic narration and likeness in videos</span></label>`, { save: 'media' })}`)}
 
-      <p class="sg-group" aria-hidden="true">System</p>
+      ${fold('System', html`
       ${section('sg-access', 'Calendar feed & access', 'Subscribe in Google Calendar (Other calendars → From URL) to see posting slots, planned posts, follow-ups and planned sends. Google must reach this address over the internet, so it works once Byline is behind your Cloudflare Tunnel (docs/DEPLOY.md). Treat the link like a password.', html`
         <div class="sg-inline"><input class="input mono" readonly id="ics" value="${location.origin}${st.ics_path}" aria-label="Calendar feed URL"><button class="btn btn--secondary" type="button" data-act="copy-ics">Copy</button></div>
         <p class="sg-status"><span class="dot ${st.auth ? 'ok' : 'warn'}"></span>${st.auth ? 'Password sign-in is on.' : 'No password set: fine on this computer. Set BYLINE_PASSWORD before reaching Byline from your phone or the internet; remote access is refused until you do.'}</p>
@@ -254,36 +301,82 @@ export async function render(view) {
         <p class="sg-status">${st.counts?.demo_articles ? html`<span class="tag tag--demo">Loaded</span> ${st.counts.demo_articles} demo articles present.` : 'Not loaded.'}</p>`,
         { extra: html`<button class="btn btn--secondary" type="button" data-act="demo-load">Load demo data</button><button class="btn btn--danger" type="button" data-act="demo-clear" ${st.counts?.demo_articles ? '' : raw('disabled')}>Remove demo data</button>` })}
 
-      ${section('sg-about', 'About', '', html`<p class="sg-help">Byline v4. Type: Newsreader, Geist and Geist Mono (SIL Open Font License), self-hosted. Zero runtime dependencies.</p>`)}
+      ${section('sg-about', 'About', '', html`<p class="sg-help">Byline v4. Type: Newsreader, Geist and Geist Mono (SIL Open Font License), self-hosted. Zero runtime dependencies.</p>`)}`)}`), rest ? restHtml : ''))}</div>
       </div>
     </div>`);
     paintSecurity();
     spy();
   };
+  const paintRest = () => {
+    if (restIn) return;
+    restIn = true;
+    const box = el.querySelector('[data-sg-rest]');
+    box.innerHTML = restHtml;
+    enterItems([...box.children].filter(x => !x.matches('.sg-group')).slice(0, 2), { stagger: 40, y: 6, duration: 420 });
+    checkOllama();
+    spy();
+  };
 
-  // table-of-contents scroll spy (one observer; marks the topmost visible section)
-  let io = null, spyHold = 0;
+  // G4: section-nav highlight from one IntersectionObserver on .sg-sec (and closed folds, which stand in for
+  // their sections): the topmost intersecting element inside the band 80 px below the top to 60% down wins.
+  let io = null, spyHold = 0, spyCur = '';
+  const setCurrent = (id) => {
+    if (!id || id === spyCur) return;
+    spyCur = id;
+    el.querySelectorAll('[data-goto]').forEach(a => { if (a.dataset.goto === id) a.setAttribute('aria-current', 'true'); else a.removeAttribute('aria-current'); });
+  };
   const spy = () => {
     io?.disconnect();
+    spyCur = '';
     if (!('IntersectionObserver' in window)) return;
-    const seen = new Map();
+    const live = new Set();
     io = new IntersectionObserver((entries) => {
-      entries.forEach(en => seen.set(en.target.id, en.isIntersecting));
-      if (Date.now() < spyHold) return;
-      const first = [...el.querySelectorAll('[data-sg-sec]')].find(x => seen.get(x.id));
-      if (first) el.querySelectorAll('[data-goto]').forEach(a => { if (a.dataset.goto === first.id) a.setAttribute('aria-current', 'true'); else a.removeAttribute('aria-current'); });
-    }, { rootMargin: '-80px 0px -55% 0px' });
-    el.querySelectorAll('[data-sg-sec]').forEach(x => io.observe(x));
+      for (const en of entries) { if (en.isIntersecting) live.add(en.target); else live.delete(en.target); }
+      if (Date.now() < spyHold || !live.size) return;
+      let top = null;
+      for (const t of live) if (!top || (top.compareDocumentPosition(t) & Node.DOCUMENT_POSITION_PRECEDING)) top = t;
+      setCurrent(top.dataset.fold ? TOC.find(x => x[0] === top.dataset.fold)[1][0][0] : top.id);
+    }, { rootMargin: '-80px 0px -60% 0px' });
+    el.querySelectorAll('.sg-sec').forEach(x => { if (!x.closest('.sg-fold-b[hidden]')) io.observe(x); });
+    el.querySelectorAll('.sg-fold:not(.is-open)').forEach(x => io.observe(x));
   };
-  on(el, 'click', '[data-goto]', (e, a) => {
-    e.preventDefault();
-    const t = el.querySelector(`#${a.dataset.goto}`);
+  const scrollToSec = (id, { focus = true } = {}) => {
+    const t = el.querySelector(`#${id}`);
     if (!t) return;
-    spyHold = Date.now() + 1200;
-    el.querySelectorAll('[data-goto]').forEach(x => { if (x === a) x.setAttribute('aria-current', 'true'); else x.removeAttribute('aria-current'); });
-    t.scrollIntoView({ block: 'start', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
-    const h = t.querySelector('h2'); h.setAttribute('tabindex', '-1'); h.focus({ preventScroll: true });
+    spyHold = Date.now() + 900;
+    setCurrent(id);
+    t.scrollIntoView({ block: 'start', behavior: reduced() ? 'auto' : 'smooth' });
+    if (focus) { const h = t.querySelector('h2'); h.setAttribute('tabindex', '-1'); h.focus({ preventScroll: true }); }
+  };
+  const setFold = (g, open, { animate = true } = {}) => {
+    const box = el.querySelector(`[data-fold="${g}"]`);
+    if (!box || openFolds.has(g) === open) return;
+    if (open) openFolds.add(g); else openFolds.delete(g);
+    box.classList.toggle('is-open', open); box.classList.toggle('tile', !open); box.classList.toggle('tile--static', !open);
+    box.querySelector('[data-fold-head]').innerHTML = String(foldHead(g));
+    const body = box.querySelector('.sg-fold-b');
+    if (open && !body.firstElementChild) { body.innerHTML = foldBodies[g]; if (g === 'System') paintSecurity(); }
+    body.hidden = !open;
+    if (open && animate && !reduced()) body.animate([{ opacity: 0, transform: 'translateY(6px)' }, { opacity: 1, transform: 'none' }], { duration: 360, easing: EASE.fade });
+    spy();
+  };
+  // open the fold holding a section (from the nav, the ⌘K Index or the route), then go there
+  const reveal = (id, opts) => {
+    const g = SEC_GROUP[id];
+    if (FOLDED[g] && !openFolds.has(g)) setFold(g, true, { animate: false });
+    scrollToSec(id, opts);
+  };
+  on(el, 'click', '[data-goto]', (e, a) => { e.preventDefault(); reveal(a.dataset.goto); });
+  on(el, 'click', '[data-open-sec]', (e, b) => reveal(b.dataset.openSec));
+  on(el, 'click', '[data-fold-toggle]', (e, b) => {
+    const g = b.dataset.foldToggle, open = !openFolds.has(g);
+    setFold(g, open);
+    el.querySelector(`[data-fold-toggle="${g}"]`)?.focus({ preventScroll: true });
+    if (!open) el.querySelector(`[data-fold="${g}"]`).scrollIntoView({ block: 'nearest', behavior: reduced() ? 'auto' : 'smooth' });
   });
+  // The ⌘K Index (app.js gotoSettings) scrolls to and focuses the first heading named like the section;
+  // for a folded section that is the h3 in the fold head, so open the fold and continue to the section.
+  el.addEventListener('focusin', (e) => { const h = e.target.closest?.('.sg-fold-i'); if (h && e.target === h) requestAnimationFrame(() => reveal(h.dataset.for)); });
 
   // Repaint while keeping unsaved edits in other sections.
   const repaint = () => {
@@ -296,7 +389,20 @@ export async function render(view) {
     window.scrollTo({ top: y, behavior: 'instant' });
     checkOllama();
   };
-  paint();
+  paint({ rest: false });
+  {
+    const onRouted = (e) => { if (e.detail?.page?.contains(el)) { document.removeEventListener('byline:routed', onRouted); requestAnimationFrame(() => setTimeout(paintRest, 0)); } };
+    if (view.closest?.('.page.current') || view.classList?.contains('current')) setTimeout(paintRest, 0);
+    else { document.addEventListener('byline:routed', onRouted); setTimeout(() => { document.removeEventListener('byline:routed', onRouted); paintRest(); }, 2500); }
+  }
+  const target = String((ctx.params || [])[0] || "");
+  if (target) {
+    const g = Object.keys(FOLDED).find(k => k.toLowerCase() === target.toLowerCase() || FOLDED[k] === target);
+    const id = g ? null : (SEC_GROUP[target] ? target : SEC_GROUP[`sg-${target}`] ? `sg-${target}` : null);
+    const go = () => { paintRest(); if (g) { setFold(g, true, { animate: false }); el.querySelector(`[data-fold="${g}"]`)?.scrollIntoView({ block: 'start' }); } else if (id) reveal(id, { focus: false }); };
+    const onRouted = (e) => { if (e.detail?.page?.contains(el)) { document.removeEventListener('byline:routed', onRouted); requestAnimationFrame(() => setTimeout(go, 0)); } };
+    if (g || id) { document.addEventListener('byline:routed', onRouted); setTimeout(() => document.removeEventListener('byline:routed', onRouted), 4000); }
+  }
   const checkOllama = () => api.get('/ollama').then(o => {
     const box = el.querySelector('#ollama-status'); if (!box) return;
     box.innerHTML = o.reachable ? `<span class="dot ok"></span>Ollama is running · ${o.models.length} model(s): ${o.models.join(', ') || 'none; run “ollama pull qwen2.5:7b”'}`
@@ -305,7 +411,7 @@ export async function render(view) {
   }).catch(() => { const box = el.querySelector('#ollama-status'); if (box) box.innerHTML = '<span class="dot"></span>Couldn’t check for Ollama.'; });
   checkOllama();
   loadSecurity();
-  on(el, 'change', '[data-theme-opt]', (e, r) => { applyTheme(r.value); toast(`Theme: ${r.closest('label').querySelector('b').textContent}`, 'ok'); });
+  on(el, 'change', '[data-theme-opt]', (e, r) => { applyTheme(r.value); const f = el.querySelector('[data-fact="sg-display"]'); if (f) f.textContent = facts()['sg-display']; toast(`Theme: ${r.closest('label').querySelector('b').textContent}`, 'ok'); });
 
   const val = (f) => el.querySelector(`[data-f="${f}"]`);
   const builders = {
@@ -353,7 +459,22 @@ export async function render(view) {
     }
   };
 
-  on(el, 'input', '[data-p=weight]', (e, r) => { const o = r.nextElementSibling; const v = Number(r.value); o.textContent = v.toFixed(1); o.dataset.sign = v > 0 ? 'pos' : v < 0 ? 'neg' : 'zero'; });
+  on(el, 'input', '[data-p=weight]', (e, r) => {
+    const o = r.nextElementSibling, v = Number(r.value);
+    o.textContent = weightLabel(v); o.dataset.sign = r.parentElement.dataset.sign = sign(v);
+    r.style.cssText = fillVars(v); r.setAttribute('aria-valuetext', weightText(v));
+  });
+  // G2: the first edit in a section promotes its Save to primary and shows "Unsaved changes"
+  const markDirty = (key, on = true) => {
+    if (!key) return;
+    if (on) dirty.add(key); else dirty.delete(key);
+    const b = el.querySelector(`[data-save="${key}"]`), n = el.querySelector(`[data-dirty-note="${key}"]`);
+    if (b) { b.classList.toggle('btn--primary', on); b.classList.toggle('btn--secondary', !on); }
+    if (n) n.hidden = !on;
+  };
+  const onEdit = (e) => { if (e.target.closest('[data-theme-opt]')) return; const sec = e.target.closest('[data-sg-sec]'); markDirty(sec?.querySelector('[data-save]')?.dataset.save); };
+  el.addEventListener('input', onEdit);
+  el.addEventListener('change', onEdit);
   on(el, 'click', '[data-save]', async (e, btn) => {
     await act(btn, async () => {
       const body = builders[btn.dataset.save]();
@@ -361,6 +482,7 @@ export async function render(view) {
       Object.assign(s, saved);
       Object.assign(wp, saved.writing_profile);
       toast('Settings saved', 'ok');
+      markDirty(btn.dataset.save, false);
       if (['schedule', 'ai', 'budget', 'threshold', 'priorities'].includes(btn.dataset.save)) {
         refreshStatus({ force: true });
         [st, today] = await Promise.all([api.get('/status', { fresh: true }), api.get('/today', { fresh: true }).catch(() => today)]);
@@ -375,6 +497,7 @@ export async function render(view) {
     const a = btn.dataset.act;
     if (a === 'add-prio' || a === 'rm-prio') {
       s.priorities = readPriorities();
+      dirty.add('priorities');
       if (a === 'add-prio') s.priorities.push({ topic: '', weight: 1, terms: [] });
       else s.priorities.splice(Number(btn.dataset.i), 1);
       wp.samples = readSamples();
@@ -385,6 +508,7 @@ export async function render(view) {
     if (a === 'add-sample' || a === 'rm-sample') {
       wp.samples = readSamples();
       s.priorities = readPriorities();
+      dirty.add('profile');
       if (a === 'add-sample') wp.samples.push(''); else wp.samples.splice(Number(btn.dataset.i), 1);
       repaint();
       if (a === 'add-sample') [...el.querySelectorAll('[data-sample]')].pop()?.focus();

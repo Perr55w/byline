@@ -19,8 +19,10 @@
 @font-face { font-family: 'Geist Mono Fallback'; src: local('Menlo'), local('Consolas'), local('Liberation Mono'); size-adjust: 100%; ascent-override: 92%; descent-override: 22%; line-gap-override: 0%; }
 
 /* ---------- registered properties (animatable custom properties) ---------- */
-@property --rail-w { syntax: '<length>'; inherits: true; initial-value: 232px; }
-@property --grp-h { syntax: '<length>'; inherits: true; initial-value: 24px; }
+/* --rail-w / --grp-h do NOT inherit: each consumer declares and transitions its own copy (shell.css), so a
+   collapse restyles five elements, not the whole document (E, round 1). */
+@property --rail-w { syntax: '<length>'; inherits: false; initial-value: 232px; }
+@property --grp-h { syntax: '<length>'; inherits: false; initial-value: 24px; }
 @property --hl-i { syntax: '<number>'; inherits: false; initial-value: 0; }
 @property --hl-g { syntax: '<number>'; inherits: false; initial-value: 0; }
 @property --ring-p { syntax: '<number>'; inherits: true; initial-value: 0; }
@@ -38,7 +40,7 @@
   --surface-nested: rgba(255,255,255,.7);           /* sections inside glass: no glass on glass */
   --raised: #FFFFFF;
   --inset: #EEF0F3;
-  --scrim: rgba(245,246,248,.5);
+  --scrim: rgba(245,246,248,.72);
   --scrim-sheet: rgba(10,12,16,.28);
   --sk: rgba(12,16,24,.055);                        /* skeleton bars */
   --track: rgba(12,16,24,.06);                      /* neutral segmented/track fill */
@@ -70,9 +72,9 @@
   --ctl-ring: 0 0 0 3px rgba(31,94,255,.16);
 
   /* ---- hover (B §1) ---- */
-  --hover-wash: rgba(31,94,255,.035);
-  --hover-spot: rgba(31,94,255,.075);
-  --hover-line: rgba(31,94,255,.26);
+  --hover-wash: rgba(31,94,255,.05);
+  --hover-spot: rgba(31,94,255,.10);
+  --hover-line: rgba(31,94,255,.34);
   --hover-row: rgba(31,94,255,.05);
   --hover-nav: rgba(31,94,255,.05);
 
@@ -88,15 +90,16 @@
   --warn-text: #7A500F;
   --err-text: #B42323;
 
-  /* ---- quality ramp (B §2): stops by delta = score − threshold ---- */
-  --q-0: #8A8F98;  /* ≤ −30 */
-  --q-1: #808799;  /* −15  */
-  --q-2: #727E94;  /* −1   */
-  --q-3: #2E6AF6;  /* 0: clears */
-  --q-4: #1F5EFF;  /* +8   */
-  --q-5: #0A3FD6;  /* ≥ +15 */
+  /* ---- quality ramp (B §2 API; stops per the user's §0 ask for a visible gradient, round-1 ruling 1):
+          stops by delta = score − threshold. Below the bar the ramp is decorative (fill fraction + label carry it). ---- */
+  --q-0: #B4B8BF;  /* ≤ −30 */
+  --q-1: #9399A6;  /* −15  */
+  --q-2: #6B7790;  /* −1   */
+  --q-3: #5B8BF7;  /* 0: clears */
+  --q-4: #1F5EFF;  /* +10  */
+  --q-5: #0B2E9E;  /* ≥ +25 */
   --q-on5: #FFFFFF;
-  --q-glow: 0 0 0 3px rgba(10,63,214,.12), 0 0 14px rgba(31,94,255,.35);
+  --q-glow: 0 0 0 3px rgba(11,46,158,.12), 0 0 14px rgba(31,94,255,.35);
 
   /* ---- shadows ---- */
   --shadow-1: 0 1px 2px rgba(16,24,40,.04), 0 8px 24px -16px rgba(16,24,40,.12);
@@ -121,8 +124,8 @@
   --fd-amin: .06;
   --fd-amax: .18;
   --fd-hot-a: .30;
-  --fd-glow: .05;
-  --fd-pool: .07;
+  --fd-glow: .075;
+  --fd-pool: .10;
 }
 
 [data-theme=night] {
@@ -136,7 +139,7 @@
   --surface-nested: rgba(255,255,255,.035);
   --raised: #232429;
   --inset: #15161A;
-  --scrim: rgba(8,9,11,.5);
+  --scrim: rgba(8,9,11,.72);
   --scrim-sheet: rgba(0,0,0,.5);
   --sk: rgba(255,255,255,.055);
   --track: rgba(255,255,255,.06);
@@ -164,7 +167,7 @@
   --ctl-ring: 0 0 0 3px rgba(77,134,255,.28);
 
   --hover-wash: rgba(77,134,255,.05);
-  --hover-spot: rgba(77,134,255,.11);
+  --hover-spot: rgba(77,134,255,.14);
   --hover-line: rgba(127,166,255,.30);
   --hover-row: rgba(77,134,255,.07);
   --hover-nav: rgba(255,255,255,.04);
@@ -179,7 +182,7 @@
   --warn-text: #E3A542;
   --err-text: #F58A8A;
 
-  --q-0: #65696F; --q-1: #6A7183; --q-2: #717F98; --q-3: #4580F7; --q-4: #5A93FF; --q-5: #86B0FF;
+  --q-0: #55595F; --q-1: #69707F; --q-2: #7E8BA3; --q-3: #3E6CD6; --q-4: #5A93FF; --q-5: #A3C4FF;
   --q-on5: #0A0F1E;
   --q-glow: 0 0 0 3px rgba(134,176,255,.14), 0 0 16px rgba(90,147,255,.45);
 
@@ -200,11 +203,14 @@
   --fd-ink: 150,158,174;
   --fd-hot: 92,142,255;
   --fd-amin: .05;
-  --fd-amax: .15;
+  --fd-amax: .10;
   --fd-hot-a: .40;
-  --fd-glow: .07;
-  --fd-pool: .09;
+  --fd-glow: .11;
+  --fd-pool: .13;
 }
+/* theme switch (S7): the old theme's ink, held until the surface fade's midpoint (app.js applyTheme) */
+html.ink-hold-proof { --text-1: #0C0D10; --text-2: #4A4E57; --text-3: #62666F; --accent-text: #1A50E0; --ok-text: #066847; --warn-text: #7A500F; --err-text: #B42323; }
+html.ink-hold-night { --text-1: #EDEEF0; --text-2: #A6AAB2; --text-3: #8C9099; --accent-text: #8AB0FF; --ok-text: #3CCB8F; --warn-text: #E3A542; --err-text: #F58A8A; }
 ::selection { background: rgba(31,94,255,.18); }
 [data-theme=night] ::selection { background: rgba(77,134,255,.32); }
 
@@ -273,7 +279,7 @@
   --dur-morph-close: 440ms;
   --dur-count: 1400ms;
   --dur-count-2: 1100ms;
-  --dur-theme: 600ms;
+  --dur-theme: 400ms;   /* S7: contrast wins over the 600ms B asked for */
   --dur-ambient: 1600ms;
   --dur-skeleton-breath: 1800ms;
   --stagger-line: 120ms;
@@ -281,16 +287,13 @@
   --stagger-tile: 90ms;
   --stagger-item: 40ms;
   --stagger-cap: 8;
-
-  --rail-w: var(--rail-expanded);
-  --grp-h: 24px;
 }
-html.rail-collapsed { --rail-w: var(--rail-collapsed); --grp-h: 4px; }
+/* --rail-w / --grp-h live on their consumers (shell.css, "rail width coupling"), not here. */
 @media (max-width: 1359px) { :root { --gutter: 32px; } }
 @media (max-width: 1279px) { :root { --fs-display: 52px; --fs-h1: 40px; --lh-h1: 44px; } }
 @media (max-width: 760px) {
   :root {
-    --gutter: 16px; --rail-w: 0px;
+    --gutter: 16px;
     --fs-display: 40px; --lh-display: 1.05;
     --fs-h1: 34px; --lh-h1: 37px;
     --fs-h2: 22px; --lh-h2: 27px;
@@ -302,7 +305,6 @@ html.rail-collapsed { --rail-w: var(--rail-collapsed); --grp-h: 4px; }
     --fs-control: 15px;
     --glass-blur: 16px;
   }
-  html.rail-collapsed { --rail-w: 0px; }
 }
 
 /* Under reduced motion every duration is 0 (C §4) — final states immediately. */

@@ -14,23 +14,48 @@ import { html, raw, esc, icon, scoreChip, demoFlag, useStyle, toast } from '../u
 import { enterItems, reduced } from '../motion.js';
 import { qualityColor, qualityTier } from '../quality.js';
 import bg from '../bg.js';
-import { loadMap, mountMap } from '../map-engine.js';
+import { loadMap, mountMap, shortTitle } from '../map-engine.js';
 
 // ---------------------------------------------------------------- formatting (times in settings.timezone)
 const tz = () => window.__byline?.timezone || undefined;
-const fmt = (iso, o) => { const d = new Date(iso); return Number.isNaN(+d) ? '' : d.toLocaleDateString('en-GB', { ...o, timeZone: tz() }); };
+// one Intl.DateTimeFormat per (options, zone): toLocaleDateString builds a new formatter per call, which cost
+// ~14 ms of the Map's first render at phone 4× (19 nodes × twin, list, counts)
+const FMTS = new Map();
+const fmt = (iso, o) => {
+  const d = new Date(iso);
+  if (Number.isNaN(+d)) return '';
+  const key = JSON.stringify(o) + (tz() || '');
+  let f = FMTS.get(key);
+  if (!f) { try { f = new Intl.DateTimeFormat('en-GB', { ...o, timeZone: tz() }); } catch (e) { f = new Intl.DateTimeFormat('en-GB', o); } FMTS.set(key, f); }
+  return f.format(d);
+};
 const day = (iso) => fmt(iso, { day: 'numeric', month: 'short', year: 'numeric' });
 const dayShort = (iso) => fmt(iso, { day: 'numeric', month: 'short' });
 const month = (iso) => fmt(iso, { month: 'short', year: 'numeric' });
 const yearOf = (iso) => fmt(iso, { year: 'numeric' });
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 const ts = (iso) => Date.parse(iso || '') || 0;
-const VIA = { companies: 'shared companies', sources: 'shared sources', watchlist: 'shared watchlist hits', topics: 'shared topics' };
+const TYPE = { topics: 'topics', watchlist: 'watchlist hits', sources: 'sources', companies: 'companies' };
+const joinList = (a) => (a.length <= 1 ? a.join('') : `${a.slice(0, -1).join(', ')} and ${a[a.length - 1]}`);
+/** The edge types a story bridges: [[type, links]] by how many of its links carry each (round-1 M6). */
+function bridgeTypes(d, id) {
+  const c = { topics: 0, watchlist: 0, sources: 0, companies: 0 };
+  for (const e of d.edges || []) {
+    if (String(e.a) !== String(id) && String(e.b) !== String(id)) continue;
+    for (const k of Object.keys(c)) if (e.reasons?.[k]?.length) c[k]++;
+  }
+  return Object.entries(c).filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]);
+}
+const typesPhrase = (types) => joinList(types.slice(0, 3).map(([k, n]) => `${TYPE[k]} (${n})`));
 const RANGES = [['7d', '7 days', 7], ['30d', '30 days', 30], ['all', 'All', null]];
 
 // Start loading the stylesheet as soon as the module is imported (the shell idle-imports every view), so
 // arriving on the Map never restyles the whole document mid-transition. All rules are .map-* scoped.
 useStyle('/css/v4/map.css');
+// document scroll offset, kept from scroll events (window.scrollY forces a layout when read inside a render task;
+// the shell imports this module while idle, so the first read here is free)
+let SY = 0;
+try { SY = window.scrollY; addEventListener('scroll', () => { SY = window.scrollY; }, { passive: true }); } catch (e) { /* no window */ }
 
 /** Text with number highlights ([start, end) UTF-16 pairs from the server), escaped slice by slice. */
 function marked(text, marks) {
@@ -52,8 +77,12 @@ function headline(d) {
   const lo = d.range?.first_seen_min, hi = d.range?.first_seen_max;
   const span = lo && hi ? html` from ${month(lo)} to ${month(hi)}` : '';
   const br = d.bridge;
-  const bridge = br && E && br.degree
-    ? html` Biggest bridge: <b>${br.short_title}</b> connects <b>${br.degree}</b> stories through ${VIA[br.via] || 'shared features'}.`
+  const bn = br ? nodes.find(n => String(n.id) === String(br.id)) : null;
+  const types = br ? bridgeTypes(d, br.id) : [];
+  // the bridge's short title (before its first ':', ' — ' or ','), and the link types it carries, by count
+  const bt = shortTitle(bn?.title || br?.short_title || '', { max: 60, always: true });
+  const bridge = br && E && br.degree && bt
+    ? html` Biggest bridge: <b>${bt}</b> connects <b>${br.degree}</b> stories through shared ${types.length ? typesPhrase(types) : (TYPE[br.via] || 'features')}.`
     : '';
   const l = E ? html`<b>${N}</b> stories${span}, <b>${E}</b> connections.${bridge}` : html`<b>${N}</b> stories${span}, no connections yet.`;
   return { h, l };
@@ -175,12 +204,14 @@ class MapView {
       onPick: (n) => this.select(n ? n.id : null, { from: 'pointer' }),
       onCamera: () => this.heatStale(),
       onMotion: () => bg.hold(240), // the field rests while the camera moves (GPU headroom for the map)
-      cardHTML: (n) => this.cardHTML(n)
+      cardHTML: (n) => this.cardHTML(n),
+      defer: true // full draw waits for an idle callback after byline:routed (round-1 M7); a cached frame shows first
     });
     this.eng.topicFade = (c) => this.topics.size > 0 && !this.topics.has(c.topic);
     if (window.__byline) window.__byline.map = this.eng; // test/debug hook (stats, camera)
-    this.paintTwin();
     this.paintSide();
+    this.measureTop();
+    this.watchSideEnd();
     if (this.list) this.paintList();
     this.wire();
     this.applyFilter(true);
@@ -196,12 +227,51 @@ class MapView {
   entered() {
     if (this.didEnter) return;
     this.didEnter = true;
-    if (!this.list) this.eng.introduce();
+    // the full draw (regions, isobars, labels) and the screen-reader twin wait for idle time after the swap
+    const ric = window.requestIdleCallback || ((f) => setTimeout(f, 60));
+    ric(() => {
+      if (!this.alive) return;
+      const seen = this.eng.fromSnap;
+      this.eng.release();
+      if (!this.list && !seen) this.eng.introduce(); // the intro plays once; a cached frame means the map was seen
+      ric(() => { if (this.alive) this.paintTwin(); }, { timeout: 600 });
+    }, { timeout: 300 });
+    this.onResizeTop = () => { clearTimeout(this.topT); this.topT = setTimeout(() => this.measureTop(), 200); };
+    addEventListener('resize', this.onResizeTop, { passive: true });
     const items = this.side.querySelectorAll('.map-hot-list > li, .map-detail > *');
     enterItems(items, { delay: 260, stagger: 60, y: 6, duration: 520 });
     setTimeout(() => this.syncHeat(), reduced() ? 0 : 900);
     this.onScroll = () => this.heatStale();
     addEventListener('scroll', this.onScroll, { passive: true });
+  }
+
+  /** round-1 M4: the stage and side panel run to 12 px above the viewport's bottom. The tile's top is read from an
+   *  IntersectionObserver entry (no forced layout); at mount the page is still pending, untransformed. */
+  measureTop() {
+    if (typeof IntersectionObserver !== 'function') return;
+    this.topIO?.disconnect();
+    const io = this.topIO = new IntersectionObserver((entries) => {
+      io.disconnect();
+      if (!this.alive) return;
+      const e = entries[entries.length - 1];
+      const top = Math.round(e.boundingClientRect.top + SY);
+      if (top > 0 && top !== this.tileTop) { this.tileTop = top; this.page.style.setProperty('--map-top', `${top}px`); }
+    });
+    io.observe(this.stage);
+  }
+  /** A bottom fade on the side panel while more of it is below the fold (a sentinel, observed in the panel). */
+  watchSideEnd() {
+    if (typeof IntersectionObserver !== 'function') return;
+    this.sideIO?.disconnect();
+    const end = document.createElement('div'), fade = document.createElement('div');
+    end.className = 'map-side-end'; fade.className = 'map-side-fade';
+    end.setAttribute('aria-hidden', 'true'); fade.setAttribute('aria-hidden', 'true');
+    this.side.append(end, fade);
+    this.sideIO = new IntersectionObserver((entries) => {
+      const e = entries[entries.length - 1];
+      this.side.classList.toggle('has-more', !e.isIntersecting);
+    }, { root: this.side, threshold: 0 });
+    this.sideIO.observe(end);
   }
 
   update(d) {
@@ -278,13 +348,15 @@ class MapView {
 
   // -------------------------------------------------------------- side panel
   hotHTML() {
+    const hotMeta = (h) => `Leads ${h.count}${h.in_count != null ? ` · in ${h.in_count}` : ''}${h.recent != null && h.recent !== h.count ? ` · ${h.recent} this week` : ''}`;
+    const hotTitle = (h) => `Main topic of ${plural(h.count, 'story', 'stories')}${h.in_count != null ? `; tagged on ${h.in_count}` : ''}${h.recent != null ? `; ${h.recent} updated in the last 7 days` : ''}`;
     const hot = (this.data.hot_topics || []).slice(0, 3);
     if (!hot.length) return html`<p class="map-muted">No topic has a recent story yet.</p>`;
     return html`<ol class="map-hot-list">${hot.map((h, i) => html`
       <li><button type="button" class="map-hot-btn" data-hot="${h.topic}" aria-pressed="${this.topics.size === 1 && this.topics.has(h.topic) ? 'true' : 'false'}">
         <span class="map-hot-rank" aria-hidden="true">${i + 1}</span>
         <span class="map-hot-name">${h.topic}</span>
-        <span class="map-hot-meta">${plural(h.count, 'story', 'stories')}${h.recent != null ? ` · ${h.recent} updated this week` : ''}</span>
+        <span class="map-hot-meta" title="${hotTitle(h)}">${hotMeta(h)}</span>
         <span class="meter map-hot-meter" title="${`Heat ${Number(h.heat).toFixed(2)}: scores of stories updated in the last 7 days, hottest topic = 1`}"><i style="${`--v:${Math.max(0.04, Math.min(1, +h.heat || 0))}`}"></i></span>
       </button></li>`)}</ol>`;
   }
@@ -299,6 +371,7 @@ class MapView {
       </section>`;
     // the selection leads when there is one; the top-3 hot topics lead otherwise
     this.side.innerHTML = String(n ? html`<div class="map-detail" data-detail>${detail}</div>${hot}` : html`${hot}<div class="map-detail" data-detail>${detail}</div>`);
+    if (this.sideIO) this.watchSideEnd();
     if (animate) this.side.scrollTop = 0; // never on first paint: it would force layout inside the render task (E1)
     void d;
     if (animate && !reduced()) enterItems(this.side.querySelectorAll('.map-detail > *'), { stagger: 50, y: 6, duration: 440, fadeDuration: 320 });
@@ -306,14 +379,15 @@ class MapView {
   bridgeHTML() {
     const d = this.data, br = d.bridge, N = this.nodes.length;
     const bn = br ? this.eng.node(br.id) : null;
-    const hint = html`<p class="map-hint">Select a story to light up what it connects to, with its related stories in order, oldest to newest.</p>`;
+    const hint = html`<p class="map-hint">Select a story to light up its links and list its related stories, oldest first.</p>`;
     if (!N) return html`<div class="empty"><h3>No stories yet</h3><p>Run a collection or add a story URL in the Feed; each story becomes a point on this map.</p></div>`;
     if (!bn || !br.degree) return hint;
+    const types = bridgeTypes(d, br.id);
     return html`
       <section class="map-sec map-bridge" aria-labelledby="map-bridge-h">
         <p class="eyebrow" id="map-bridge-h">Biggest bridge</p>
-        <div class="map-bridge-row">${scoreChip(bn.score, this.th)}<h3 class="map-story-title">${bn.title}${demoFlag(bn.is_demo)}</h3></div>
-        <p class="map-bridge-why">Connects <b>${br.degree}</b> stories, mostly through ${VIA[br.via] || 'shared features'}.</p>
+        <div class="map-bridge-row">${scoreChip(bn.score, this.th)}<h3 class="map-story-title" title="${bn.title}">${shortTitle(bn.title, { max: 60, always: true })}${demoFlag(bn.is_demo)}</h3></div>
+        <p class="map-bridge-why">Connects <b>${br.degree}</b> stories through shared ${types.length ? typesPhrase(types) : (TYPE[br.via] || 'features')}.</p>
         <button type="button" class="btn btn--secondary btn--sm" data-select="${bn.id}">Select on map ${icon('arrow-right')}</button>
       </section>
       ${hint}`;
@@ -427,8 +501,16 @@ class MapView {
     this.stage.classList.toggle('is-list', on);
     const box = this.$('[data-list]');
     box.hidden = !on;
-    if (on) { this.paintList(); if (!reduced()) box.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 240, easing: 'ease-out' }); }
-    else { this.eng.requestDraw(); if (!reduced()) this.$('[data-host]').animate([{ opacity: 0 }, { opacity: 1 }], { duration: 240, easing: 'ease-out' }); }
+    // will-change only for the 240 ms swap (round-1 M7)
+    const fade = (el) => {
+      if (reduced()) return;
+      el.style.willChange = 'opacity';
+      const a = el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 240, easing: 'ease-out' });
+      const done = () => { el.style.willChange = ''; };
+      a.finished.then(done, done);
+    };
+    if (on) { this.paintList(); fade(box); }
+    else { this.eng.release(); this.eng.requestDraw(); fade(this.$('[data-host]')); }
     this.say(on ? 'List view. Stories newest first.' : 'Map view.');
   }
 
@@ -580,6 +662,9 @@ class MapView {
     this.alive = false;
     document.removeEventListener('byline:routed', this.onRouted);
     if (this.onScroll) removeEventListener('scroll', this.onScroll);
+    if (this.onResizeTop) removeEventListener('resize', this.onResizeTop);
+    clearTimeout(this.topT);
+    this.topIO?.disconnect(); this.sideIO?.disconnect();
     if (this.staleGo) document.removeEventListener('pointermove', this.staleGo);
     clearTimeout(this.heatT);
     this.eng.destroy();

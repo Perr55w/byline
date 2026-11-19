@@ -75,7 +75,7 @@ export async function e2(ctx) {
         const samples = await P.page.evaluate(async ({ rail, panel, btn }) => {
           const R = document.querySelector(rail), D = document.querySelector(panel), B = document.querySelector(btn);
           if (!R || !D || !B) return { error: `missing ${!R ? 'rail ' : ''}${!D ? 'panel ' : ''}${!B ? 'collapse button' : ''}` };
-          const read = () => { const a = R.getBoundingClientRect(), b = D.getBoundingClientRect(); return { railRight: a.right, railW: a.width, left: b.left, gap: b.left - a.right }; };
+          const read = (i, t) => { const a = R.getBoundingClientRect(), b = D.getBoundingClientRect(); return { t: t ?? performance.now(), railRight: a.right, railW: a.width, left: b.left, gap: b.left - a.right }; };
           const out = [read()];
           B.click();
           out.push(...await window.__e2e.everyFrame(() => read(), 900));
@@ -92,7 +92,23 @@ export async function e2(ctx) {
           check(g, 'rail actually collapsed', maxW - minW, '>=', 100, { unit: 'px', scope: label, detail: `rail width ${Math.round(before)}: min ${Math.round(minW)}, max ${Math.round(maxW)} over ${s.length} frames` });
           check(g, 'dossier.left − rail.right drift', drift, '<=', 1, { unit: 'px', scope: label, detail: `gap at rest ${g0.toFixed(1)} px` });
           check(g, 'min(dossier.left − rail.right) (C)', minGap, '>=', 0, { unit: 'px', scope: label });
+          // round 1 S18: the collapse itself must not drop frames (it used to restyle the whole document)
+          const iv = s.slice(1).map((x, i) => x.t - s[i].t).filter(v => v > 0 && v < 1000).sort((a, b) => a - b);
+          const p95 = iv.length ? iv[Math.floor(iv.length * 0.95)] : null;
+          check(g, 'rail collapse frame p95 (dossier open, 4×)', p95 === null ? null : +p95.toFixed(1), '<=', 50, { unit: 'ms', scope: label, detail: `${iv.length} intervals, max ${iv.length ? iv[iv.length - 1].toFixed(1) : '—'} ms` });
         }
+      }
+      // round 1 S18 / S5: the close at 1× (frost layer dropped synchronously; body fade + clip in one frame)
+      await setThrottle(P.cdp, 1);
+      await sleep(400);
+      if (await P.page.locator(SEL.dossierPanel).count()) {
+        const fr = P.page.evaluate(() => window.__e2e.everyFrame((i, t) => t, 700));
+        await P.page.keyboard.press('Escape');
+        const ts = await fr;
+        const iv = ts.slice(1).map((t, i) => t - ts[i]).sort((a, b) => a - b);
+        const p95 = iv.length ? iv[Math.floor(iv.length * 0.95)] : null;
+        check(g, 'close: frame p95 (1×)', p95 === null ? null : +p95.toFixed(1), '<=', 20, { unit: 'ms', scope: label, detail: `${iv.length} intervals, max ${iv.length ? iv[iv.length - 1].toFixed(1) : '—'} ms` });
+        await sleep(500);
       }
       await setThrottle(P.cdp, 1);
     } finally { await P.close(); }
@@ -102,7 +118,7 @@ export async function e2(ctx) {
 
 // ------------------------------------------------------------------ gate 3
 export async function e3(ctx) {
-  const g = newGate('E3', 'Cumulative layout shift per route', 'perf', 'E §5.3: CLS after 4 s on each route (skeleton → content included) < 0.02, desktop');
+  const g = newGate('E3', 'Cumulative layout shift per route', 'perf', 'E §5.3: CLS after 4 s on each route (skeleton → content included) < 0.01 (tightened from 0.02 in round 1, S16), desktop');
   const P = await openPage(ctx.browser, { profile: DESKTOP });
   ctx.track(P);
   try {
@@ -112,7 +128,7 @@ export async function e3(ctx) {
       const shifts = (await shiftsSince(P.page, 0)).filter(s => !s.input);
       const cls = shifts.reduce((a, s) => a + s.value, 0);
       const worst = shifts.sort((a, b) => b.value - a.value)[0];
-      check(g, 'CLS', +cls.toFixed(4), '<', 0.02, { scope: key, detail: worst ? `largest ${worst.value.toFixed(4)} at ${Math.round(worst.start)} ms: ${worst.src.join(', ')}` : '' });
+      check(g, 'CLS', +cls.toFixed(4), '<', 0.01, { scope: key, detail: worst ? `largest ${worst.value.toFixed(4)} at ${Math.round(worst.start)} ms: ${worst.src.join(', ')}` : '' });
     }
   } finally { await P.close(); }
   return g;
@@ -267,6 +283,15 @@ export async function e8(ctx) {
     check(g, 'backdrop-filter surfaces', list.length, '<=', 2, { scope: 'today', detail: list.join(' | ') });
     const wc = await P.page.evaluate(() => [...document.querySelectorAll('*')].filter(el => { const v = getComputedStyle(el).willChange; return v && v !== 'auto'; }).map(el => `${window.__e2e.desc(el).slice(0, 50)} [${getComputedStyle(el).willChange}]`));
     check(g, 'permanent will-change elements (at rest)', wc.length, '<=', 4, { scope: 'today', detail: wc.slice(0, 8).join(' | ') });
+    // round 1 S18: the same limit on every route, at rest (2.5 s after the swap)
+    for (const key of ctx.routes(ALL_ROUTES).filter(k => k !== 'today')) {
+      await setHash(P.page, `#/${key}`);
+      await sleep(2500);
+      const w = await P.page.evaluate(() => [...document.querySelectorAll('*')].filter(el => { const v = getComputedStyle(el).willChange; return v && v !== 'auto'; }).map(el => `${window.__e2e.desc(el).slice(0, 40)} [${getComputedStyle(el).willChange}]`));
+      check(g, 'permanent will-change elements (at rest)', w.length, '<=', 4, { scope: key, detail: w.slice(0, 6).join(' | ') });
+    }
+    await setHash(P.page, '#/today');
+    await sleep(1500);
     const animsTab = await sampleAnimations(P.page, 1400, () => setHash(P.page, '#/feed'));
     await sleep(1600);
     list = await P.page.evaluate(COUNT_BACKDROP);
@@ -302,6 +327,19 @@ export async function e9(ctx) {
       const b = await P.page.evaluate((s) => { const c = document.querySelector(s); return c ? { w: c.width, h: c.height, iw: innerWidth, ih: innerHeight, dpr: devicePixelRatio, renderer: window.__byline?.bg?.stats?.().renderer } : null; }, SEL.bgCanvas);
       check(g, 'backing pixels', b ? b.w * b.h : null, '<=', max, { scope: label, detail: b ? `${b.w}×${b.h} for ${b.iw}×${b.ih} CSS px, ${b.renderer}` : '#bg missing' });
       if (profile === PHONE) check(g, 'bg.width / innerWidth', b ? +(b.w / b.iw).toFixed(3) : null, '<=', 1.5, { scope: label });
+      // round 1 S13a: no seam: the element spans the viewport and the backing store is round(innerWidth × scale),
+      // on every route and in both themes
+      const bad = [];
+      for (const theme of ['proof', 'night']) {
+        await P.page.evaluate((t) => window.__byline?.setTheme?.(t), theme);
+        for (const key of ctx.routes(ALL_ROUTES)) {
+          await setHash(P.page, `#/${key}`);
+          await sleep(700);
+          const m = await P.page.evaluate((sel) => { const c = document.querySelector(sel); const st = window.__byline?.bg?.stats?.(); return c && st ? { w: c.getBoundingClientRect().width, iw: innerWidth, bw: st.backing.w, want: Math.round(innerWidth * st.scale) } : null; }, SEL.bgCanvas);
+          if (!m || m.w !== m.iw || m.bw !== m.want) bad.push(`${theme}/${key}: ${m ? `${m.w} vs ${m.iw}, backing ${m.bw} vs ${m.want}` : 'missing'}`);
+        }
+      }
+      check(g, '#bg width = innerWidth and backing = round(innerWidth × scale)', bad.length, '==', 0, { scope: label, detail: bad.slice(0, 4).join(' | ') || `${ctx.routes(ALL_ROUTES).length} routes × 2 themes` });
     } finally { await P.close(); }
   }
   return g;
@@ -440,4 +478,76 @@ export async function e11(ctx) {
   return g;
 }
 
-export const PERF_GATES = { E1: e1, E2: e2, E3: e3, E4: e4, E5: e5, E6: e6, E7: e7, E8: e8, E9: e9, E10: e10, E11: e11 };
+// ------------------------------------------------------------------ gate 12 (round 1 S1/S18): rail collapse frames
+export async function e12(ctx) {
+  const g = newGate('E12', 'Rail collapse frame pacing', 'perf', 'Round 1 S1: collapse + expand on Today and Feed: frame p95 ≤ 33 ms at 1×, ≤ 50 ms at 4×; style recalc per collapse ≤ 30 ms at 1×');
+  for (const throttle of [1, 4]) {
+    const P = await openPage(ctx.browser, { profile: DESKTOP, throttle });
+    ctx.track(P);
+    try {
+      for (const key of ['today', 'feed']) {
+        await gotoRoute(P.page, ctx.base, key, { settle: 2500 });
+        const m0 = await metrics(P.cdp);
+        const ts = await P.page.evaluate(async (btn) => {
+          const B = document.querySelector(btn); if (!B) return null;
+          B.click();
+          const a = await window.__e2e.everyFrame((i, t) => t, 800);
+          B.click();
+          const b = await window.__e2e.everyFrame((i, t) => t, 800);
+          return [a, b];
+        }, SEL.railCollapseBtn);
+        const m1 = await metrics(P.cdp);
+        if (!ts) { check(g, 'collapse button', false, 'true', true, { scope: key }); continue; }
+        const iv = ts.flatMap(list => list.slice(1).map((t, i) => t - list[i])).sort((a, b) => a - b);
+        const p95 = iv.length ? iv[Math.floor(iv.length * 0.95)] : null;
+        check(g, 'frame p95 (collapse + expand)', p95 === null ? null : +p95.toFixed(1), '<=', throttle === 1 ? 33 : 50, { unit: 'ms', scope: `${key} ${throttle}×`, detail: `${iv.length} intervals, max ${iv.length ? iv[iv.length - 1].toFixed(1) : '—'} ms` });
+        if (throttle === 1) {
+          const d = delta(m0, m1);
+          check(g, 'style recalc per collapse', +(d.RecalcStyleDuration / 2).toFixed(1), '<=', 30, { unit: 'ms', scope: `${key} 1×`, detail: `${d.RecalcStyleCount} recalcs over collapse + expand, ${d.RecalcStyleDuration.toFixed(1)} ms` });
+        }
+      }
+    } finally { await P.close(); }
+  }
+  return g;
+}
+
+// ------------------------------------------------------------------ gate 13 (round 1 S18): dead interior in tiles
+/** Per visible .tile: unused height between its last in-flow child and its inner bottom edge. */
+export const DEAD_INTERIOR = () => {
+  const out = [];
+  for (const t of document.querySelectorAll('#view .page.current .tile')) {
+    const r = t.getBoundingClientRect();
+    if (r.width < 40 || r.height < 40) continue;
+    const cs = getComputedStyle(t);
+    const inner = r.bottom - parseFloat(cs.paddingBottom) - parseFloat(cs.borderBottomWidth);
+    let last = r.top + parseFloat(cs.paddingTop) + parseFloat(cs.borderTopWidth);
+    for (const c of t.children) {
+      const s = getComputedStyle(c);
+      if (s.position === 'absolute' || s.position === 'fixed' || s.display === 'none') continue;
+      const cr = c.getBoundingClientRect();
+      if (cr.height === 0 && cr.width === 0) continue;
+      last = Math.max(last, cr.bottom + (parseFloat(s.marginBottom) > 0 ? 0 : 0));
+    }
+    out.push({ dead: Math.round(inner - last), tile: window.__e2e.desc(t).slice(0, 60) });
+  }
+  return out.sort((a, b) => b.dead - a.dead);
+};
+const DEAD_ROUTES = ['today', 'performance', 'career', 'employers', 'people', 'campaigns', 'calendar', 'studio'];
+export async function e13(ctx) {
+  const g = newGate('E13', 'Dead interior in tiles', 'perf', 'Round 1 S18 (deadInterior): per .tile, unused height under the last child ≤ 32 px at 1440×900 and 1280×800');
+  for (const [label, profile] of [['1440×900', DESKTOP], ['1280×800', DESKTOP_1280]]) {
+    const P = await openPage(ctx.browser, { profile });
+    ctx.track(P);
+    try {
+      for (const key of ctx.routes(DEAD_ROUTES)) {
+        await gotoRoute(P.page, ctx.base, key, { settle: 2200 });
+        const list = await P.page.evaluate(DEAD_INTERIOR);
+        const bad = list.filter(x => x.dead > 32);
+        check(g, 'tiles with > 32 px dead interior', bad.length, '==', 0, { scope: `${key} ${label}`, detail: `${list.length} tiles; ` + bad.slice(0, 3).map(x => `${x.dead}px ${x.tile}`).join(' | ') });
+      }
+    } finally { await P.close(); }
+  }
+  return g;
+}
+
+export const PERF_GATES = { E1: e1, E2: e2, E3: e3, E4: e4, E5: e5, E6: e6, E7: e7, E8: e8, E9: e9, E10: e10, E11: e11, E12: e12, E13: e13 };

@@ -24,7 +24,8 @@ const fmtWhen = (iso, tz) => iso ? new Date(iso).toLocaleString('en-GB', { day: 
 const fmtDay = (iso, tz) => iso ? new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', ...(tz ? { timeZone: tz } : {}) }) : '';
 
 /** Visible table columns at this width (a colspan wider than the visible columns would add a phantom column). */
-const colCount = () => matchMedia('(max-width: 760px)').matches ? 4 : matchMedia('(max-width: 1360px)').matches ? 10 : 11;
+let d7Shown = true; // R3: the 7d column is left out while it would equal Total on every row
+const colCount = () => matchMedia('(max-width: 760px)').matches ? 4 : (matchMedia('(max-width: 1360px)').matches ? 10 : 11) - (d7Shown ? 0 : 1);
 let colWatch = false;
 function watchCols() {
   if (colWatch) return; colWatch = true;
@@ -40,6 +41,26 @@ function healthMark(h) {
     paused: '<rect x="2.4" y="2" width="2.4" height="8" rx=".6" class="f"/><rect x="7.2" y="2" width="2.4" height="8" rx=".6" class="f"/>'
   }[h] || '<circle cx="6" cy="6" r="4" class="s"/>';
   return raw(`<svg class="so-hm" data-h="${esc(h)}" viewBox="0 0 12 12" aria-hidden="true" focusable="false">${shape}</svg>`);
+}
+
+/** R1: a 7 px health dot (ok / stale / error colour; a hollow neutral ring for paused). Always next to a text label. */
+const healthDot = (h) => raw(`<i class="so-dot" data-h="${esc(h)}" aria-hidden="true"></i>`);
+/** R2: demo rows carry a Demo tag, so the stored "DEMO · " name prefix is dropped from the display (data unchanged). */
+const displayName = (s) => (s.is_demo ? String(s.name).replace(/^\s*demo\s*[·:\-–—]\s*/i, '') : s.name);
+
+/**
+ * Run `fn` once the page holding `el` has been swapped in (byline:routed) and the main thread is idle, so
+ * below-the-fold markup stays out of the tab-change frames (E1). Re-renders of a page already on screen
+ * run it on the next idle period.
+ */
+function afterEnter(view, el, fn) {
+  let done = false;
+  const run = () => { if (done) return; done = true; document.removeEventListener('byline:routed', onRouted); if (el.isConnected) fn(); };
+  const idle = () => (window.requestIdleCallback ? requestIdleCallback(run, { timeout: 500 }) : setTimeout(run, 60));
+  const onRouted = (e) => { if (e.detail?.page?.contains(el)) { document.removeEventListener('byline:routed', onRouted); requestAnimationFrame(() => setTimeout(idle, 0)); } };
+  if (view.closest?.('.page.current') || view.classList?.contains('current')) { idle(); return; }
+  document.addEventListener('byline:routed', onRouted);
+  setTimeout(run, 2500);
 }
 
 // ------------------------------------------------------------------ headline (F §2 Sources, verbatim templates + fallbacks)
@@ -66,14 +87,16 @@ function summaryHtml(S) {
   const bar = (counts, label) => {
     return html`<div class="so-hbar-row"><span class="so-hbar-label">${label}</span>
       <div class="so-hbar" role="img" aria-label="${label}: ${Object.entries(counts).filter(([, v]) => v).map(([k, v]) => `${v} ${HEALTH[k].toLowerCase()}`).join(', ')}">${Object.entries(counts).filter(([, v]) => v).map(([k, v]) => html`<i data-h="${k}" style="flex:${v}"></i>`)}</div>
-      <span class="so-hbar-legend">${Object.entries(counts).filter(([, v]) => v).map(([k, v]) => html`<span>${healthMark(k)}${v} ${HEALTH[k].toLowerCase()}</span>`)}</span></div>`;
+      <span class="so-hbar-legend">${Object.entries(counts).filter(([, v]) => v).map(([k, v]) => html`<span>${healthDot(k)}${v} ${HEALTH[k].toLowerCase()}</span>`)}</span></div>`;
   };
   const collecting = n - (m.paused || 0);
+  // R3: one state cell instead of four big zeros (sources · collecting · healthy · stale · failing)
+  const state = m.all_paused
+    ? { big: html`All <b>${n}</b> paused`, sub: html`<b>0</b> collecting${S.status?.schedule?.enabled === false ? ' · schedule off' : ''}`, tone: 'warn' }
+    : { big: html`<b>${m.ok}</b> of ${n} healthy`, sub: html`<b>${collecting}</b> collecting${m.stale ? html` · <b>${m.stale}</b> stale` : ''}${m.error ? html` · <b>${m.error}</b> failing` : ''}${m.paused ? html` · <b>${m.paused}</b> paused` : ''}`, tone: m.error ? 'err' : m.stale ? 'warn' : 'ok' };
   return html`<section class="so-summary tile tile--static" aria-label="Source health summary">
     <div class="so-stats">
-      ${stat(n, 'sources')}
-      ${stat(collecting, 'collecting', collecting ? '' : 'warn')}
-      ${stat(m.ok, 'healthy')}${stat(m.stale, 'stale')}${stat(m.error, 'failing', m.error ? 'err' : '')}
+      <div class="so-state" data-tone="${state.tone}"><span class="so-state-v">${healthDot(m.all_paused ? 'paused' : state.tone === 'err' ? 'error' : state.tone === 'warn' ? 'stale' : 'ok')}<span>${state.big}</span></span><span class="so-stat-l">${state.sub}</span></div>
       ${stat(m.articles_7d, 'articles · 7 days')}${stat(m.demo, 'demo')}
     </div>
     <div class="so-bars">
@@ -99,33 +122,36 @@ function sortTh(k, label, cls = '') {
   const on = ui.sort === k;
   return html`<th class="${cls}" aria-sort="${on ? (ui.dir > 0 ? 'ascending' : 'descending') : 'none'}"><button type="button" class="so-sort so-btn" data-so-sort="${k}">${label}<span class="so-sort-i" aria-hidden="true">${on ? (ui.dir > 0 ? '↑' : '↓') : ''}</span></button></th>`;
 }
-function sourceRow(s, S) {
+function sourceRow(s, S, { cv = false, d7 = true } = {}) {
   const open = ui.open.has(s.id);
   const res = ui.sync[s.id];
   const polled = !s.is_demo && s.kind !== 'manual';
-  const sub = s.health === 'paused' && s.health_unpaused === 'error' ? 'was failing' : s.health === 'paused' && s.is_demo ? 'demo' : s.health === 'stale' && !s.last_sync_at ? 'never synced' : '';
-  return html`<tr class="so-row${open ? ' is-open' : ''}" data-row data-id="${s.id}">
-    <td class="so-c-x"><button type="button" class="btn btn--ghost btn--icon btn--sm so-x" data-so-expand="${s.id}" aria-expanded="${open}" aria-controls="so-d-${s.id}" aria-label="${open ? 'Hide' : 'Show'} details for ${s.name}">${icon('chevron-right')}</button></td>
-    <td class="so-c-h"><span class="so-health" data-h="${s.health}">${healthMark(s.health)}<span>${HEALTH[s.health] || s.health}</span></span>${sub ? html`<span class="so-sub">${sub}</span>` : ''}</td>
-    <td class="so-c-name"><span class="so-name">${s.name}${s.is_demo ? html` <span class="tag tag--demo">Demo</span>` : ''}</span>
-      <span class="so-url">${s.kind === 'x' ? `query: ${s.url}` : s.url.replace(/^https?:\/\//, '')}</span>
-      <span class="so-phone-meta">${s.grp || 'General'} · ${EV_SHORT[s.evidence_kind] || s.evidence_kind} · ${s.last_sync_at ? `synced ${timeAgo(s.last_sync_at)}` : 'never synced'} · ${s.articles_7d} this week · ${s.article_count} total</span>
+  const wasErr = s.health === 'paused' && s.health_unpaused === 'error';
+  const sub = wasErr ? html`<span class="so-sub so-was" title="${s.last_error ? `Last error: ${s.last_error}` : 'Failing when last collected'}">was failing</span>`
+    : s.health === 'stale' && !s.last_sync_at ? html`<span class="so-sub">never synced</span>` : '';
+  const name = displayName(s);
+  return html`<tr class="so-row${open ? ' is-open' : ''}${cv && !open ? ' cv-row' : ''}" data-row data-id="${s.id}">
+    <td class="so-c-x"><button type="button" class="btn btn--ghost btn--icon btn--sm so-x" data-so-expand="${s.id}" aria-expanded="${open}" aria-controls="so-d-${s.id}" aria-label="${open ? 'Hide' : 'Show'} details for ${name}">${icon('chevron-right')}</button></td>
+    <td class="so-c-h"><span class="so-health" data-h="${s.health}">${healthDot(s.health)}<span>${HEALTH[s.health] || s.health}</span></span>${sub}</td>
+    <td class="so-c-name"><span class="so-name" title="${name}">${name}</span>
+      <span class="so-url-line">${s.is_demo ? html`<span class="tag tag--demo">Demo</span>` : ''}<span class="so-url">${s.kind === 'x' ? `query: ${s.url}` : s.url.replace(/^https?:\/\//, '')}</span></span>
+      <span class="so-phone-meta">${wasErr ? html`<span class="so-was">was failing</span> · ` : ''}${s.grp || 'General'} · ${EV_SHORT[s.evidence_kind] || s.evidence_kind} · ${s.is_demo ? 'not polled' : s.last_sync_at ? `synced ${timeAgo(s.last_sync_at)}` : 'never synced'} · ${s.article_count} articles</span>
       ${res ? html`<span class="so-res ${res.ok ? 'ok' : 'err'}">${res.msg}</span>` : ''}</td>
     <td class="so-c-grp">${s.grp || 'General'}</td>
     <td class="so-c-ev"><span class="so-ev">${EV_SHORT[s.evidence_kind] || s.evidence_kind}</span><span class="so-sub">${s.kind}</span></td>
-    <td class="so-c-on">${s.kind === 'manual' ? html`<span class="so-dash" title="Manual submissions are always on">—</span>` : html`<input type="checkbox" class="switch" data-so-on="${s.id}" ${s.paused ? '' : raw('checked')} aria-label="Collect from ${s.name}">`}</td>
-    <td class="so-c-sync">${s.is_demo ? html`<span class="so-sub">sample data</span>` : s.last_sync_at ? html`<time datetime="${s.last_sync_at}" title="${fmtWhen(s.last_sync_at, S.tz)}">${timeAgo(s.last_sync_at)}</time>` : html`<span class="so-sub">never</span>`}</td>
-    <td class="num">${s.articles_7d}</td>
+    <td class="so-c-on">${s.kind === 'manual' ? html`<span class="so-dash" title="Manual submissions are always on">—</span>` : html`<input type="checkbox" class="switch" data-so-on="${s.id}" ${s.paused ? '' : raw('checked')} aria-label="Collect from ${name}">`}</td>
+    <td class="so-c-sync">${s.is_demo ? html`<span class="so-sub">not polled</span>` : s.last_sync_at ? html`<time datetime="${s.last_sync_at}" title="${fmtWhen(s.last_sync_at, S.tz)}">${timeAgo(s.last_sync_at)}</time>` : html`<span class="so-sub">never</span>`}</td>
+    ${d7 ? html`<td class="num">${s.articles_7d}</td>` : ''}
     <td class="num">${s.article_count}</td>
     <td class="num">${s.stories_count}</td>
-    <td class="so-c-act">${polled ? html`<button type="button" class="btn btn--secondary btn--sm" data-so-act="sync" data-id="${s.id}"${s.connector_status?.ready === false ? html` title="${s.connector_status.reason}"` : ''}>Sync</button>` : ''}</td>
+    <td class="so-c-act">${polled ? html`<button type="button" class="btn btn--secondary btn--sm" data-so-act="sync" data-id="${s.id}"${s.connector_status?.ready === false ? html` title="${s.connector_status.reason}"` : ''}>Sync</button>` : s.is_demo ? html`<span class="so-sub" title="Demo sources hold sample data and are never polled">demo</span>` : ''}</td>
   </tr>
   ${open ? html`<tr class="so-detail" id="so-d-${s.id}"><td colspan="${colCount()}">${detailHtml(s, S)}</td></tr>` : ''}`;
 }
 function detailHtml(s, S) {
   const arts = S.articles[s.id];
   return html`<div class="so-detail-grid">
-    <section class="so-d-arts" aria-label="Recent articles from ${s.name}">
+    <section class="so-d-arts" aria-label="Recent articles from ${displayName(s)}">
       <h3 class="section-label">Recent articles</h3>
       ${arts === undefined ? html`<p class="so-sub" data-so-loading="${s.id}">Loading the latest five…</p>`
         : arts?.error ? html`<p class="so-res err">${arts.error}</p>`
@@ -139,7 +165,7 @@ function detailHtml(s, S) {
     <section class="so-d-status" aria-label="Status">
       <h3 class="section-label">Status</h3>
       <dl class="kv so-kv">
-        <dt>Health</dt><dd><span class="so-health" data-h="${s.health}">${healthMark(s.health)}${HEALTH[s.health]}</span>${s.health === 'paused' && s.health_unpaused ? html` <span class="so-sub">· ${HEALTH[s.health_unpaused].toLowerCase()} when on</span>` : ''}</dd>
+        <dt>Health</dt><dd><span class="so-health" data-h="${s.health}">${healthDot(s.health)}${HEALTH[s.health]}</span>${s.health === 'paused' && s.health_unpaused ? html` <span class="so-sub">· ${HEALTH[s.health_unpaused].toLowerCase()} when on</span>` : ''}</dd>
         <dt>Connector</dt><dd>${s.connector || s.kind}${s.connector_status?.ready === false ? html`<span class="so-res err">${s.connector_status.reason}</span>` : ''}</dd>
         <dt>Last sync</dt><dd>${s.last_sync_at ? html`${fmtWhen(s.last_sync_at, S.tz)} · ${plural(s.last_count ?? 0, 'new item')}` : 'Never'}</dd>
         <dt>Newest article</dt><dd>${s.last_article_at ? fmtWhen(s.last_article_at, S.tz) : '—'}</dd>
@@ -147,7 +173,7 @@ function detailHtml(s, S) {
         <dt>Last error</dt><dd>${s.last_error ? html`<span class="so-err-text">${s.last_error}</span>` : html`<span class="so-sub">None</span>`}</dd>
       </dl>
     </section>
-    <form class="so-d-edit" data-so-form="edit" data-id="${s.id}" aria-label="Edit ${s.name}">
+    <form class="so-d-edit" data-so-form="edit" data-id="${s.id}" aria-label="Edit ${displayName(s)}">
       <h3 class="section-label">Edit source</h3>
       <label class="field">Name<input class="input" name="name" required value="${s.name}"></label>
       <label class="field">${s.kind === 'x' ? 'X search query' : 'URL'}<input class="input" name="url" required value="${s.url}"${s.kind === 'manual' ? raw(' readonly') : ''}></label>
@@ -160,12 +186,15 @@ function detailHtml(s, S) {
     </form>
   </div>`;
 }
-function sourcesTab(S) {
+const FIRST_ROWS = 12; // table rows in the tab-change frame; the rest are appended after the swap (E1)
+function sourcesTab(S, { limit = Infinity } = {}) {
   const groups = [...new Set(S.sources.map(s => s.grp || 'General'))];
   const gCount = (g) => S.sources.filter(s => (s.grp || 'General') === g).length;
   const hCount = (h) => S.sources.filter(s => s.health === h).length;
   const wasErr = S.sources.filter(s => s.health === 'paused' && s.health_unpaused === 'error').length;
   const list = visibleSources(S);
+  // R3: the 7d column repeats Total while every source's articles are all from this week
+  const d7 = d7Shown = S.sources.some(s => (s.articles_7d || 0) !== (s.article_count || 0));
   const healthChip = (k, label, n) => html`<button type="button" class="chip chip--filter" data-so-health="${k}" aria-pressed="${ui.health === k}">${label}<span class="so-cn">${n}</span></button>`;
   return html`
   <div class="so-bar">
@@ -181,14 +210,14 @@ function sourcesTab(S) {
   </div>
   <div class="tile tile--flush tile--static so-table-tile">
     ${S.sources.length ? html`<table class="table so-table">
-      <caption class="sr-only">Sources: ${list.length} shown of ${S.sources.length}. Sortable columns.</caption>
-      <thead><tr><th class="so-c-x"><span class="sr-only">Details</span></th><th class="so-c-h">Health</th>${sortTh('name', 'Source', 'so-c-name')}<th class="so-c-grp">Group</th><th class="so-c-ev">Evidence</th><th class="so-c-on">On</th>${sortTh('sync', 'Last sync', 'so-c-sync')}${sortTh('d7', '7d', 'num')}${sortTh('total', 'Total', 'num')}${sortTh('stories', 'Stories', 'num')}<th class="so-c-act"><span class="sr-only">Sync</span></th></tr></thead>
-      <tbody>${list.map(s => sourceRow(s, S))}</tbody>
+      <caption class="sr-only">Sources: ${list.length} shown of ${S.sources.length}. Sortable columns.${d7 ? '' : ' Every collected article is from the past 7 days, so one Articles column stands for both.'}</caption>
+      <thead><tr><th class="so-c-x"><span class="sr-only">Details</span></th><th class="so-c-h">Health</th>${sortTh('name', 'Source', 'so-c-name')}<th class="so-c-grp">Group</th><th class="so-c-ev">Evidence</th><th class="so-c-on">On</th>${sortTh('sync', 'Last sync', 'so-c-sync')}${d7 ? sortTh('d7', '7d', 'num') : ''}${sortTh('total', d7 ? 'Total' : 'Articles', 'num so-c-tot')}${sortTh('stories', 'Stories', 'num')}<th class="so-c-act"><span class="sr-only">Sync</span></th></tr></thead>
+      <tbody data-so-rows>${list.slice(0, limit).map(s => sourceRow(s, S, { d7 }))}</tbody>
     </table>
     ${!list.length ? html`<div class="so-none"><p>No source matches these filters.</p><button type="button" class="btn btn--secondary btn--sm" data-so-act="clear">Clear filters</button></div>` : ''}`
     : html`<div class="empty"><h3>No sources yet.</h3><p>Add a feed with “Add source”, or load the demo sources from Settings.</p></div>`}
   </div>
-  <p class="so-foot">Retrieved content is treated as untrusted data: it never changes instructions or triggers actions. Showing ${list.length} of ${plural(S.sources.length, 'source')}.</p>
+  <p class="so-foot">Retrieved content is treated as untrusted data: it never changes instructions or triggers actions. Showing ${list.length} of ${plural(S.sources.length, 'source')}.${d7 ? '' : ' Every collected article is from the past 7 days, so Articles covers both the week and the total.'}</p>
   <datalist id="so-grp-list">${groups.map(g => html`<option value="${g}">`)}</datalist>
   <datalist id="so-emp-list">${S.employers.map(e => html`<option value="${e.name}">`)}</datalist>`;
 }
@@ -262,10 +291,11 @@ function paint(el, S) {
   </header>
   ${summaryHtml(S)}
   <div class="so-tabs" role="tablist" aria-label="Sources sections">${TABS.map(([k, l]) => html`<button type="button" role="tab" class="so-tab so-btn" id="so-tab-${k}" data-so-tab="${k}" aria-selected="${ui.tab === k}" aria-controls="so-panel" tabindex="${ui.tab === k ? 0 : -1}">${l}<span class="so-cn">${counts[k]}</span></button>`)}</div>
-  <div class="so-panel" id="so-panel" role="tabpanel" aria-labelledby="so-tab-${ui.tab}" data-so-panel>${panelHtml(S)}</div>`);
+  <div class="so-panel" id="so-panel" role="tabpanel" aria-labelledby="so-tab-${ui.tab}" data-so-panel>${panelHtml(S, { limit: FIRST_ROWS })}</div>`);
 }
-const panelHtml = (S) => ui.tab === 'watchlists' ? watchTab(S) : ui.tab === 'connectors' ? connectorsTab(S) : sourcesTab(S);
+const panelHtml = (S, opts) => ui.tab === 'watchlists' ? watchTab(S) : ui.tab === 'connectors' ? connectorsTab(S) : sourcesTab(S, opts);
 function repaintPanel(el, S, { animate = false, focus = null } = {}) {
+  S.rest = true;
   const p = el.querySelector('[data-so-panel]');
   p.innerHTML = String(panelHtml(S));
   p.setAttribute('aria-labelledby', `so-tab-${ui.tab}`);
@@ -323,6 +353,17 @@ export async function render(view, ctx = {}) {
   loadOpenArticles(el, S);
   wire(el, S);
   watchCols();
+  // rows past the first screen, appended once the tab change is over
+  afterEnter(view, el, () => {
+    if (S.rest || ui.tab !== 'sources') return;
+    S.rest = true;
+    const body = el.querySelector('[data-so-rows]');
+    const rest = visibleSources(S).slice(FIRST_ROWS);
+    if (!body || !rest.length) return;
+    const d7 = d7Shown, n = body.children.length;
+    body.insertAdjacentHTML('beforeend', rest.map(s => String(sourceRow(s, S, { d7 }))).join(''));
+    enterItems([...body.children].slice(n), { stagger: 24, y: 4, duration: 360, cap: 6 });
+  });
 }
 
 function sourceFormHtml(S, kind = 'rss') {

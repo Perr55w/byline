@@ -5,12 +5,12 @@
 // Layout (12 cols desktop, stacked on phone, DOM order = phone order):
 //   lead tile (7) | S1 + S2 (5)
 //   News weather (7) | News map (5)
-//   S3 (4) | This week (4) | Waiting on you (4)
-//   Also in the brief (12, only when the brief has more than 4 stories)
+//   This week (7: strip | posts) | Waiting on you (5)      (round 1 T1: row 3 is top-aligned, no S3 tile)
+//   Also in the brief (12: the 3rd secondary story onward, as compact rows sized by importance)
 //
-// Motion: the shell runs enterHeading on the h1 and fades the run strip (enter-item). The tiles live
-// outside the head's parent on purpose, so this view owns their choreography (C §2) and starts it on the
-// router's `byline:routed` event, the moment the page becomes visible.
+// Motion: the shell runs enterHeading on the h1. This view owns everything after it (C §2, round 1 T4):
+// the lede at h1 line-2 start + 120 ms, the actions and run strip with the lede, then the tile cascade at
+// lede + 200 ms. It starts on the router's `byline:routed` event, the moment the page becomes visible.
 
 import { api } from '../api.js';
 import { html, raw, esc, on, act, toast, modal, icon, scoreRing, scoreChip, demoFlag, channelLabel, status as statusTag, useStyle, reducedMotion } from '../ui.js';
@@ -80,16 +80,16 @@ const storyHref = (it) => `#/story/${it.story_id ?? it.id}`;
 
 function leadTile(it, T) {
   const why = whyOf(it);
+  // T2: one grid: pills / title / dek in the text column, the ring beside them (rows 1–3), so the dek sits
+  // right under the title instead of under the ring; at ≤480 px the ring drops to 64 px beside the pills
   return html`
   <article class="tile tile--lead td-lead" data-dossier-src data-tile="lead" aria-labelledby="td-lead-title">
-    ${pills(it, 3)}
     <div class="td-lead-top">
-      <div class="td-lead-main">
-        <h2 class="td-title-lg" id="td-lead-title"><a class="td-stretch" href="${storyHref(it)}" data-shared="title">${it.title}</a>${demoFlag(it.is_demo)}</h2>
-      </div>
+      ${pills(it, 3)}
+      <h2 class="td-title-lg" id="td-lead-title"><a class="td-stretch" href="${storyHref(it)}" data-shared="title">${it.title}</a>${demoFlag(it.is_demo)}</h2>
+      ${it.finding ? html`<p class="td-dek">${marked(it.finding, it.finding_marks)}</p>` : ''}
       <div class="td-lead-ring">${scoreRing(it.score, T, { size: 108, count: true, key: `today-lead-${it.story_id}` })}</div>
     </div>
-    ${it.finding ? html`<p class="td-dek">${marked(it.finding, it.finding_marks)}</p>` : ''}
     ${why.length ? html`<div class="td-why">
       <h3 class="td-label">Why it ranked</h3>
       <ul>${why.map(w => html`<li>${w}</li>`)}</ul>
@@ -98,7 +98,7 @@ function leadTile(it, T) {
     <footer class="td-lead-foot">
       <span class="td-src" title="Posts are articles; outlets are distinct sites; independent means reporting or research from a site other than the origin’s.">${it.source_line || ''}</span>
       ${it.origin_domain ? html`<span class="td-domain">${it.origin_domain}</span>` : ''}
-      <span class="td-open" aria-hidden="true">Open dossier ${icon('arrow-right')}</span>
+      <span class="td-open" data-act="open-lead" aria-hidden="true">Open dossier ${icon('arrow-right')}</span>
     </footer>
   </article>`;
 }
@@ -119,8 +119,9 @@ function storyTile(it, T, { rank, size = 'md', why = false, maxPills = 2 }) {
 }
 
 // News weather (Edition's chart, rebuilt on real data): one row per topic, one dot per ranked story in
-// the window, placed on a 0–100 score axis. HOT / WARM / CALM use F's "dominates" share on cleared stories.
-function weatherModel(stories, t) {
+// the window, placed on a 0–100 score axis. Hot / Warm / Calm use F's "dominates" share on cleared stories.
+// `weights` = priority weight per topic (settings); weight ≤ 1 topics keep their chart row but never lead the sentence.
+function weatherModel(stories, t, weights = {}) {
   const T = t.threshold;
   const cleared = stories.filter(s => s.score >= T);
   const nCleared = cleared.length;
@@ -129,35 +130,51 @@ function weatherModel(stories, t) {
     if (!rows.has(tp)) rows.set(tp, { topic: tp, stories: [] });
     rows.get(tp).stories.push(s);
   }
-  const weightOf = Object.fromEntries((t.topic_counts || []).map(x => [x.topic, x.weighted]));
+  const weightedOf = Object.fromEntries((t.topic_counts || []).map(x => [x.topic, x.weighted]));
   const list = [...rows.values()].map(r => {
     const above = r.stories.filter(s => s.score >= T).length;
     const share = nCleared ? above / nCleared : 0;
     const label = above && share >= 0.5 ? 'hot' : above ? 'warm' : 'calm';
-    return { ...r, above, share, label, weighted: weightOf[r.topic] ?? 0, stories: r.stories.slice().sort((a, b) => a.score - b.score) };
+    return { ...r, above, share, label, weight: weights[r.topic] ?? null, weighted: weightedOf[r.topic] ?? 0, stories: r.stories.slice().sort((a, b) => a.score - b.score) };
   }).sort((a, b) => b.weighted - a.weighted || b.above - a.above || b.stories.length - a.stories.length || a.topic.localeCompare(b.topic));
   return { rows: list.slice(0, 8), more: Math.max(0, list.length - 8), total: stories.length, nCleared, T };
 }
 
-function weatherTile(stories, t) {
-  const m = weatherModel(stories, t);
+/** T7: the chart's own counts in words. No "run hot" (DECISIONS: only when history supports it). */
+function weatherSentence(m) {
+  const counts = (r) => r.weight == null || r.weight > 1; // weight ≤ 1 (Machine learning) never leads the sentence
+  const shown = m.rows.filter(counts);
+  const hot = shown.filter(r => r.label === 'hot');
+  const calm = shown.filter(r => r.label === 'calm').sort((a, b) => (b.weight ?? 0) - (a.weight ?? 0)).slice(0, 2).map(r => r.topic);
+  const n = m.nCleared;
+  const calmTail = calm.length ? html`; ${listJoin(calm)} ${calm.length === 1 ? 'is' : 'are'} in none` : '';
+  if (!n) return html`None of the <b>${m.total}</b> stories ranked this week cleared your bar of <b>${m.T}</b>.`;
+  if (hot.length) {
+    const names = html`<b>${listJoin(hot.map(r => r.topic))}</b> ${hot.length === 1 ? 'is' : 'are'}`;
+    const span = n === 1 ? html`the one story above your bar`
+      : hot.every(r => r.above === n) ? html`all <b>${n}</b> stories above your bar`
+      : html`half or more of the <b>${n}</b> stories above your bar`;
+    return html`${names} in ${span}${calmTail}.`;
+  }
+  const lead = shown.filter(r => r.above).sort((a, b) => b.above - a.above)[0];
+  return html`No topic is in half of the <b>${n}</b> ${n === 1 ? 'story' : 'stories'} above your bar${lead ? html`; <b>${lead.topic}</b> is in <b>${lead.above}</b>` : ''}${calmTail}.`;
+}
+
+function weatherTile(stories, t, weights) {
+  const m = weatherModel(stories, t, weights);
   if (!m.total) return html`<section class="tile tile--static td-wx" data-tile="weather" aria-labelledby="td-wx-h"><div class="td-tile-head"><h2 class="td-h2" id="td-wx-h">News weather</h2></div>
     <div class="empty"><h3>No ranked stories this week</h3><p>The chart fills in after a run ranks stories from the last ${t.window_days || 7} days.</p></div></section>`;
-  const hot = m.rows.filter(r => r.label === 'hot').map(r => r.topic);
-  const calm = m.rows.filter(r => r.label === 'calm').map(r => r.topic);
-  const sentence = hot.length
-    ? html`<b>${listJoin(hot)}</b> ${hot.length === 1 ? 'runs' : 'run'} hot${calm.length ? html`; ${listJoin(calm.slice(0, 2))} ${calm.length === 1 ? 'is' : 'are'} calm` : ''}.`
-    : html`No topic is in half of the ${m.nCleared} stories above your bar.`;
   const th = Math.max(0, Math.min(100, m.T));
+  const LABEL = { hot: 'Hot', warm: 'Warm', calm: 'Calm' };
   return html`
   <section class="tile td-wx" data-tile="weather" aria-labelledby="td-wx-h">
     <div class="td-tile-head">
       <h2 class="td-h2" id="td-wx-h">News weather</h2>
       <button type="button" class="btn btn--ghost btn--sm td-wx-toggle" aria-pressed="false" aria-controls="td-wx-table">Show as table</button>
     </div>
-    <p class="td-sub">${sentence}</p>
+    <p class="td-sub">${weatherSentence(m)}</p>
     <div class="td-wx-chart" aria-hidden="true" style="--th:${th / 100}">
-      <div class="td-wx-axis"><span class="td-wx-bar-label" style="--x:${th / 100}">bar ${m.T}</span></div>
+      <div class="td-wx-axis"><span class="td-wx-bar-label" style="--x:${th / 100}">Your bar, ${m.T}</span></div>
       ${m.rows.map((r) => html`
       <div class="td-wx-row" data-label="${r.label}">
         <span class="td-wx-name">${r.topic}</span>
@@ -169,28 +186,33 @@ function weatherTile(stories, t) {
             return html`<a class="td-wx-dot" href="#/story/${s.id}" tabindex="-1" data-dossier-src data-s="${s.id}" data-q="${qualityTier(s.score, m.T)}" data-q-score="${s.score}" data-q-threshold="${m.T}" style="--x:${Math.max(0, Math.min(100, s.score)) / 100};--lift:${lift}px;--q:${qualityColor(s.score, m.T)}"><span class="td-wx-tip">${s.short_title || s.title} · ${round(s.score)}</span></a>`;
           })}
         </span>
-        <span class="td-wx-label">${r.label.toUpperCase()}</span>
+        <span class="td-wx-label">${LABEL[r.label]}</span>
       </div>`)}
       <div class="td-wx-scale"><span>0</span><span>50</span><span>100</span></div>
     </div>
     <table class="td-wx-table sr-only" id="td-wx-table">
       <caption>News weather: ${m.total} ranked stories from the last ${t.window_days || 7} days by topic. Threshold ${m.T}.</caption>
       <thead><tr><th scope="col">Topic</th><th scope="col">Stories</th><th scope="col">Above ${m.T}</th><th scope="col">Scores</th><th scope="col">Weather</th></tr></thead>
-      <tbody>${m.rows.map(r => html`<tr><th scope="row">${r.topic}</th><td class="num">${r.stories.length}</td><td class="num">${r.above}</td><td>${r.stories.slice().reverse().map(s => round(s.score)).join(', ')}</td><td>${r.label}</td></tr>`)}</tbody>
+      <tbody>${m.rows.map(r => html`<tr><th scope="row">${r.topic}</th><td class="num">${r.stories.length}</td><td class="num">${r.above}</td><td>${r.stories.slice().reverse().map(s => round(s.score)).join(', ')}</td><td>${LABEL[r.label]}</td></tr>`)}</tbody>
     </table>
-    <p class="td-caption">Each dot is one of the <b>${m.total}</b> stories ranked in the last ${t.window_days || 7} days, placed by score; filled dots cleared your bar. <b>Hot</b>: in half or more of the ${m.nCleared} above it · <b>Warm</b>: in at least one · <b>Calm</b>: none.${m.more ? ` ${plural(m.more, 'smaller topic')} not shown.` : ''}</p>
+    <p class="td-caption">Each dot is one of the <b>${m.total}</b> stories ranked in the last ${t.window_days || 7} days, placed by score; filled dots cleared your bar. <b>Hot</b>: in half or more of the ${m.nCleared} above it · <b>Warm</b>: in at least one · <b>Calm</b>: in none.${m.more ? ` ${plural(m.more, 'smaller topic')} not shown.` : ''}</p>
   </section>`;
 }
 
-// News map: the Map tab's engine when present (map-engine.js → mountMiniMap), else a static drawing of the
-// same /api/map layout. The top-3 hot regions always sit beside it.
+// News map: a static drawing of the Map tab's own /api/map layout (same seeded positions), fitted to the node
+// bounds with 12% padding, with at most three collision-free region labels placed once the size is known.
+// The top-3 hot regions sit beside it: "leads" = stories whose main topic it is, "in" = stories carrying it at all.
 function mapTile(map, t) {
   const hot = map?.hot_topics || [];
   const n = map?.nodes?.length || 0;
-  const list = hot.length ? html`<ol class="td-hot">${hot.slice(0, 3).map((h, i) => html`
-      <li><a href="#/map" class="td-hot-row"><span class="td-hot-rank">${i + 1}</span><span class="td-hot-name">${h.topic}</span><span class="td-hot-meta">${plural(h.count, 'story', 'stories')}${h.recent != null ? html` · ${h.recent} this week` : ''}</span>
-        <span class="meter td-hot-meter" title="Heat ${Number(h.heat).toFixed(2)}: recent stories weighted by score, hottest region = 1"><i style="--v:${Math.max(0.04, Math.min(1, h.heat))}"></i></span></a></li>`)}</ol>`
+  const list = hot.length ? html`<ol class="td-hot">${hot.slice(0, 3).map((h, i) => {
+      const inN = h.in_count ?? null;
+      const recent = h.recent != null && h.recent !== h.count ? html` · ${h.recent} this week` : '';
+      return html`
+      <li><a href="#/map" class="td-hot-row"><span class="td-hot-rank">${i + 1}</span><span class="td-hot-name">${h.topic}</span><span class="td-hot-meta">leads ${h.count}${inN != null ? html`, in ${inN}` : ''}${recent}</span></a></li>`;
+    })}</ol>`
     : html`<p class="td-sub">No topic regions yet.</p>`;
+  const fit = mapFit(map);
   return html`
   <section class="tile td-map" data-tile="map" aria-labelledby="td-map-h">
     <div class="td-tile-head">
@@ -198,36 +220,76 @@ function mapTile(map, t) {
       <a class="btn btn--ghost btn--sm" href="#/map">Open map ${icon('arrow-right')}</a>
     </div>
     <div class="td-map-body">
-      <a class="td-map-canvas" href="#/map" aria-label="Open the Map: ${n} stories in ${map?.clusters?.length || 0} topic regions">${staticMap(map, t.threshold)}</a>
+      <a class="td-map-canvas" href="#/map"${fit ? raw(` style="--ar:${fit.ar.toFixed(3)}"`) : ''} aria-label="Open the Map: ${n} stories in ${map?.clusters?.length || 0} topic regions">${staticMap(map, t.threshold, fit)}</a>
       <div class="td-map-side">
         <h3 class="td-label" id="td-hot-h">Hottest regions</h3>
         ${list}
-        ${n ? html`<p class="td-caption">${plural(n, 'story', 'stories')}, ${plural(map.edges?.length || 0, 'connection')}. Heat counts this week’s stories, weighted by score.</p>` : ''}
+        ${n ? html`<p class="td-caption">${plural(n, 'story', 'stories')}, ${plural(map.edges?.length || 0, 'connection')}. Ranked by heat: this week’s stories weighted by score. <b>Leads</b>: main topic · <b>in</b>: carries the topic.</p>` : ''}
       </div>
     </div>
   </section>`;
 }
 
-function staticMap(map, T) {
-  if (!map?.nodes?.length || !map.bounds) return html`<span class="td-map-empty">The map fills in as runs collect stories.</span>`;
-  const b = map.bounds, pad = 18;
-  const vb = `${(b.x0 - pad).toFixed(1)} ${(b.y0 - pad).toFixed(1)} ${(b.x1 - b.x0 + pad * 2).toFixed(1)} ${(b.y1 - b.y0 + pad * 2).toFixed(1)}`;
+/** Node bounds (x ± r) plus 12% padding; aspect ratio clamped so the canvas never turns into a strip or a tower. */
+function mapFit(map) {
+  const nodes = map?.nodes || [];
+  if (!nodes.length) return null;
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const nd of nodes) { const r = (nd.r || 6) * 0.62; x0 = Math.min(x0, nd.x - r); y0 = Math.min(y0, nd.y - r); x1 = Math.max(x1, nd.x + r); y1 = Math.max(y1, nd.y + r); }
+  let w = Math.max(40, x1 - x0), h = Math.max(40, y1 - y0);
+  const px = w * 0.12, py = h * 0.12;
+  x0 -= px; x1 += px; y0 -= py; y1 += py; w = x1 - x0; h = y1 - y0;
+  // widen the shorter side to the clamped aspect so the viewBox and the box agree (labels map 1:1)
+  const ar = Math.max(1.35, Math.min(2.1, w / h));
+  if (w / h < ar) { const d = h * ar - w; x0 -= d / 2; w += d; } else if (w / h > ar) { const d = w / ar - h; y0 -= d / 2; h += d; }
+  return { x0, y0, w, h, ar };
+}
+
+function staticMap(map, T, fit) {
+  if (!fit) return html`<span class="td-map-empty">The map fills in as runs collect stories.</span>`;
   const pos = new Map(map.nodes.map(nd => [nd.id, nd]));
-  const hot = new Set((map.hot_topics || []).slice(0, 3).map(h => h.topic));
+  const hotTopics = (map.hot_topics || []).slice(0, 3).map(h => h.topic);
+  const hot = new Set(hotTopics);
   const edges = (map.edges || []).map(e => { const a = pos.get(e.a), c = pos.get(e.b); return a && c ? `M${a.x.toFixed(1)} ${a.y.toFixed(1)}L${c.x.toFixed(1)} ${c.y.toFixed(1)}` : ''; }).join('');
-  const W = b.x1 - b.x0 + pad * 2, H = b.y1 - b.y0 + pad * 2;
-  // label positions (normalised), nudged apart so two region names never sit on top of each other
-  const labels = (map.clusters || []).filter(c => hot.has(c.topic)).map(c => ({ label: c.label, x: (c.x - b.x0 + pad) / W, y: (c.y - b.y0 + pad) / H })).sort((p, q) => p.y - q.y);
-  for (let i = 1; i < labels.length; i++) for (let j = 0; j < i; j++) {
-    const a = labels[j], c = labels[i];
-    if (Math.abs(a.x - c.x) < 0.4 && c.y - a.y < 0.15) c.y = a.y + 0.15;
-  }
-  labels.forEach(l => { l.x = Math.min(0.8, Math.max(0.2, l.x)); l.y = Math.min(0.92, Math.max(0.08, l.y)); });
-  return raw(`<svg class="td-map-svg" viewBox="${vb}" preserveAspectRatio="xMidYMid meet" aria-hidden="true" focusable="false">
-    <g class="td-map-regions">${(map.clusters || []).filter(c => hot.has(c.topic)).map(c => `<circle cx="${c.x.toFixed(1)}" cy="${c.y.toFixed(1)}" r="${Math.max(40, Math.min(c.radius, 150)).toFixed(1)}" style="opacity:${(0.35 + 0.65 * (c.heat || 0)).toFixed(2)}"/>`).join('')}</g>
+  // label anchors: the cluster centre, normalised to the fitted box (placed collision-free after layout)
+  const labels = (map.clusters || []).filter(c => hot.has(c.topic)).sort((p, q) => hotTopics.indexOf(p.topic) - hotTopics.indexOf(q.topic))
+    .map(c => ({ label: c.label || c.topic, x: (c.x - fit.x0) / fit.w, y: (c.y - fit.y0) / fit.h }));
+  const regionR = Math.min(fit.w, fit.h) * 0.3;
+  return raw(`<svg class="td-map-svg" viewBox="${fit.x0.toFixed(1)} ${fit.y0.toFixed(1)} ${fit.w.toFixed(1)} ${fit.h.toFixed(1)}" preserveAspectRatio="xMidYMid meet" aria-hidden="true" focusable="false">
+    <g class="td-map-regions">${(map.clusters || []).filter(c => hot.has(c.topic)).map(c => `<circle cx="${c.x.toFixed(1)}" cy="${c.y.toFixed(1)}" r="${Math.max(regionR * 0.5, Math.min(c.radius * 0.8, regionR)).toFixed(1)}" style="opacity:${(0.35 + 0.65 * (c.heat || 0)).toFixed(2)}"/>`).join('')}</g>
     <path class="td-map-edges" d="${edges}"/>
-    <g class="td-map-nodes">${map.nodes.map(nd => `<circle cx="${nd.x.toFixed(1)}" cy="${nd.y.toFixed(1)}" r="${(nd.r * 0.62).toFixed(1)}" data-q="${qualityTier(nd.score, T)}" data-q-score="${nd.score}" data-q-threshold="${T}" style="--q:${qualityColor(nd.score, T)}"/>`).join('')}</g>
-  </svg>${labels.map(l => `<span class="td-map-label" style="--x:${l.x.toFixed(3)};--y:${l.y.toFixed(3)}">${esc(l.label)}</span>`).join('')}`);
+    <g class="td-map-nodes">${map.nodes.map(nd => `<circle cx="${nd.x.toFixed(1)}" cy="${nd.y.toFixed(1)}" r="${((nd.r || 6) * 0.62).toFixed(1)}" data-q="${qualityTier(nd.score, T)}" data-q-score="${nd.score}" data-q-threshold="${T}" style="--q:${qualityColor(nd.score, T)}"/>`).join('')}</g>
+  </svg><span class="td-map-labels" aria-hidden="true">${labels.map(l => `<span class="td-map-label" data-x="${l.x.toFixed(4)}" data-y="${l.y.toFixed(4)}">${esc(l.label)}</span>`).join('')}</span>`);
+}
+
+/**
+ * Place the region labels without overlaps once the canvas size is known. Sizes come from a ResizeObserver
+ * entry (no forced layout); label widths are estimated from the text (11px Geist ≈ 6.1px per character).
+ */
+function placeMapLabels(host) {
+  const box = host?.querySelector('.td-map-labels');
+  if (!box || !('ResizeObserver' in window)) return;
+  const spans = [...box.children];
+  const place = (W, H) => {
+    if (!W || !H) return;
+    const placed = [];
+    for (const s of spans) {
+      const w = Math.round(s.textContent.length * 6.1 + 14), h = 20;
+      const cx = Number(s.dataset.x) * W, cy = Number(s.dataset.y) * H;
+      let best = null;
+      for (const dy of [0, -22, 22, -44, 44, -66, 66]) {
+        const x = Math.max(4, Math.min(W - w - 4, cx - w / 2)), y = Math.max(4, Math.min(H - h - 4, cy - h / 2 + dy));
+        if (!placed.some(q => x < q.x + q.w + 4 && x + w + 4 > q.x && y < q.y + q.h + 2 && y + h + 2 > q.y)) { best = { x, y, w, h }; break; }
+      }
+      s.hidden = !best;
+      if (!best) continue;
+      placed.push(best);
+      s.style.transform = `translate(${Math.round(best.x)}px, ${Math.round(best.y)}px)`;
+    }
+    box.classList.add('is-placed');
+  };
+  const ro = new ResizeObserver(([en]) => { const r = en.contentRect; place(r.width, r.height); if (!host.isConnected) ro.disconnect(); });
+  ro.observe(box);
 }
 
 // This week: planned + published posts in the Mon–Sun week, cadence against the posting days in settings.
@@ -254,6 +316,7 @@ function weekTile(w, t, T) {
   const total = w.posts.length;
   const left = Math.max(0, w.goal - total);
   const headline = total >= w.goal ? 'This week is fully planned.' : `${total} of ${w.goal} posts planned this week.`;
+  // T1: the 7-day strip and the posts (or the suggested draft) sit side by side in the 7-column tile
   return html`
   <section class="tile td-week" data-tile="week" aria-labelledby="td-week-h">
     <div class="td-tile-head">
@@ -261,40 +324,62 @@ function weekTile(w, t, T) {
       <a class="btn btn--ghost btn--sm" href="#/calendar">Calendar ${icon('arrow-right')}</a>
     </div>
     <p class="td-sub"><b>${headline}</b> ${w.published ? `${w.published} published. ` : ''}${left && w.next ? html`Next open posting day: <b>${fmtDay(w.next)}</b>.` : ''}</p>
-    <div class="td-cadence" role="img" aria-label="Posting cadence: ${total} of ${w.goal} posts this week (goal: one on each posting day${w.postingDays.length ? `, ${w.postingDays.join(', ')}` : ''})">
-      ${w.days.map(d => {
-        const dw = dowOf(d);
-        const isPosting = w.postingDays.includes(dw);
-        const has = w.posts.filter(p => p.day === d);
-        return html`<span class="td-day${d === w.today ? ' is-today' : ''}${d < w.today ? ' is-past' : ''}${isPosting ? ' is-posting' : ''}${has.length ? ' has-post' : ''}"><span class="td-day-name">${dw.slice(0, 2)}</span><span class="td-day-num">${Number(d.slice(8))}</span><i class="td-day-slot"${has.length ? raw(` style="--q:${qualityColor(has[0].score ?? T, T)}"`) : ''}></i></span>`;
-      })}
+    <div class="td-week-body">
+      <div class="td-week-strip">
+        <div class="td-cadence" role="img" aria-label="Posting cadence: ${total} of ${w.goal} posts this week (goal: one on each posting day${w.postingDays.length ? `, ${w.postingDays.join(', ')}` : ''})">
+          ${w.days.map(d => {
+            const dw = dowOf(d);
+            const isPosting = w.postingDays.includes(dw);
+            const has = w.posts.filter(p => p.day === d);
+            return html`<span class="td-day${d === w.today ? ' is-today' : ''}${d < w.today ? ' is-past' : ''}${isPosting ? ' is-posting' : ''}${has.length ? ' has-post' : ''}"><span class="td-day-name">${dw.slice(0, 2)}</span><span class="td-day-num">${Number(d.slice(8))}</span><i class="td-day-slot"${has.length ? raw(` style="--q:${qualityColor(has[0].score ?? T, T)}"`) : ''}></i></span>`;
+          })}
+        </div>
+        <p class="td-legend"><i class="td-day-slot"></i> Posting day, filled once a post is planned</p>
+        ${!total ? html`<p class="td-week-empty">Nothing planned yet. <b>${w.unplanned >= 30 ? '30+' : w.unplanned}</b> ${w.unplanned === 1 ? 'draft is' : 'drafts are'} in the tray.</p>` : ''}
+      </div>
+      <div class="td-week-side">
+        ${total ? html`<ul class="td-list">${w.posts.slice(0, 3).map(p => html`<li><a class="td-row" href="#/draft/${p.id}"><span class="td-row-day">${dowOf(p.day)}</span><span class="td-row-title">${p.title || p.story_title || 'Untitled draft'}</span><span class="td-row-meta">${statusTag(p.status)}<span>${channelLabel(p.channel)}</span></span></a></li>`)}</ul>${total > 3 ? html`<p class="td-more"><a href="#/calendar">All ${total} this week →</a></p>` : ''}`
+          : html`${t.draft ? html`<h3 class="td-label td-week-label">Suggested next post</h3><a class="td-row td-row--sugg" href="#/draft/${t.draft.id}"><span class="td-row-title">${t.draft.title}</span><span class="td-row-meta">${statusTag(t.draft.status)}<span>${channelLabel(t.draft.channel, t.draft.format)}</span></span></a>` : html`<p class="td-sub">No draft to suggest yet. Open a story and choose Draft a post.</p>`}`}
+      </div>
     </div>
-    <p class="td-legend"><i class="td-day-slot"></i> posting day · filled once a post is planned</p>
-    ${total ? html`<ul class="td-list">${w.posts.map(p => html`<li><a class="td-row" href="#/draft/${p.id}"><span class="td-row-day">${dowOf(p.day)}</span><span class="td-row-title">${p.title || p.story_title || 'Untitled draft'}</span><span class="td-row-meta">${statusTag(p.status)}<span>${channelLabel(p.channel)}</span></span></a></li>`)}</ul>`
-      : html`<div class="td-week-empty"><p>Nothing planned yet. <b>${w.unplanned >= 30 ? '30+' : w.unplanned}</b> ${w.unplanned === 1 ? 'draft is' : 'drafts are'} in the tray.</p>
-        ${t.draft ? html`<a class="td-row td-row--draft" href="#/draft/${t.draft.id}"><span class="td-row-day">Suggested</span><span class="td-row-title">${t.draft.title}</span><span class="td-row-meta">${statusTag(t.draft.status)}<span>${channelLabel(t.draft.channel, t.draft.format)}</span></span></a>` : ''}
-      </div>`}
   </section>`;
 }
 
 // Demo contacts: same display rule as People ("(demo)" / "DEMO ·" become a Demo tag; stored names untouched)
 const isDemoName = (n) => /^\s*DEMO\s*[·:-]|\((demo|fictional)\)/i.test(String(n || ''));
 const stripName = (n) => String(n || '').replace(/^\s*DEMO\s*[·:-]\s*/i, '').replace(/\s*\((demo|fictional)\)/ig, '').trim();
-// Waiting on you: drafts awaiting review, outreach drafts, follow-ups due (all existing /api/today data).
+
+/**
+ * T3: the review count Studio and Performance show. counts.in_review / counts.drafts_open come from /api/status
+ * (same SQL as Studio's list); without them the label counts the statuses of the 12 most recent drafts and says so.
+ */
+function reviewLabel(s, awaiting) {
+  const c = s?.counts || {};
+  if (Number.isFinite(c.in_review) && Number.isFinite(c.drafts_open)) {
+    if (!c.drafts_open) return null;
+    return c.in_review ? `${c.in_review} in review of ${plural(c.drafts_open, 'open draft')}` : `${plural(c.drafts_open, 'open draft')}, none in review`;
+  }
+  if (!awaiting.length) return null;
+  const rev = awaiting.filter(d => d.status === 'in_review').length;
+  return `${rev} in review, ${plural(awaiting.length - rev, 'draft')}, of the ${awaiting.length} most recent`;
+}
+
+// Waiting on you: drafts in review first, then open drafts, outreach drafts, follow-ups due (all /api/today data).
 function deskTile(t, s) {
   const awaiting = t.awaiting || [];
-  const total = s?.counts?.awaiting ?? awaiting.length;
   const groups = [];
   for (const d of awaiting) {
     let g = groups.find(x => x.title === d.title);
     if (!g) { g = { title: d.title, id: d.id, status: d.status, channels: new Set() }; groups.push(g); }
     g.channels.add(channelLabel(d.channel));
-    if (d.status === 'in_review') g.status = 'in_review';
+    if (d.status === 'in_review') { g.status = 'in_review'; g.id = d.id; }
   }
+  groups.sort((a, b) => (b.status === 'in_review') - (a.status === 'in_review')); // stable: recency within each
+  const label = reviewLabel(s, awaiting);
   const today = t.today || t.date;
   const fu = t.followups || [];
   const out = t.outreach_awaiting || [];
-  const nothing = !total && !fu.length && !out.length;
+  const nothing = !label && !fu.length && !out.length;
   return html`
   <section class="tile td-desk" data-tile="desk" aria-labelledby="td-desk-h">
     <div class="td-tile-head">
@@ -302,13 +387,13 @@ function deskTile(t, s) {
       <a class="btn btn--ghost btn--sm" href="#/studio">Studio ${icon('arrow-right')}</a>
     </div>
     ${nothing ? html`<p class="td-sub">Nothing is waiting: no drafts to review and no follow-ups due.</p>` : ''}
-    ${total ? html`<h3 class="td-label td-desk-label">${plural(total, 'draft')} awaiting review</h3>
-      <ul class="td-list">${groups.slice(0, 2).map(g => html`<li><a class="td-row" href="#/draft/${g.id}"><span class="td-row-title">${g.title}</span><span class="td-row-meta">${statusTag(g.status)}<span>${[...g.channels].join(' · ')}</span></span></a></li>`)}</ul>
-      ${groups.length > 2 || total > awaiting.length ? html`<p class="td-more">The ${Math.min(2, groups.length)} most recent titles of ${total} drafts. <a href="#/studio">All drafts</a></p>` : ''}` : ''}
+    ${label ? html`<h3 class="td-label td-desk-label">${label}</h3>
+      ${groups.length ? html`<ul class="td-list">${(groups.some(g => g.status === 'in_review') ? groups.filter(g => g.status === 'in_review') : groups).slice(0, 2).map(g => html`<li><a class="td-row" href="#/draft/${g.id}"><span class="td-row-title">${g.title}</span><span class="td-row-meta">${statusTag(g.status)}<span>${[...g.channels].join(' · ')}</span></span></a></li>`)}</ul>` : ''}
+      <p class="td-more"><a href="#/studio">All drafts →</a></p>` : ''}
     ${out.length ? html`<h3 class="td-label td-desk-label">${plural(out.length, 'outreach draft')}</h3>
       <ul class="td-list">${out.slice(0, 3).map(o => html`<li><a class="td-row" href="#/people"><span class="td-row-title">${stripName(o.name)} · ${String(o.purpose || '').replace(/_/g, ' ')}</span><span class="td-row-meta">${statusTag(o.status)}</span></a></li>`)}</ul>` : ''}
     ${fu.length ? html`<h3 class="td-label td-desk-label">${plural(fu.length, 'follow-up')} due</h3>
-      <ul class="td-list">${fu.slice(0, 2).map(f => html`<li><a class="td-row" href="#/person/${f.id}"><span class="td-row-title">${stripName(f.name)}${isDemoName(f.name) ? html` <span class="tag tag--demo" title="Fictional sample data">Demo</span>` : ''}</span><span class="td-row-meta"><span>${f.next_step}</span><span class="${f.next_date < today ? 'td-overdue' : ''}"><time datetime="${f.next_date}">${f.next_date < today ? 'overdue since ' : 'due '}${fmtDay(f.next_date)}</time></span></span></a></li>`)}</ul>` : ''}
+      <ul class="td-list td-list--fu">${fu.slice(0, 2).map(f => html`<li><a class="td-row" href="#/person/${f.id}"><span class="td-row-title">${stripName(f.name)}${isDemoName(f.name) ? html` <span class="tag tag--demo" title="Fictional sample data">Demo</span>` : ''}</span><span class="td-row-meta"><span>${f.next_step}</span><span class="${f.next_date < today ? 'td-overdue' : ''}"><time datetime="${f.next_date}">${f.next_date < today ? 'overdue since ' : 'due '}${fmtDay(f.next_date)}</time></span></span></a></li>`)}</ul>` : ''}
   </section>`;
 }
 
@@ -392,7 +477,8 @@ export async function render(view) {
   const w = weekModel(t, settings, cals, slot);
   // quiet day: the lead slot explains the quiet day; the closest stories fill the secondary slots
   const pool = b?.quiet ? items : items.slice(1);
-  const pick = { lead: b?.quiet ? null : items[0], s1: pool[0], s2: pool[1], s3: pool[2], rest: pool.slice(3) };
+  const pick = { lead: b?.quiet ? null : items[0], s1: pool[0], s2: pool[1], rest: pool.slice(2) };
+  const weights = Object.fromEntries([...(t.topic_counts || []).map(x => [x.topic, x.weight]), ...(settings?.priorities || []).map(p => [p.topic, p.weight])].filter(([, v]) => Number.isFinite(v)));
 
   const el = document.createElement('div');
   el.className = 'today';
@@ -424,17 +510,16 @@ export async function render(view) {
       <p>Run today’s workflow to collect and rank stories${t.sources_total && t.sources_paused >= t.sources_total ? ` (all ${t.sources_total} sources are paused, so a run only re-ranks what is already stored)` : ''}, add a story URL in the Feed, or load the fictional demo data to try the full flow without credentials.</p>
       <div class="cluster"><button type="button" class="btn btn--primary" data-act="demo">Load demo data</button><a class="btn btn--secondary" href="#/feed">Add a story URL</a></div>
     </div>
-    ${weatherTile(stories, t)}
+    ${weatherTile(stories, t, weights)}
     ${mapTile(map, t)}
     ${weekTile(w, t, T)}
     ${deskTile(t, s)}
   </div>` : html`
-  <div class="td-grid${!pick.s3 ? ' td-grid--no-s3' : ''}" data-no-count>
+  <div class="td-grid" data-no-count>
     ${b?.quiet ? quietLead(t, items) : leadTile(pick.lead, T)}
     ${pick.s1 ? html`<div class="td-side">${storyTile(pick.s1, T, { rank: 1, size: 'lg' })}${pick.s2 ? storyTile(pick.s2, T, { rank: 2 }) : ''}</div>` : ''}
-    ${weatherTile(stories, t)}
+    ${weatherTile(stories, t, weights)}
     ${mapTile(map, t)}
-    ${pick.s3 ? storyTile(pick.s3, T, { rank: 3, why: true, maxPills: 1 }) : ''}
     ${weekTile(w, t, T)}
     ${deskTile(t, s)}
     ${pick.rest.length ? restTile(pick.rest, T) : ''}
@@ -442,7 +527,7 @@ export async function render(view) {
   view.replaceChildren(el);
 
   wire(el, view, { t, b, items });
-  mountMap(el, view);
+  placeMapLabels(el.querySelector('.td-map-canvas'));
   // the shell fires byline:routed when this page swaps in; a re-render (after a run) plays a short entrance itself
   if (view.classList.contains('current')) choreograph(el, { quick: true, t });
   else {
@@ -451,57 +536,77 @@ export async function render(view) {
   }
 }
 
-// ------------------------------------------------------------------ choreography (C §2), transform + opacity only
+// ------------------------------------------------------------------ choreography (C §2 + round 1 T4/T5)
+// One animation per element or group, opacity + transform in the same keyframes (≈20 Animation objects on load
+// besides the heading's own). Order: h1 lines → lede (line-2 start + 120 ms) with the actions and the run strip
+// (+90 ms) → tiles from lede + 200 ms (90 ms stagger) → chart rows / map groups inside their tiles.
+const rise = (n, delay, { y = 10, duration = 700, easing = EASE.settle } = {}) => n?.animate(
+  [{ opacity: 0, transform: `translateY(${y}px)` }, { opacity: 1, transform: 'none' }], { duration, delay, easing, fill: 'backwards' });
+
+/** The heading's timing as enterHeading set it: { start, line2 } (ms from now), read from its own animations. */
+function headTiming(el) {
+  const h1 = el.querySelector('.td-head h1');
+  const delays = [...new Set((h1?.getAnimations({ subtree: true }) || []).filter(a => a.effect?.target !== h1).map(a => Number(a.effect.getTiming().delay) || 0))].sort((x, y) => x - y);
+  return { start: delays[0] ?? 0, line2: delays[1] ?? delays[0] ?? 0, animated: delays.length > 0 };
+}
+
 function choreograph(el, { quick = false, t } = {}) {
   const T = t?.threshold;
   const rings = [...el.querySelectorAll('.td-grid .score-ring')];
-  const counts = () => rings.forEach((ring, i) => {
+  const counts = (at = []) => rings.forEach((ring, i) => {
     const num = ring.querySelector('.ring-num[data-count-to]');
     if (!num || num.dataset.counted) return;
     num.dataset.counted = '1';
     const go = () => countTo(num, Number(num.dataset.countTo), { ring, threshold: Number(ring.dataset.qThreshold ?? T), duration: i === 0 ? 1400 : 1100, key: ring.dataset.countKey });
-    if (reducedMotion() || quick) go(); else setTimeout(go, [560, 650, 740, 830][i] ?? 830);
+    if (reducedMotion() || quick || at[i] == null) go(); else setTimeout(go, at[i]);
   });
   heat(t);
   if (reducedMotion() || document.hidden) { counts(); return; }
+
+  // the head's actions and the run strip: take them off the shell's generic enter classes (which would show them
+  // before the h1) and bring them in with the lede
+  const head = el.querySelector('.td-head');
+  const actions = head?.querySelector('.page-head-actions');
+  const strip = el.querySelector('.td-strip');
+  for (const n of [actions, strip, ...(actions ? actions.querySelectorAll('.enter-head, .enter-item') : [])]) { n?.classList.remove('enter-item', 'enter-head'); n?.style.removeProperty('--i'); }
+
   const tiles = [...el.querySelectorAll('.td-grid > .tile, .td-grid > .empty, .td-side > .tile')];
-  const order = ['lead', 'empty', 's1', 's2', 'weather', 'map', 's3', 'week', 'desk', 'rest'];
+  const order = ['lead', 'empty', 's1', 's2', 'weather', 'map', 'week', 'desk', 'rest'];
   tiles.sort((a, b) => order.indexOf(a.dataset.tile) - order.indexOf(b.dataset.tile));
-  const base = quick ? 0 : 140;
-  const stag = quick ? 40 : 90;
-  tiles.forEach((tile, i) => {
-    const d = base + i * stag;
-    tile.animate([{ opacity: 0 }, { opacity: 1 }], { duration: quick ? 450 : 600, delay: d, easing: EASE.fade, fill: 'backwards' });
-    tile.animate([{ transform: 'translateY(12px)' }, { transform: 'none' }], { duration: quick ? 600 : 900, delay: d, easing: EASE.settle, fill: 'backwards' });
-  });
-  counts();
-  if (quick) return;
-  // lead internals: pills (40ms), title (+120), why bullets (60ms from +300)
-  const lead = el.querySelector('.td-lead');
-  if (lead) {
-    const fade = (n, d, y = 6) => {
-      n.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 450, delay: d, easing: EASE.fade, fill: 'backwards' });
-      n.animate([{ transform: `translateY(${y}px)` }, { transform: 'none' }], { duration: 700, delay: d, easing: EASE.settle, fill: 'backwards' });
-    };
-    lead.querySelectorAll('.td-pills .chip').forEach((c, i) => fade(c, 260 + i * 40, 4));
-    const title = lead.querySelector('.td-title-lg'); if (title) fade(title, 380, 8);
-    const dek = lead.querySelector('.td-dek'); if (dek) fade(dek, 460, 6);
-    lead.querySelectorAll('.td-why li').forEach((li, i) => fade(li, 560 + i * 60, 6));
+
+  if (quick) { // a re-render after a run: one short cascade, no heading choreography
+    tiles.forEach((tile, i) => rise(tile, i * 40, { y: 8, duration: 500 }));
+    counts();
+    return;
   }
-  // weather dots in score order (18ms stagger), labels after
-  const dots = [...el.querySelectorAll('.td-wx-dot')].sort((a, b) => Number(a.dataset.qScore) - Number(b.dataset.qScore));
-  dots.forEach((dot, i) => {
-    const d = 560 + Math.min(i, 40) * 18;
-    dot.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 500, delay: d, easing: EASE.fade, fill: 'backwards' });
-    dot.animate([{ transform: 'translate(-6px, var(--lift, 0px))' }, { transform: 'translate(0px, var(--lift, 0px))' }], { duration: 700, delay: d, easing: EASE.settle, fill: 'backwards' });
-  });
-  el.querySelectorAll('.td-wx-label').forEach((n, i) => n.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 500, delay: 900 + i * 30, easing: EASE.fade, fill: 'backwards' }));
-  // static map nodes (10ms), edges from +180, top-3 rows (60ms)
-  el.querySelectorAll('.td-map-nodes circle').forEach((c, i) => c.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 420, delay: 650 + Math.min(i, 60) * 10, easing: EASE.fade, fill: 'backwards' }));
-  const edges = el.querySelector('.td-map-edges'); if (edges) edges.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 700, delay: 830, easing: EASE.settle, fill: 'backwards' });
-  el.querySelectorAll('.td-hot li').forEach((li, i) => li.animate([{ opacity: 0, transform: 'translateY(4px)' }, { opacity: 1, transform: 'none' }], { duration: 500, delay: 680 + i * 60, easing: EASE.settle, fill: 'backwards' }));
-  // a soft light pulse under the lead and the map as they resolve (rects via IntersectionObserver: no forced layout)
-  pulseOn(el.querySelector('[data-tile="lead"]'), 0);
+
+  const ht = headTiming(el);
+  const lede = head?.querySelector('.lede');
+  let ledeAt = ht.line2 + 120;
+  if (ht.animated && ht.start <= 80) ledeAt = Math.max(ledeAt, ht.start + 390); // first load: the long 'Settle' (≈450 ms)
+  // the lede: the shell's two lede animations become one (opacity + rise together), retimed after line 2
+  if (lede) { lede.getAnimations().forEach(a => a.cancel()); rise(lede, ledeAt, { y: 6, duration: 600, easing: EASE.fade }); }
+  const fadeIn = (n, d) => rise(n, d, { y: 6, duration: 450, easing: EASE.fade });
+  fadeIn(actions, ledeAt);
+  fadeIn(strip, ledeAt + 90);
+
+  const base = ledeAt + 200;
+  const stag = 90;
+  const at = new Map();
+  tiles.forEach((tile, i) => { const d = base + i * stag; at.set(tile.dataset.tile, d); rise(tile, d, { y: 12, duration: 800 }); });
+
+  const lead = el.querySelector('.td-lead');
+  // weather: one animation per row (40 ms stagger)
+  const wx0 = (at.get('weather') ?? base) + 160;
+  el.querySelectorAll('.td-wx-row').forEach((row, i) => rise(row, wx0 + i * 40, { y: 0, duration: 520, easing: EASE.fade }));
+  // map: edges then nodes, one animation per group
+  const mp0 = (at.get('map') ?? base) + 160;
+  const edgesEl = el.querySelector('.td-map-edges'); if (edgesEl) edgesEl.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 600, delay: mp0 + 120, easing: EASE.fade, fill: 'backwards' });
+  const nodesEl = el.querySelector('.td-map-nodes'); if (nodesEl) nodesEl.animate([{ opacity: 0, transform: 'scale(.97)' }, { opacity: 1, transform: 'none' }], { duration: 600, delay: mp0, easing: EASE.settle, fill: 'backwards' });
+
+  // rings count up as their tiles land
+  counts(rings.map(r => (at.get(r.closest('[data-tile]')?.dataset.tile) ?? base) + 300));
+  pulseOn(lead, Math.max(0, (at.get('lead') ?? base) - 100));
 }
 
 function pulseOn(tile, delay) {
@@ -523,30 +628,6 @@ function heat(t) {
   const now = bg.stats?.().heatTopics || [];
   if (now.length === pairs.length && now.every((tp, i) => tp === pairs[i][0])) return;
   bg.setHeat(pairs.map(([topic, v]) => ({ topic, heat: v / max })));
-}
-
-// ------------------------------------------------------------------ map engine (owned by the Map tab)
-let mapEngineOk = null;
-async function mountMap(el, view) {
-  const host = el.querySelector('.td-map-canvas');
-  if (!host) return;
-  if (mapEngineOk === null) {
-    mapEngineOk = await fetch('/js/map-engine.js', { method: 'HEAD' }).then(r => r.ok && /javascript/.test(r.headers.get('content-type') || '')).catch(() => false);
-  }
-  if (!mapEngineOk) return;
-  const m = await import('../map-engine.js').catch(() => null);
-  if (!m?.mountMiniMap || !host.isConnected) return;
-  let inst = null;
-  try {
-    const live = document.createElement('div');
-    live.className = 'td-map-live';
-    host.append(live);
-    inst = await m.mountMiniMap(live, { onOpen: () => { location.hash = '#/map'; } });
-    if (!host.isConnected) { inst?.destroy?.(); return; }
-    host.classList.add('has-live');
-  } catch (e) { host.querySelector('.td-map-live')?.remove(); return; }
-  const off = (e) => { if (e.detail?.page === view) return; document.removeEventListener('byline:routed', off); inst?.destroy?.(); };
-  document.addEventListener('byline:routed', off);
 }
 
 // ------------------------------------------------------------------ events
@@ -607,6 +688,7 @@ function wire(el, view, { t, b, items }) {
   on(el, 'click', '[data-act]', async (e, btn) => {
     const a = btn.dataset.act;
     if (a === 'menu') { setMenu(btn.getAttribute('aria-expanded') !== 'true'); return; }
+    if (a === 'open-lead') { btn.closest('.td-lead')?.querySelector('.td-stretch')?.click(); return; } // same path as the title link
     if (a === 'run') await act(btn, async () => {
       const tc = window.__byline?.lattice?.(btn, { label: 'Running' });
       const r = await (window.__byline?.stagedRun || ((p) => p))(api.post('/runs', {}));

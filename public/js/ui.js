@@ -4,7 +4,7 @@
 // holdToPress, statusMark, lattice.
 
 import { countTo, reduced as motionReduced, EASE } from './motion.js';
-import { qualityColor, qualityTier, qualityLabel } from './quality.js';
+import { qualityColor, qualityTier, qualityLabel, ringGradientLine, paintQuality } from './quality.js';
 
 const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 export const esc = (v) => String(v ?? '').replace(/[&<>"']/g, c => ESC[c]);
@@ -307,16 +307,24 @@ export function stampChanged(el) {
  * pass { count: true } and call countUp(root) (never in the dossier).
  * @returns html markup with role="img" and an aria-label.
  */
+let ringSeq = 0;
 export function scoreRing(score, th = threshold(), { size = 96, label = true, count = false, decimals = 0, key = null } = {}) {
   const s = Number(score) || 0;
   const r = 50 - 3, C = 2 * Math.PI * r;
   const tier = qualityTier(s, th), col = qualityColor(s, th);
   const shown = decimals ? s.toFixed(decimals) : String(Math.round(s));
   const above = s >= th ? 'above' : 'below';
-  const start = count && !reducedMotion() ? 0 : s;
-  return html`<span class="score-ring${size < 64 ? ' ring--sm' : ''}" role="img" aria-label="Score ${shown} of 100, ${above} your bar of ${th}" data-q="${tier}" data-q-score="${s}" data-q-threshold="${th}" style="--ring-size:${size}px;--q:${col}"${key ? raw(` data-count-key="${esc(key)}"`) : ''}>
-    <svg viewBox="0 0 100 100" aria-hidden="true"><circle class="ring-track" cx="50" cy="50" r="${r}"/><circle class="ring-halo" cx="50" cy="50" r="${r + 4}"/><circle class="ring-arc" cx="50" cy="50" r="${r}" data-c="${C.toFixed(2)}" stroke-dasharray="${C.toFixed(2)}" style="stroke-dashoffset:${(C * (1 - Math.min(100, start) / 100)).toFixed(2)}"/></svg>
-    <span class="ring-num"${count ? raw(` data-count-to="${s}" data-decimals="${decimals}"`) : ''} aria-hidden="true">${count && !reducedMotion() ? '0' : shown}</span>
+  const counting = count && !reducedMotion();
+  const start = counting ? 0 : s;
+  // S9: above the bar the arc runs from the threshold colour to the score colour (fill fraction stays the non-colour cue)
+  const gid = `rg${++ringSeq}-${Math.random().toString(36).slice(2, 6)}`;
+  const L = ringGradientLine(s);
+  const grad = s >= th ? raw(`<defs><linearGradient id="${gid}" gradientUnits="userSpaceOnUse" x1="${L.x1}" y1="${L.y1}" x2="${L.x2}" y2="${L.y2}"><stop offset="0" stop-color="${qualityColor(th, th)}"/><stop offset="1" stop-color="${counting ? qualityColor(th, th) : col}"/></linearGradient></defs>`)
+    : raw(`<defs><linearGradient id="${gid}" gradientUnits="userSpaceOnUse" x1="${L.x1}" y1="${L.y1}" x2="${L.x2}" y2="${L.y2}"><stop offset="0"/><stop offset="1"/></linearGradient></defs>`);
+  const arcStroke = s >= th && !counting ? ` stroke:url(#${gid});` : '';
+  return html`<span class="score-ring${size < 64 ? ' ring--sm' : ''}${counting ? ' is-counting' : ''}" role="img" aria-label="Score ${shown} of 100, ${above} your bar of ${th}" data-q="${counting ? qualityTier(0, th) : tier}" data-q-score="${s}" data-q-threshold="${th}" style="--ring-size:${size}px;--q:${counting ? qualityColor(0, th) : col}"${key ? raw(` data-count-key="${esc(key)}"`) : ''}>
+    <svg viewBox="0 0 100 100" aria-hidden="true">${grad}<circle class="ring-track" cx="50" cy="50" r="${r}"/><circle class="ring-halo" cx="50" cy="50" r="${r + 4}"/><circle class="ring-arc" cx="50" cy="50" r="${r}" data-c="${C.toFixed(2)}" stroke-dasharray="${C.toFixed(2)}" style="stroke-dashoffset:${(C * (1 - Math.min(100, start) / 100)).toFixed(2)};${arcStroke}"/></svg>
+    <span class="ring-num"${count ? raw(` data-count-to="${s}" data-decimals="${decimals}"`) : ''} aria-hidden="true">${counting ? '0' : shown}</span>
     ${label ? html`<span class="ring-sub" aria-hidden="true">${qualityLabel(s, th)}</span>` : ''}
   </span>`;
 }
@@ -350,7 +358,9 @@ export function countUp(root = document) {
     el.dataset.counted = '1';
     if (el.classList.contains('ring-num')) {
       const ring = el.closest('.score-ring');
-      return countTo(el, Number(el.dataset.countTo), { ring, threshold: Number(ring?.dataset.qThreshold ?? th), decimals: Number(el.dataset.decimals || 0), key: ring?.dataset.countKey });
+      // the caption ("+23 over bar") stays hidden until the number lands (F)
+      return countTo(el, Number(el.dataset.countTo), { ring, threshold: Number(ring?.dataset.qThreshold ?? th), decimals: Number(el.dataset.decimals || 0), key: ring?.dataset.countKey })
+        .then(() => { ring?.classList.remove('is-counting'); if (ring) paintQuality(ring, Number(ring.dataset.qScore), Number(ring.dataset.qThreshold ?? th)); });
     }
     const int = el.querySelector('.int') || el;
     return countTo(int, Number(el.dataset.v), { threshold: th, from: Number(el.dataset.from ?? 0), decimals: el.dataset.dec === '1' ? 1 : 0, duration: 1100, key: el.closest('[data-count-key]')?.dataset.countKey });

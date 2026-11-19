@@ -10,7 +10,9 @@
 // three weight buckets (one path each), nodes by the quality ramp quantised to 12 steps (one path per step;
 // non-colour cues: below the bar = hollow, top tier = an inner halo ring), then the selection last.
 // Hit-testing is a uniform world grid. Wheel zooms about the cursor, drag pans with inertia, two pointers
-// pinch. Labels: ≤ 20 node labels and ≤ 12 topic labels, pooled DOM moved with transform.
+// pinch. Labels: the top-3 hot regions first (always shown, at the top-centre of their hull), then ≤ 20 node
+// labels (selection, hover, stories at or above the bar) and the other regions where room is left; pooled DOM
+// moved with transform. Node discs are 8–22 px by score at the fitted view; every topic gets a hull.
 // Colours come from tokens (read with getComputedStyle) and quality.js; nothing literal.
 
 import { qualityColor, qualityTier } from './quality.js';
@@ -23,6 +25,17 @@ const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 const LO = { dpr: 0, min: 0.55, fast: 0 };
 // resting-canvas resolution cap: 2× unless the sharp redraw after a gesture proves too slow here
 const HI = { cap: 2, slow: 0 };
+// round-1 M7: the last fitted, unselected Map frame, kept at 1× when the tab is left; the next visit paints it at
+// once and does the full draw in an idle callback after byline:routed (key: payload, theme and stage size)
+let SNAP = null;
+// label search offsets around an anchor, nearest first: sliding along the hull's top edge is cheapest, moving
+// up costs more and moving down (over the hull) most
+const SPIRAL = (() => {
+  const out = [];
+  for (let dy = -130; dy <= 130; dy += 6) for (let dx = -160; dx <= 160; dx += 10) { const d = Math.hypot(dx * 0.75, dy > 0 ? dy * 1.8 : dy * 1.25); if (d <= 130) out.push([dx, dy, d]); }
+  return out.sort((a, b) => a[2] - b[2]).map(([x, y]) => [x, y]);
+})();
+const SPIRAL_NEAR = SPIRAL.filter(([x, y]) => Math.hypot(x, y) <= 40);
 
 // ====================================================================== data (cache-first, ETag revalidation)
 let mem = null;        // { etag, data, checked }
@@ -140,13 +153,26 @@ function measurer() {
   return measureCtx;
 }
 
-// short node label: the server's short title, cut at a word boundary
+/**
+ * Short title (round-1 M5/M6): the text before the first ':', ' — ', ' – ', ',' or ';' (when that prefix reads as
+ * a title, ≥ 12 characters), with an `org/` repo prefix stripped; otherwise the whole title, cut at a word boundary
+ * only when it exceeds `max`. `always` cuts at the first break even when the title already fits.
+ */
+export function shortTitle(title, { max = 34, always = false } = {}) {
+  let t = String(title || '').replace(/\s*…$/, '').trim();
+  t = t.replace(/^[a-z0-9][\w.-]*\/(?=[\w.-]+(?:\s|$))/i, '');
+  if (!always && t.length <= max) return t;
+  const m = /:\s|\s[—–]\s|,\s|;\s/.exec(t);
+  if (m && m.index >= 12 && m.index <= max) return t.slice(0, m.index).trim();
+  if (t.length <= max) return t;
+  const cut = t.slice(0, max);
+  const sp = t[max] === ' ' ? max : cut.lastIndexOf(' ');
+  return `${(sp > max * 0.5 ? cut.slice(0, sp) : cut).replace(/[\s,;:—–-]+$/, '')}…`;
+}
+// node label: from the full title (the server's short_title may itself be a mid-phrase cut)
 function labelText(n) {
-  const t = String(n.short_title || n.title || `Story ${n.id}`).replace(/…$/, '').trim();
-  if (t.length <= 34) return t;
-  const cut = t.slice(0, 33);
-  const sp = cut.lastIndexOf(' ');
-  return `${(sp > 18 ? cut.slice(0, sp) : cut).replace(/[\s,;:—-]+$/, '')}…`;
+  const base = n.short_title && !/…$/.test(n.short_title) ? n.short_title : (n.title || n.short_title || `Story ${n.id}`);
+  return shortTitle(base, { max: 34 });
 }
 
 // ====================================================================== the engine
@@ -165,6 +191,7 @@ class MapEngine {
       this.lo = document.createElement('canvas');
       this.lo.className = 'map-canvas map-canvas--lo';
       this.lo.setAttribute('aria-hidden', 'true');
+      this.lo.width = this.lo.height = 1; // sized on the first camera motion (no idle backing store at rest)
       this.loCtx = this.lo.getContext('2d');
       host.append(this.lo);
     }
@@ -185,6 +212,7 @@ class MapEngine {
     this.tok = null; // read lazily at the first draw (never force a style recalc while the route renders)
     this.labelW = new Map();
     this.destroyed = false;
+    this.held = !!opts.defer && !this.mini; // no full draw until release() (the view calls it when idle)
 
     if (!this.mini) this.buildOverlays();
     this.ro = new ResizeObserver((entries) => this.onResize(entries[0].contentRect));
@@ -228,12 +256,12 @@ class MapEngine {
       this.dpr = dpr;
       this.canvas.width = Math.round(W * dpr);
       this.canvas.height = Math.round(H * dpr);
-      if (!this.mini) { this.canvas.style.width = `${W}px`; this.canvas.style.height = `${H}px`; this.sizeLo(); }
+      if (!this.mini) { this.canvas.style.width = `${W}px`; this.canvas.style.height = `${H}px`; if (this.loSized) this.sizeLo(); }
       this.rect = null;
       if (this.N && (!this.fitted || this.mini || !this.userMoved)) this.fit({ animate: false });
       this.requestDraw();
     };
-    if (first) apply(); else this.rzT = setTimeout(apply, 140);
+    if (first || this.held) apply(); else this.rzT = setTimeout(apply, 140);
   }
 
   sizeLo() {
@@ -244,6 +272,7 @@ class MapEngine {
     this.lo.width = Math.max(1, Math.round(this.w * d));
     this.lo.height = Math.max(1, Math.round(this.h * d));
     this.lo.style.width = `${this.w}px`; this.lo.style.height = `${this.h}px`;
+    this.loSized = this.w * 1e5 + this.h;
   }
 
   // -------------------------------------------------------------------- data
@@ -255,6 +284,9 @@ class MapEngine {
     this.nodes = nodes;
     this.th = d?.threshold ?? window.__byline?.threshold ?? 55;
     this.X = new Float32Array(N); this.Y = new Float32Array(N); this.R = new Float32Array(N);
+    // screen radius at the fitted view: 8–22 px by score (round-1 M5); world R stays the layout's collision radius
+    this.SR = new Float32Array(N);
+    nodes.forEach((n, i) => { this.SR[i] = 8 + 14 * clamp(+n.score || 0, 0, 100) / 100; });
     this.alpha = new Float32Array(N).fill(1); this.alphaT = new Float32Array(N).fill(1);
     this.intro = new Float32Array(N).fill(1);
     this.idx = new Map();
@@ -306,17 +338,18 @@ class MapEngine {
     this.requestDraw();
   }
 
-  /** Quantised quality colours: 5 steps below the bar, 7 at and above (12 total), per theme. */
+  /** Quantised quality colours: 5 steps below the bar, 7 at and above (12 total), per theme. The steps follow the
+   *  ramp's stops (−30 … −1 below, 0 … +25 above), so the top tier reaches the deepest blue. */
   paletteFor() {
     if (!this.N) { this.qkey = new Int8Array(0); this.qcol = []; return; }
     const th = this.th;
     this.qkey = new Int8Array(this.N);
     this.tier = new Array(this.N);
-    const steps = [-30, -24, -18, -12, -6, 0, 2.5, 5, 7.5, 10, 12.5, 15];
-    this.qcol = steps.map(s => qualityColor(th + (s < 0 ? s + 3 : s), th));
+    const below = [-30, -22, -15, -8, -2], above = [1, 5, 9, 13, 17, 21, 25];
+    this.qcol = [...below, ...above].map(s => qualityColor(th + s, th));
     this.nodes.forEach((n, i) => {
       const d = (+n.score || 0) - th;
-      const k = d < 0 ? clamp(4 - Math.floor(-d / 6.0001), 0, 4) : clamp(5 + Math.floor(d / 2.5), 5, 11);
+      const k = d < 0 ? (d <= -26 ? 0 : d <= -18.5 ? 1 : d <= -11.5 ? 2 : d <= -5 ? 3 : 4) : 5 + clamp(Math.floor((d + 1) / 4), 0, 6);
       this.qkey[i] = k;
       this.tier[i] = qualityTier(+n.score || 0, th);
     });
@@ -352,9 +385,11 @@ class MapEngine {
     };
     this.clusters.forEach((c, ci) => {
       if (!c.members.length || c.topic == null) return;
-      // a region is two or more same-topic stories near each other; a lone story only gets a faint halo
+      // a region's core is the same-topic stories that sit near each other; when none do, every story of the
+      // topic is its core, so each topic gets a hull of its own (round-1 M5); outliers keep a faint halo
       const near = 3.2 * 40;
-      const core = c.members.filter(i => c.members.some(j => j !== i && Math.hypot(this.X[i] - this.X[j], this.Y[i] - this.Y[j]) < near + this.R[i] + this.R[j]));
+      let core = c.members.filter(i => c.members.some(j => j !== i && Math.hypot(this.X[i] - this.X[j], this.Y[i] - this.Y[j]) < near + this.R[i] + this.R[j]));
+      if (!core.length) core = c.members.slice();
       const fc = new Float32Array(gw * gh), fh = new Float32Array(gw * gh);
       const bb = [gw, gh, 0, 0];
       for (const i of core) splat(fc, i, bb);
@@ -366,8 +401,37 @@ class MapEngine {
       };
       if (core.length) scan(fc, bb, coreMax, (v, k) => { if (v > coreMax[k]) { coreMax[k] = v; owner[k] = ci; } if (v > best) { best = v; bi = k; } });
       scan(fh, hb, haloMax, (v, k) => { if (v > haloMax[k]) { haloMax[k] = v; if (coreMax[k] < 0.2) owner[k] = ci; } if (!core.length && v > best) { best = v; bi = k; } });
-      // label anchor: the core's peak (where the topic's stories sit closest together)
-      if (bi >= 0) out.labels.push({ ci, x: x0 + (bi % gw) * cell, y: y0 + Math.floor(bi / gw) * cell, peak: best });
+      // ripple anchor: the core's peak (where the topic's stories sit closest together); label anchor: the
+      // top-centre of the hull (the outer isobar's blob that holds the peak), found by a flood fill from the peak
+      if (bi >= 0) {
+        const lab = { ci, x: x0 + (bi % gw) * cell, y: y0 + Math.floor(bi / gw) * cell, peak: best };
+        const LV = 0.45;
+        // the label's blob is the one holding the topic's best-scoring story (a topic may have several blobs)
+        let top = core[0];
+        for (const i of core) if ((this.nodes[i].score || 0) > (this.nodes[top].score || 0)) top = i;
+        const tgx = clamp(Math.round((this.X[top] - x0) / cell), 0, gw - 1), tgy = clamp(Math.round((this.Y[top] - y0) / cell), 0, gh - 1);
+        const start = fc[tgy * gw + tgx] >= LV ? tgy * gw + tgx : bi;
+        if (core.length && fc[start] >= LV) {
+          const seen = new Uint8Array(gw * gh), stack = [start];
+          let gx0 = gw, gx1 = 0, gy0 = gh;
+          seen[start] = 1;
+          while (stack.length) {
+            const k = stack.pop(), gx = k % gw, gy = (k - gx) / gw;
+            if (gx < gx0) gx0 = gx; if (gx > gx1) gx1 = gx; if (gy < gy0) gy0 = gy;
+            const nb = [gx > 0 ? k - 1 : -1, gx < gw - 1 ? k + 1 : -1, gy > 0 ? k - gw : -1, gy < gh - 1 ? k + gw : -1];
+            for (const q of nb) if (q >= 0 && !seen[q] && fc[q] >= LV) { seen[q] = 1; stack.push(q); }
+          }
+          // interpolate the hull's top edge inside the topmost cell row's column at the bbox centre
+          const cx = Math.round((gx0 + gx1) / 2);
+          let ty = gy0;
+          for (let gy = gy0; gy < gh; gy++) { if (fc[gy * gw + cx] >= LV) { ty = gy; break; } }
+          const above = ty > 0 ? fc[(ty - 1) * gw + cx] : 0, at = fc[ty * gw + cx];
+          const fy = ty - (at - LV) / Math.max(1e-6, at - above);
+          lab.tx = x0 + ((gx0 + gx1) / 2) * cell;
+          lab.ty = y0 + Math.max(gy0 - 1, Math.min(ty, fy)) * cell;
+        } else { lab.tx = lab.x; lab.ty = lab.y; }
+        out.labels.push(lab);
+      }
       // isobars on the core field: the outer ring marks the region, inner rings show how tightly stories overlap
       if (core.length) {
         const levels = this.mini ? [0.45, 1.25] : [0.45, 1.25, 2.0, 2.9, 3.9];
@@ -382,13 +446,14 @@ class MapEngine {
     off.width = gw; off.height = gh;
     const octx = off.getContext('2d');
     const img = octx.createImageData(gw, gh);
-    const base = tok.night ? 0.075 : 0.06, hotA = tok.night ? 0.13 : 0.09;
+    // hull fill 0.06–0.10 by heat (round-1 M5), with a crisp edge at the outer isobar so it reads as a region
+    const base = tok.night ? 0.065 : 0.06, hotA = tok.night ? 0.035 : 0.04;
     const ss = (e0, e1, v) => { const t = clamp((v - e0) / (e1 - e0), 0, 1); return t * t * (3 - 2 * t); };
     for (let k = 0; k < gw * gh; k++) {
       const ci = owner[k];
       if (ci < 0) continue;
       const c = this.clusters[ci];
-      const sm = Math.max(ss(0.3, 1.5, coreMax[k]), ss(0.25, 1, haloMax[k]) * 0.3);
+      const sm = this.mini ? Math.max(ss(0.3, 1.5, coreMax[k]), ss(0.25, 1, haloMax[k]) * 0.3) : Math.max(ss(0.36, 0.56, coreMax[k]), ss(0.25, 1, haloMax[k]) * 0.25);
       if (sm <= 0) continue;
       const h = heatOf(c), t = h * 0.85, o = k * 4;
       img.data[o] = ink[0] + (hot[0] - ink[0]) * t;
@@ -407,14 +472,44 @@ class MapEngine {
   fit({ animate = true, pad } = {}) {
     if (!this.w || !this.N) return;
     const b = this.bounds;
-    const p = pad ?? (this.mini ? 14 : Math.min(64, this.w * 0.07));
-    const ext = this.mini ? 40 : 18; // room for the isobars around the outermost stories
-    const bw = Math.max(40, b.x1 - b.x0 + ext * 2), bh = Math.max(40, b.y1 - b.y0 + ext * 2);
-    const k = Math.min((this.w - p * 2) / bw, (this.h - p * 2) / bh);
+    let target;
+    if (this.mini) {
+      const p = pad ?? 14, ext = 40; // room for the isobars around the outermost stories
+      const bw = Math.max(40, b.x1 - b.x0 + ext * 2), bh = Math.max(40, b.y1 - b.y0 + ext * 2);
+      const k = Math.min((this.w - p * 2) / bw, (this.h - p * 2) / bh);
+      target = { x: (b.x0 + b.x1) / 2, y: (b.y0 + b.y1) / 2, k, fit: true };
+    } else {
+      // round-1 M3: fit the nodes' screen discs (8–22 px at this zoom) with `pad` px on every side, so the
+      // drawing fills the stage instead of floating in the middle of it
+      // 48 px on a desktop stage; a phone stage keeps room for its legend row on top and narrower sides
+      const P = pad != null ? { t: pad, b: pad, l: pad, r: pad } : this.w < 560 ? { t: 52, b: 22, l: 20, r: 20 } : { t: 48, b: 48, l: 48, r: 48 };
+      const aw = Math.max(40, this.w - P.l - P.r), ah = Math.max(40, this.h - P.t - P.b);
+      let xs = Infinity, xe = -Infinity, ys = Infinity, ye = -Infinity;
+      for (let i = 0; i < this.N; i++) { xs = Math.min(xs, this.X[i]); xe = Math.max(xe, this.X[i]); ys = Math.min(ys, this.Y[i]); ye = Math.max(ye, this.Y[i]); }
+      let k = Math.min(aw / Math.max(1, xe - xs), ah / Math.max(1, ye - ys)) || 1;
+      const extent = (k) => {
+        let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+        for (let i = 0; i < this.N; i++) {
+          const r = this.SR[i] * this.rScaleAt(k), x = this.X[i] * k, y = this.Y[i] * k;
+          if (x - r < x0) x0 = x - r; if (x + r > x1) x1 = x + r; if (y - r < y0) y0 = y - r; if (y + r > y1) y1 = y + r;
+        }
+        return { x0, x1, y0, y1 };
+      };
+      for (let it = 0; it < 5 && this.N > 1; it++) {
+        const e = extent(k), f = Math.min(aw / Math.max(1, e.x1 - e.x0), ah / Math.max(1, e.y1 - e.y0));
+        if (Math.abs(f - 1) < 0.002) break;
+        k *= f;
+      }
+      k = clamp(k, 0.05, 6);
+      const ext = extent(k);
+      // centre the box inside the padded area (asymmetric padding shifts it)
+      target = { x: ((ext.x0 + ext.x1) / 2 + (P.r - P.l) / 2) / k, y: ((ext.y0 + ext.y1) / 2 + (P.b - P.t) / 2) / k, k, fit: true };
+      this.rScale = this.rScaleAt(k);
+    }
+    const k = target.k;
     this.fitK = k;
     this.kMin = Math.min(0.3, k * 0.6);
     this.kMax = Math.max(4, k * 8);
-    const target = { x: (b.x0 + b.x1) / 2, y: (b.y0 + b.y1) / 2, k, fit: true };
     this.userMoved = false;
     this.fitted = true;
     if (animate && !reduced()) this.flyTo(target); else { Object.assign(this.cam, target); this.requestDraw(); }
@@ -450,9 +545,12 @@ class MapEngine {
   screenOf(i) { return { x: (this.X[i] - this.cam.x) * this.cam.k + this.w / 2, y: (this.Y[i] - this.cam.y) * this.cam.k + this.h / 2 }; }
   worldOf(px, py) { return { x: (px - this.w / 2) / this.cam.k + this.cam.x, y: (py - this.h / 2) / this.cam.k + this.cam.y }; }
   /** Screen radius: world radius scaled sub-linearly with zoom, normalised so the fitted view reads well. */
+  /** Disc scale at a fitted zoom: 1 (8–22 px) on a desktop stage, down to .5 when the layout is squeezed into a
+   *  phone-width stage, so discs never pile into one another. */
+  rScaleAt(k) { return clamp(k / 0.72, 0.5, 1); }
   rs(i) {
-    const s0 = clamp(this.fitK * 1.15, 0.55, 1.3) * (this.mini ? 0.85 : 1);
-    return clamp(this.R[i] * s0 * Math.pow(this.cam.k / this.fitK, 0.6), this.mini ? 1.6 : 2.6, 44);
+    if (this.mini) return clamp(this.R[i] * clamp(this.fitK * 1.15, 0.55, 1.3) * 0.85 * Math.pow(this.cam.k / this.fitK, 0.6), 1.6, 44);
+    return clamp(this.SR[i] * (this.rScale || 1) * Math.pow(this.cam.k / this.fitK, 0.6), 3, 44);
   }
   /** Bring node i into view (centred if it is off-screen or under the edges). */
   reveal(i, { zoom = false } = {}) {
@@ -573,6 +671,7 @@ class MapEngine {
     c.addEventListener('pointerdown', (e) => {
       if (e.button !== 0 && e.pointerType === 'mouse') return;
       this.rect = null;
+      this.live(true);
       const p = pos(e);
       c.setPointerCapture?.(e.pointerId);
       this.pointers.set(e.pointerId, p);
@@ -623,6 +722,7 @@ class MapEngine {
       const d = this.drag;
       this.drag = null;
       this.host.classList.remove('is-dragging');
+      if (!this.anim.inertia) this.live(false);
       if (!d) return;
       if (!d.moved && e.type === 'pointerup') {
         const p = pos(e);
@@ -640,6 +740,7 @@ class MapEngine {
     c.addEventListener('pointercancel', end);
     c.addEventListener('wheel', (e) => {
       e.preventDefault();
+      this.live(true);
       if (!this.rect) this.rect = c.getBoundingClientRect();
       const px = e.clientX - this.rect.left, py = e.clientY - this.rect.top;
       const dy = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
@@ -696,13 +797,51 @@ class MapEngine {
   // -------------------------------------------------------------------- frame loop (on demand only)
   requestDraw() {
     if (this.destroyed || this.raf) return;
+    if (this.held) { this.paintSnap(); return; }
     this.raf = requestAnimationFrame((t) => this.frame(t));
+  }
+  snapKey() { return `${this.data?.meta?.etag || this.data?.meta?.generated_at || this.N}|${themeNow()}|${this.w}x${this.h}`; }
+  /** While held: show the cached frame from the last visit (a single drawImage), if it matches this stage. */
+  paintSnap() {
+    if (!SNAP || !this.w || this.snapShown === this.canvas.width || SNAP.key !== this.snapKey()) return;
+    this.ctx.setTransform(1, 0, 0, 1, 0, 0);
+    this.ctx.imageSmoothingEnabled = true;
+    this.ctx.drawImage(SNAP.canvas, 0, 0, this.canvas.width, this.canvas.height);
+    this.snapShown = this.canvas.width;
+  }
+  /** True when the cached frame is on screen (the view then skips the intro: the map was already seen). */
+  get fromSnap() { return !!this.snapShown; }
+  /** End the hold: full draw (regions, isobars, labels) in the next frame. */
+  release() {
+    if (!this.held || this.destroyed) return;
+    this.held = false;
+    this.requestDraw();
+  }
+  saveSnap() {
+    if (this.mini || !this.w || !this.N || this.sel >= 0 || this.userMoved || this.anim.intro || this.state === 'lo' || this.held) return;
+    for (let i = 0; i < this.N; i++) if (this.alphaT[i] < 1) return;
+    try {
+      const c = SNAP?.canvas?.width === this.w && SNAP.canvas.height === this.h ? SNAP.canvas : document.createElement('canvas');
+      c.width = this.w; c.height = this.h;
+      const x = c.getContext('2d');
+      x.clearRect(0, 0, this.w, this.h);
+      x.drawImage(this.canvas, 0, 0, this.w, this.h);
+      SNAP = { key: this.snapKey(), canvas: c };
+    } catch (e) { SNAP = null; }
+  }
+  /** will-change only while the camera is live (round-1 M7): set on pointerdown / wheel / camera motion,
+   *  cleared 300 ms after it settles, so a resting Map holds no permanent compositor layers. */
+  live(on) {
+    if (this.mini) return;
+    clearTimeout(this.liveT);
+    if (on) { if (!this.isLive) { this.isLive = true; this.host.classList.add('is-live'); } return; }
+    this.liveT = setTimeout(() => { if (this.destroyed || this.state === 'lo' || this.drag) return; this.isLive = false; this.host.classList.remove('is-live'); }, 300);
   }
   /** Draw now (no rAF) — used by the mini map and for the first paint. */
   drawNow() { if (this.raf) { cancelAnimationFrame(this.raf); this.raf = 0; } this.frame(performance.now()); }
   frame(now) {
     this.raf = 0;
-    if (this.destroyed || !this.w || !this.N && !this.data) return;
+    if (this.destroyed || this.held || !this.w || !this.N && !this.data) return;
     const dt = this.last ? Math.min(64, now - this.last) : 16;
     this.last = now;
     let more = false;
@@ -757,6 +896,8 @@ class MapEngine {
       if (this.prevMoving) { iv.push(dt); if (iv.length > 8) iv.shift(); }
       if (iv.filter(t => t > 24).length >= 2 && LO.dpr > LO.min) { LO.dpr = Math.max(LO.min, LO.dpr * 0.8); iv.length = 0; this.sizeLo(); }
       this.o.onMotion?.();
+      this.live(true);
+      if (this.loSized !== this.w * 1e5 + this.h) this.sizeLo();
       this.draw(this.loCtx, this.loDpr, this.lo);
       if (this.state !== 'lo') { this.state = 'lo'; this.host.classList.add('is-moving'); }
       this.sharp = false;
@@ -768,6 +909,7 @@ class MapEngine {
       this.draw(this.ctx, this.dpr, this.canvas);
       if (this.state === 'lo') {
         this.state = 'hi'; this.host.classList.remove('is-moving'); this.motionIv = null;
+        this.live(false);
         // one probe frame: if the sharp redraw keeps costing > 45 ms, lower the resting resolution
         const t0 = now;
         requestAnimationFrame((t1) => {
@@ -967,26 +1109,64 @@ class MapEngine {
     this.host.classList.remove('labels-off');
     const placed = [];
     const hitR = (r, q) => r.x < q.x + q.w && r.x + r.w > q.x && r.y < q.y + q.h && r.y + r.h > q.y;
-    const inView = (r) => r.x > 4 && r.y > 4 && r.x + r.w < this.w - 4 && r.y + r.h < this.h - 4;
-    // node discs (visible ones) block every label; candidates for node labels: selection, hover,
-    // neighbours first, then the biggest by score with a screen radius ≥ 10 px (E §4)
+    // keep clear of the stage's own overlays: the legend (bottom on desktop, top on a phone) and the zoom column
+    const phone = this.w < 560;
+    const ins = phone ? { t: 46, b: 8, l: 6, r: 6 } : { t: 6, b: 50, l: 6, r: 50 };
+    const inView = (r) => r.x > ins.l && r.y > ins.t && r.x + r.w < this.w - ins.r && r.y + r.h < this.h - ins.b;
+    // discs with a screen radius ≥ 6 px block labels (round-1 M5). Node labels go to the selection, the hovered
+    // node and the stories at or above the bar; nothing else is labelled
     const discs = [], cand = [];
     for (let i = 0; i < this.N; i++) {
       if (this.alpha[i] < 0.6 || this.intro[i] < 0.6) continue;
       const s = this.screenOf(i), rs = this.rs(i);
       if (s.x < -20 || s.y < -20 || s.x > this.w + 20 || s.y > this.h + 20) continue;
       const d = { x: s.x - rs - 2, y: s.y - rs - 2, w: rs * 2 + 4, h: rs * 2 + 4 };
-      discs.push(d);
-      const pri = i === this.sel ? 3 : i === this.hover ? 2.5 : this.nbr.has(i) ? 2 : (this.sel < 0 && (rs >= 10 || (this.nodes[i].score || 0) >= this.th) ? 1 : 0);
+      if (rs >= 6) discs.push(d);
+      const above = (this.nodes[i].score || 0) >= this.th;
+      const pri = i === this.sel ? 3 : i === this.hover ? 2.5 : above ? (this.nbr.has(i) ? 2 : 1) : 0;
       if (pri > 0) cand.push({ i, s, rs, pri, d });
     }
     const free = (r, self) => inView(r) && !placed.some(q => hitR(r, q)) && !discs.some(d => d !== self && hitR(r, d));
-    // node labels (≤ 20), greedy: right, left, below, above. Selection, hover, neighbours and stories
-    // above the bar claim their spot before the topic labels; the rest fill in after.
+
+    // 1. the top-3 hot regions, always: at the top-centre of their hull, nudged off nodes, forced into view
+    const tl = this.regions ? this.regions.labels : [];
+    while (this.topicPool.length < tl.length) { const s = document.createElement('span'); s.className = 'map-topic'; s.innerHTML = '<i></i><b></b>'; this.topicLayer.append(s); this.topicPool.push(s); }
+    const rank = new Map((this.data?.hot_topics || []).slice(0, 3).map((h, r) => [h.topic, r + 1]));
+    const fT = '500 12px Geist, system-ui, sans-serif';
+    const H = 22;
+    const topics = tl.map((l, j) => ({ l, j, c: this.clusters[l.ci], rank: rank.get(this.clusters[l.ci].topic) || 0 }));
+    const placeTopic = ({ l, j, c, rank: rk }, force) => {
+      const el = this.topicPool[j];
+      const name = c.label || c.topic;
+      const w = Math.ceil(this.measure(name, fT) + (rk ? 16 + 6 - 5 : 0) + 20);
+      if (el.dataset.t !== name || el.dataset.r !== String(rk)) {
+        el.dataset.t = name; el.dataset.r = String(rk);
+        el.firstChild.textContent = rk ? String(rk) : ''; el.lastChild.textContent = name;
+        el.classList.toggle('is-hot', !!rk);
+      }
+      const ax = (l.tx - this.cam.x) * this.cam.k + this.w / 2 - w / 2, ay = (l.ty - this.cam.y) * this.cam.k + this.h / 2 - H / 2;
+      // nearest clear spot to the anchor (forced labels search up to 130 px out; upward moves are cheaper,
+      // since the hull lies below its top edge), else the other regions give up after a short search
+      let r = null;
+      for (const [dx, dy] of force ? SPIRAL : SPIRAL_NEAR) { const q = { x: ax + dx, y: ay + dy, w, h: H }; if (free(q)) { r = q; break; } }
+      if (!r && force) {
+        // nowhere clear: keep it at its anchor (inside the stage), stepping past other forced labels only
+        const q = { x: clamp(ax, ins.l + 1, this.w - ins.r - w - 1), y: clamp(ay, ins.t + 1, this.h - ins.b - H - 1), w, h: H };
+        for (let t = 0; t < 4 && placed.some(p => hitR(q, p)); t++) q.y = clamp(q.y + (H + 4) * (q.y > this.h / 2 ? -1 : 1), ins.t + 1, this.h - ins.b - H - 1);
+        r = q;
+      }
+      const faded = this.topicFade?.(c) ?? false;
+      if (r) { placed.push(r); el.style.transform = `translate3d(${Math.round(r.x)}px, ${Math.round(r.y)}px, 0)`; }
+      el.classList.toggle('on', !!r && !faded);
+      el.classList.toggle('dim', !!r && faded);
+    };
+    topics.filter(t => t.rank).sort((a, b) => a.rank - b.rank).forEach(t => placeTopic(t, true));
+
+    // 2. node labels (≤ 20), greedy over 8 spots; a label that would cover another label or a disc is dropped
     cand.sort((a, b) => b.pri - a.pri || (this.nodes[b.i].score || 0) - (this.nodes[a.i].score || 0));
     const fN = '500 12px Geist, system-ui, sans-serif';
     let used = 0;
-    const placeNodes = (list) => { for (const c of list) {
+    for (const c of cand) {
       if (used >= this.labelPool.length) break;
       const n = this.nodes[c.i];
       const text = labelText(n);
@@ -1003,33 +1183,17 @@ class MapEngine {
       el.classList.toggle('is-sel', c.i === this.sel);
       el.style.transform = `translate3d(${Math.round(r.x)}px, ${Math.round(r.y)}px, 0)`;
       el.classList.add('on');
-    } };
-    const first = cand.filter(c => c.pri >= 2 || (this.nodes[c.i].score || 0) >= this.th);
-    placeNodes(first);
-    // topic labels (≤ 12): at the region's peak, nudged off nodes
-    const tl = this.regions ? this.regions.labels : [];
-    while (this.topicPool.length < tl.length) { const s = document.createElement('span'); s.className = 'map-topic'; s.innerHTML = '<b></b><i></i>'; this.topicLayer.append(s); this.topicPool.push(s); }
-    const fT = '500 12px Geist, system-ui, sans-serif', fC = '500 11px "Geist Mono", ui-monospace, monospace';
-    tl.forEach((l, j) => {
-      const el = this.topicPool[j], c = this.clusters[l.ci];
-      const name = c.label || c.topic;
-      const w = Math.ceil(this.measure(name, fT) + this.measure(String(c.count), fC) + 26), h = 22;
-      const x = (l.x - this.cam.x) * this.cam.k + this.w / 2 - w / 2, y = (l.y - this.cam.y) * this.cam.k + this.h / 2 - h / 2;
-      const tries = [[0, 0], [0, -30], [0, 30], [-w / 2 - 14, 0], [w / 2 + 14, 0], [0, -56], [0, 56]];
-      let r = null;
-      for (const [dx, dy] of tries) { const q = { x: x + dx, y: y + dy, w, h }; if (free(q)) { r = q; break; } }
-      const faded = this.topicFade?.(c) ?? false;
-      if (el.dataset.t !== name) { el.dataset.t = name; el.firstChild.textContent = name; el.lastChild.textContent = c.count; el.classList.toggle('is-hot', this.hot.has(c.topic)); }
-      if (r) { placed.push(r); el.style.transform = `translate3d(${Math.round(r.x)}px, ${Math.round(r.y)}px, 0)`; }
-      el.classList.toggle('on', !!r && !faded);
-      el.classList.toggle('dim', !!r && faded);
-    });
-    for (let j = tl.length; j < this.topicPool.length; j++) this.topicPool[j].classList.remove('on', 'dim');
-    placeNodes(cand.filter(c => !first.includes(c)));
+    }
     for (let j = used; j < this.labelPool.length; j++) this.labelPool[j].classList.remove('on');
+
+    // 3. the other regions, where room is left
+    topics.filter(t => !t.rank).forEach(t => placeTopic(t, false));
+    for (let j = tl.length; j < this.topicPool.length; j++) this.topicPool[j].classList.remove('on', 'dim');
   }
 
   destroy() {
+    this.saveSnap();
+    clearTimeout(this.liveT);
     this.destroyed = true;
     if (this.raf) cancelAnimationFrame(this.raf);
     if (this.hoverRaf) cancelAnimationFrame(this.hoverRaf);

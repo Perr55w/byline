@@ -154,4 +154,121 @@ export async function cRules(ctx) {
   return g;
 }
 
-export const MOTION_GATES = { 'C-entrance': cEntrance, 'C-pacing': cPacing, 'C-rules': cRules };
+// ------------------------------------------------------------------ round 1 S7/S18: theme switch contrast frames
+const CONTRAST_PROBE = (max = 160) => {
+  const parse = (c) => { const m = /rgba?\(([^)]+)\)/.exec(c || ''); if (!m) return null; const p = m[1].split(/[\s,\/]+/).filter(Boolean).map(Number); return [p[0], p[1], p[2], p[3] ?? 1]; };
+  const lum = ([r, g, b]) => { const f = (v) => { v /= 255; return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }; return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b); };
+  const over = (top, under) => { const a = top[3]; return [top[0] * a + under[0] * (1 - a), top[1] * a + under[1] * (1 - a), top[2] * a + under[2] * (1 - a), 1]; };
+  const base = parse(getComputedStyle(document.body).backgroundColor) || [245, 246, 248, 1];
+  const els = [...document.querySelectorAll('#view .page.current :is(h1, h2, h3, .lede, p, li, .t-meta, .chip, .tag, .eyebrow, .t-title, a)')].filter(el => {
+    if (!el.childNodes.length || ![...el.childNodes].some(n => n.nodeType === 3 && n.nodeValue.trim())) return false;
+    const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && r.bottom > 0 && r.top < innerHeight;
+  }).slice(0, max);
+  let min = Infinity, worst = '';
+  for (const el of els) {
+    const cs = getComputedStyle(el); if (parseFloat(cs.opacity) < .1) continue;
+    const fg = parse(cs.color); if (!fg) continue;
+    const stack = []; for (let p = el; p && p !== document.body; p = p.parentElement) { const b = parse(getComputedStyle(p).backgroundColor); if (b && b[3] > 0) stack.push(b); }
+    let bg = base; for (let i = stack.length - 1; i >= 0; i--) bg = over(stack[i], bg);
+    const f = over(fg, bg);
+    const L1 = lum(f), L2 = lum(bg), c = (Math.max(L1, L2) + 0.05) / (Math.min(L1, L2) + 0.05);
+    if (c < min) { min = c; worst = `${window.__e2e.desc(el).slice(0, 50)} ${cs.color} on rgb(${bg.slice(0, 3).map(Math.round).join(',')})`; }
+  }
+  return { min: Number.isFinite(min) ? +min.toFixed(2) : null, worst, n: els.length };
+};
+export async function cTheme(ctx) {
+  const g = newGate('C-theme', 'Theme switch: contrast frames and pacing', 'motion', 'Round 1 S7: text/surface contrast ≥ 3:1 at 100, 300 and 500 ms after the switch (both directions); frame p95 ≤ 33 ms at 1×');
+  const P = await openPage(ctx.browser, { profile: DESKTOP });
+  ctx.track(P);
+  try {
+    await gotoRoute(P.page, ctx.base, 'today', { settle: 3200 });
+    for (const to of ['night', 'proof']) {
+      const res = await P.page.evaluate(async ({ to, probe }) => {
+        const fn = new Function(`return (${probe})`)();
+        const at = [100, 300, 500], shots = {}, all = [];
+        const t0 = performance.now();
+        window.__byline.setTheme(to);
+        const ts = await window.__e2e.everyFrame((i, t) => {
+          const dt = performance.now() - t0;
+          const r = fn(80); all.push({ dt: Math.round(dt), min: r.min, worst: r.worst });
+          for (const a of at) if (!shots[a] && dt >= a) shots[a] = { dt: Math.round(dt), ...r };
+          return t;
+        }, 700);
+        return { shots, all, ts };
+      }, { to, probe: CONTRAST_PROBE.toString() });
+      for (const a of [100, 300, 500]) {
+        const s = res.shots[a];
+        check(g, `contrast at ${a} ms`, s ? s.min : null, '>=', 3, { scope: `→ ${to}`, detail: s ? `sampled at ${s.dt} ms over ${s.n} text elements; worst ${s.worst}` : 'no frame' });
+      }
+      const lowest = res.all.filter(x => x.min != null).sort((x, y) => x.min - y.min)[0];
+      check(g, 'lowest contrast on any frame', lowest ? lowest.min : null, 'info', null, { scope: `→ ${to}`, detail: lowest ? `${lowest.dt} ms: ${lowest.worst}; frames < 3:1: ${res.all.filter(x => x.min != null && x.min < 3).map(x => x.dt).join(', ') || 'none'} ms` : '' });
+      await sleep(900);
+    }
+    // pacing, without the per-frame probe
+    for (const to of ['night', 'proof']) {
+      const ts = await P.page.evaluate(async (to) => { window.__byline.setTheme(to); return window.__e2e.everyFrame((i, t) => t, 700); }, to);
+      const iv = ts.slice(1).map((t, i) => t - ts[i]).sort((a, b) => a - b);
+      const p95 = iv.length ? iv[Math.floor(iv.length * 0.95)] : null;
+      check(g, 'frame p95 during the switch (1×)', p95 === null ? null : +p95.toFixed(1), '<=', 33, { unit: 'ms', scope: `→ ${to}`, detail: `${iv.length} intervals, max ${iv.length ? iv[iv.length - 1].toFixed(1) : '—'} ms` });
+      await sleep(900);
+    }
+  } finally { await P.close(); }
+  return g;
+}
+
+// ------------------------------------------------------------------ round 1 S2/S4/S18: swap overlap + flight compositing
+export async function cFlight(ctx) {
+  const g = newGate('C-flight', 'Route swap overlap and dossier flight compositing', 'motion', 'Round 1 S2: the two page h1s never sum above 1.2 opacity; S4: inside the panel clip the fill is ≥ .94 opaque on every frame (no page text shows through), the scrim reaches ≥ .6 within 120 ms; S3: first motion ≤ 1 frame after the click');
+  const P = await openPage(ctx.browser, { profile: DESKTOP });
+  ctx.track(P);
+  try {
+    await gotoRoute(P.page, ctx.base, 'today', { settle: 3000 });
+    // 1) h1 overlap during Today → Feed
+    const sw = await P.page.evaluate(async () => {
+      const eff = (el) => { let o = 1; for (let p = el; p && p !== document.documentElement; p = p.parentElement) o *= parseFloat(getComputedStyle(p).opacity); return o; };
+      location.hash = '#/feed';
+      return window.__e2e.everyFrame(() => {
+        let sum = 0;
+        for (const h of document.querySelectorAll('#view .page .page-head h1')) {
+          const page = h.closest('.page'); if (getComputedStyle(page).visibility === 'hidden') continue;
+          const lns = h.querySelectorAll('.ln');
+          const own = lns.length ? Math.max(...[...lns].map(l => parseFloat(getComputedStyle(l).opacity))) : 1;
+          sum += eff(h) * own;
+        }
+        return +sum.toFixed(3);
+      }, 900);
+    });
+    check(g, 'max combined h1 opacity (old + new page)', sw.length ? Math.max(...sw) : null, '<=', 1.2, { scope: 'today → feed', detail: `${sw.length} frames` });
+    await sleep(1500);
+    // 2) flight compositing (desktop, from a Feed row)
+    const link = P.page.locator(SEL.storyLink).first();
+    if (!(await link.count())) { g.notes.push('no story link on Feed; flight not sampled'); return g; }
+    await link.scrollIntoViewIfNeeded(); await link.hover(); await sleep(1200); // hover warms + prebuilds (S3)
+    const pr = P.page.evaluate(() => {
+      const t0 = performance.now(); let first = null;
+      return window.__e2e.everyFrame((i, t) => {
+        const panel = document.querySelector('.dossier-panel'); if (!panel || panel.closest('.is-prebuild')) return { i, none: true };
+        if (first === null) first = i;
+        const cs = getComputedStyle(panel), fill = panel.querySelector('.dossier-fill'), frost = panel.querySelector('.dossier-frost');
+        const fo = parseFloat(getComputedStyle(fill).opacity) * parseFloat(cs.opacity);
+        const fr = frost && getComputedStyle(frost).display !== 'none' ? parseFloat(getComputedStyle(frost).opacity) : 0;
+        const scrim = parseFloat(getComputedStyle(document.querySelector('.dossier-scrim')).opacity);
+        return { i, dt: Math.round(performance.now() - t0), fill: +Math.max(fo, fr).toFixed(3), scrim: +scrim.toFixed(3), clip: cs.clipPath };
+      }, 900);
+    });
+    await P.page.evaluate(() => { window.__e2e.clickT = performance.now(); });
+    await link.click({ noWaitAfter: true });
+    const fr = (await pr).filter(Boolean);
+    const shown = fr.filter(f => !f.none);
+    const firstIdx = shown.length ? shown[0].i : null;
+    const clickIdx = fr.findIndex(f => f.none === undefined);
+    check(g, 'panel fill opacity (min over the flight)', shown.length ? Math.min(...shown.map(f => f.fill)) : null, '>=', 0.94, { scope: 'feed → dossier', detail: `${shown.length} frames with the panel` });
+    const s120 = shown.find(f => f.dt - shown[0].dt >= 120);
+    check(g, 'scrim opacity 120 ms after the panel appears', s120 ? s120.scrim : null, '>=', 0.6, { scope: 'feed → dossier', detail: s120 ? `at +${s120.dt - shown[0].dt} ms` : 'flight shorter than 120 ms?' });
+    check(g, 'frames from the click to the first panel frame', firstIdx, 'info', null, { scope: 'feed → dossier', detail: `sampler frame index ${firstIdx} (click issued after the sampler started; ${clickIdx})` });
+    await closeDossier(P.page, { settle: 400 });
+  } finally { await P.close(); }
+  return g;
+}
+
+export const MOTION_GATES = { 'C-entrance': cEntrance, 'C-pacing': cPacing, 'C-rules': cRules, 'C-theme': cTheme, 'C-flight': cFlight };

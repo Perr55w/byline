@@ -30,6 +30,7 @@
   <meta name="mobile-web-app-capable" content="yes">
   <link rel="preload" href="/fonts/newsreader.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="preload" href="/fonts/geist.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/fonts/geist-mono.woff2" as="font" type="font/woff2" crossorigin> <!-- the status pill is mono: a late swap moved it (CLS) -->
   <link rel="stylesheet" href="/css/v4/tokens.css">
   <link rel="stylesheet" href="/css/v4/shell.css">
   <link rel="stylesheet" href="/css/v4/components.css">
@@ -104,7 +105,7 @@
   <div class="shell" id="shell">
     <nav class="rail" id="rail" aria-label="Primary">
       <a class="rail-brand" href="#/today" aria-label="Byline: Today">
-        <span class="brand-tile" aria-hidden="true"><svg class="brand-mark" viewBox="0 0 64 64"><path d="M15 11V37"/><circle cx="22.5" cy="30.5" r="7.5"/><path d="M36 23L43.5 38"/><path d="M51 23L41 45Q38.6 50.5 33 50.5"/><path class="mark-line" d="M33 50.5H13" pathLength="1"/></svg></span>
+        <span class="brand-tile brand-tile--line" aria-hidden="true"><svg class="brand-mark" viewBox="0 0 64 64"><path d="M15 11V37"/><circle cx="22.5" cy="30.5" r="7.5"/><path d="M36 23L43.5 38"/><path d="M51 23L44.18 38"/><path class="mark-line" d="M44.18 38L41 45Q38.6 50.5 33 50.5H13" pathLength="1"/></svg></span>
         <span class="wordmark">Byline</span>
       </a>
       <div class="rail-nav" id="rail-nav">
@@ -143,7 +144,7 @@
     </nav>
 
     <header class="phone-top" id="phone-top">
-      <a class="phone-brand" href="#/today" aria-label="Byline: Today"><span class="brand-tile" aria-hidden="true"><svg class="brand-mark" viewBox="0 0 64 64"><use href="#i-mark"/></svg></span><span class="wordmark">Byline</span></a>
+      <a class="phone-brand" href="#/today" aria-label="Byline: Today"><span class="brand-tile brand-tile--line" aria-hidden="true"><svg class="brand-mark" viewBox="0 0 64 64"><path d="M15 11V37"/><circle cx="22.5" cy="30.5" r="7.5"/><path d="M36 23L43.5 38"/><path d="M51 23L44.18 38"/><path class="mark-line" d="M44.18 38L41 45Q38.6 50.5 33 50.5H13" pathLength="1"/></svg></span><span class="wordmark">Byline</span></a>
       <div class="phone-actions">
         <button type="button" class="icon-btn" data-open-index aria-label="Search and commands"><svg class="icon"><use href="#i-search"/></svg></button>
         <button type="button" class="icon-btn" data-theme-toggle aria-label="Switch theme"><svg class="icon i-sun"><use href="#i-sun"/></svg><svg class="icon i-moon"><use href="#i-moon"/></svg></button>
@@ -155,7 +156,11 @@
         <div class="crumb" id="crumb" aria-hidden="true"><span class="crumb-group"></span><span class="crumb-sep">/</span><span class="crumb-page"></span></div>
         <div class="topbar-right">
           <p class="glass-pill status-pill" id="status-pill"><span class="pill-text">Loading the latest run…</span></p>
-          <button type="button" class="cmdk" data-open-index aria-label="Open the Index: search and commands" aria-keyshortcuts="Meta+K Control+K"><svg class="icon"><use href="#i-search"/></svg><span class="cmdk-label">Search or jump</span><kbd class="keycap"><span class="cmd-glyph"></span>K</kbd></button>
+          <script>/* S16: paint the last known status before first paint (app.js refreshes it); no width change on load */
+            try { var ph = localStorage.getItem('byline-pill'); if (ph && ph.indexOf('pill-long') > 0) document.querySelector('#status-pill .pill-text').innerHTML = ph; } catch (e) {}</script>
+          <button type="button" class="cmdk" data-open-index aria-label="Open the Index: search and commands" aria-keyshortcuts="Meta+K Control+K"><svg class="icon"><use href="#i-search"/></svg><span class="cmdk-label">Search or jump</span><kbd class="keycap"><span class="cmd-glyph">Ctrl</span>K</kbd></button>
+          <script>/* the glyph is set before first paint (filling it later moved the pill: CLS) */
+            try { if (/Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent)) document.querySelector('.cmd-glyph').textContent = '\u2318'; } catch (e) {}</script>
         </div>
       </div>
       <main id="main" tabindex="-1"><div id="view"></div></main>

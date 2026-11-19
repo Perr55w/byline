@@ -18,6 +18,7 @@ const RANGES = [['', 'Any time'], ['7', 'Past 7 days'], ['30', 'Past 30 days'], 
 const EV = { announcement: 'first-party', reporting: 'reporting', research: 'research', commentary: 'commentary', community: 'community', application: 'release notes', own_work: 'my project' };
 const RECENT_KEY = 'byline-recent-searches';
 const PER_GROUP = 5;
+const FIRST_GROUPS = 2; // groups in the tab-change frame; the rest arrive after the swap (E1)
 const IDLE_PER_GROUP = { stories: 5, claims: 4, drafts: 3, notes: 3, contacts: 4, briefs: 2 };
 
 // filters survive tab switches within a session (the query comes from the route when given)
@@ -25,6 +26,8 @@ const blank = () => ({ q: '', type: 'all', topic: '', company: '', source: '', s
 const ui = { f: blank() };
 
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+/** A counted noun with its figure in <b>, so a repaint can fade just the figure that changed (Q4). */
+const pl = (n, one, many = `${one}s`) => html`<b>${n}</b> ${n === 1 ? one : many}`;
 const readRecent = () => { try { const v = JSON.parse(localStorage.getItem(RECENT_KEY) || '[]'); return Array.isArray(v) ? v.filter(x => typeof x === 'string').slice(0, 8) : []; } catch (e) { return []; } };
 const writeRecent = (list) => { try { localStorage.setItem(RECENT_KEY, JSON.stringify(list.slice(0, 8))); } catch (e) { /* storage unavailable */ } };
 function remember(q) {
@@ -63,6 +66,21 @@ function windowAround(text, q, span = 80) {
 }
 const shiftMarks = (marks, offset) => (marks || []).map(([a, b]) => [a + offset, b + offset]);
 
+/**
+ * Run `fn` once the page holding `el` has been swapped in (byline:routed) and the main thread is idle, so
+ * below-the-fold markup stays out of the tab-change frames (E1). Re-renders of a page already on screen
+ * run it on the next idle period.
+ */
+function afterEnter(view, el, fn) {
+  let done = false;
+  const run = () => { if (done) return; done = true; document.removeEventListener('byline:routed', onRouted); if (el.isConnected) fn(); };
+  const idle = () => (window.requestIdleCallback ? requestIdleCallback(run, { timeout: 500 }) : setTimeout(run, 60));
+  const onRouted = (e) => { if (e.detail?.page?.contains(el)) { document.removeEventListener('byline:routed', onRouted); requestAnimationFrame(() => setTimeout(idle, 0)); } };
+  if (view.closest?.('.page.current') || view.classList?.contains('current')) { idle(); return; }
+  document.addEventListener('byline:routed', onRouted);
+  setTimeout(run, 2500);
+}
+
 // ------------------------------------------------------------------ data
 function queryUrl(f) {
   const p = new URLSearchParams();
@@ -81,6 +99,14 @@ function dates(f) {
   const d = new Date(); d.setDate(d.getDate() - Number(f.range));
   return { from: isoDay(d), to: '' };
 }
+/** Results for these filters. In the all-types view, drafts and notes come from a second, larger request so they
+ *  can be grouped by story / collapsed (Q1) without the 6-per-type cap hiding the rest of a group. */
+async function fetchRes(f) {
+  if (f.type !== 'all') return api.get(queryUrl(f));
+  const [r, dn] = await Promise.all([api.get(queryUrl(f)), api.get(queryUrl({ ...f, type: 'drafts,notes' })).catch(() => null)]);
+  if (dn) { r.drafts = dn.drafts || r.drafts; r.notes = dn.notes || r.notes; }
+  return r;
+}
 const activeFilters = (f) => ['topic', 'company', 'source', 'status'].filter(k => f[k]).length + (f.range && (f.range !== 'custom' || f.from || f.to) ? 1 : 0);
 
 // ------------------------------------------------------------------ headline + one-liner (F §2 Search, verbatim templates)
@@ -90,7 +116,7 @@ function headline(S) {
   const filterNames = filterLabels(S);
   if (!f.q && !activeFilters(f)) {
     return {
-      h: `Search ${plural(t.stories ?? 0, 'story', 'stories')} and ${plural(t.claims ?? 0, 'claim')}.`,
+      h: html`Search ${pl(t.stories ?? 0, 'story', 'stories')} and ${pl(t.claims ?? 0, 'claim')}.`,
       l: html`Also <b>${t.drafts ?? 0}</b> drafts and <b>${t.notes ?? 0}</b> notes${t.contacts ? html`, plus <b>${t.contacts}</b> ${t.contacts === 1 ? 'contact' : 'contacts'}` : ''}. Try a topic, a company or a number.`
     };
   }
@@ -100,7 +126,7 @@ function headline(S) {
     const tryShort = f.q && f.q.length > 3;
     const lastFilter = filterNames[filterNames.length - 1];
     return {
-      h: f.q ? `Nothing matches “${f.q}”.` : `Nothing matches ${filterNames.join(' and ')}.`,
+      h: f.q ? html`Nothing matches “${f.q}”.` : html`Nothing matches ${filterNames.join(' and ')}.`,
       l: html`${searched} ${tryShort ? 'Try a shorter word' : 'Try a different word'}${lastFilter ? html`, or remove the <b>${lastFilter}</b> filter` : ''}.`
     };
   }
@@ -109,7 +135,7 @@ function headline(S) {
   const best = (r.stories || [])[0];
   const scope = f.q ? `“${f.q}”` : filterNames.join(' and ');
   return {
-    h: `${plural(total, 'result')} ${f.q ? 'for' : 'in'} ${scope}.`,
+    h: html`${pl(total, 'result')} ${f.q ? 'for' : 'in'} ${scope}.`,
     l: html`${joinList(parts)}.${best ? html` Best match: <b>${best.short_title || best.title}</b> (${Math.round(best.score)}).` : ''}${filterNames.length && f.q ? html` Filtered by ${filterNames.join(', ')}.` : ''}`
   };
 }
@@ -188,13 +214,61 @@ function draftRow(d, S) {
     </span>
   </a>`;
 }
+/** Q1: drafts of one story (same story, or the same title when unlinked), newest edit first; groups by newest edit. */
+function groupDrafts(list) {
+  const by = new Map();
+  for (const d of list) {
+    const k = d.story_id ? `s${d.story_id}` : `t${String(d.title || '').trim().toLowerCase()}`;
+    if (!by.has(k)) by.set(k, []);
+    by.get(k).push(d);
+  }
+  return [...by.values()].map(ds => ds.sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at)))).sort((a, b) => String(b[0].updated_at).localeCompare(String(a[0].updated_at)));
+}
+const STATUS_WORD = { draft: 'in draft', in_review: 'in review', approved: 'approved', scheduled: 'scheduled', published: 'published', rejected: 'rejected' };
+/** Channel chips for a story's drafts: one per channel + format, newest first, with ×N and any in-review count. */
+function byChannel(ds) {
+  const m = new Map();
+  for (const d of ds) {
+    const label = channelLabel(d.channel, d.format);
+    const c = m.get(label) || { label, n: 0, review: 0, top: d };
+    c.n++; if (d.status === 'in_review') c.review++;
+    m.set(label, c);
+  }
+  return [...m.values()];
+}
+/** One row per story: the title once, a chip per channel (each opens its draft), the count and the newest edit. */
+function draftGroupRow(ds, S) {
+  if (ds.length === 1) return draftRow(ds[0], S);
+  const q = S.f.q, top = ds[0];
+  const st = {};
+  for (const d of ds) st[d.status] = (st[d.status] || 0) + 1;
+  const order = ['in_review', 'approved', 'scheduled', 'published', 'draft'];
+  const stLine = Object.keys(st).sort((a, b) => order.indexOf(a) - order.indexOf(b)).map(k => `${st[k]} ${STATUS_WORD[k] || k.replace(/_/g, ' ')}`).join(' · ');
+  return html`<div class="sr-item sr-draft sr-dgroup">
+    <span class="sr-lead"><span class="sr-ico">${icon('studio')}</span></span>
+    <span class="sr-main">
+      <a class="sr-title sr-title--sm sr-dlink" href="#/draft/${top.id}" data-sr-item title="Open the newest draft (${channelLabel(top.channel, top.format)})">${hl(top.title || 'Untitled draft', q)}</a>
+      <span class="sr-chans" aria-label="${ds.length} drafts of this story, by channel">${byChannel(ds).map(c => html`<a class="sr-chan${c.review ? ' is-review' : ''}" href="#/draft/${c.top.id}" title="${c.label}: ${plural(c.n, 'draft')}${c.review ? `, ${c.review} in review` : ''} · newest edited ${timeAgo(c.top.updated_at)}">${c.label}${c.n > 1 ? html`<span class="sr-chan-n">×${c.n}</span>` : ''}${c.review ? html`<span class="sr-chan-st">in review</span>` : ''}</a>`)}</span>
+      <span class="sr-meta"><span><b class="sr-strong">${ds.length}</b> drafts · ${stLine}</span><span>newest edit ${timeAgo(top.updated_at)}</span>${top.story_score != null ? html`<span class="sr-mini" title="Story score">${scoreChip(top.story_score, S.T)}</span>` : ''}</span>
+    </span>
+  </div>`;
+}
+/** Q1: identical notes (same text about the same story, across its drafts) collapse into one row with "×N". */
+function groupNotes(list) {
+  const by = new Map();
+  for (const n of list) {
+    const k = `${String(n.text || '').replace(/\s+/g, ' ').trim().toLowerCase()}|${n.story_id || n.draft_title || n.draft_id || ''}`;
+    if (by.has(k)) by.get(k).count++; else by.set(k, { ...n, count: 1 });
+  }
+  return [...by.values()];
+}
 function noteRow(n, S) {
   const q = S.f.q;
   const href = n.draft_id ? `#/draft/${n.draft_id}` : n.story_id ? `#/story/${n.story_id}` : null;
   const inner = html`<span class="sr-lead"><span class="sr-ico">${icon('pen')}</span></span>
     <span class="sr-main">
       <span class="sr-snip sr-snip--ink">${hl(windowAround(n.text, q, 110), q)}</span>
-      <span class="sr-meta"><span class="tag tag--neutral" title="Notes are private and never appear in exports">Private</span><span>${n.kind || 'note'}</span>${n.draft_title ? html`<span class="sr-from">on <b>${n.draft_title}</b></span>` : ''}<span>${timeAgo(n.created_at)}</span></span>
+      <span class="sr-meta">${n.count > 1 ? html`<span class="sr-times" title="${n.count} identical notes">×${n.count}</span>` : ''}<span class="tag tag--neutral" title="Notes are private and never appear in exports">Private</span><span>${n.kind || 'note'}</span>${n.draft_title ? html`<span class="sr-from">on <b>${n.draft_title}</b></span>` : ''}<span>${timeAgo(n.created_at)}</span></span>
     </span>`;
   return href ? html`<a class="sr-item sr-note" href="${href}" data-sr-item>${inner}</a>` : html`<div class="sr-item sr-note" tabindex="-1" data-sr-item>${inner}</div>`;
 }
@@ -222,9 +296,10 @@ function briefRow(b, S) {
 }
 const ROW = { stories: storyRow, claims: claimRow, drafts: draftRow, notes: noteRow, contacts: contactRow, briefs: briefRow };
 
-function resultsHtml(S) {
+function resultsHtml(S, { from = 0, to = Infinity } = {}) {
   const r = S.res, f = S.f;
-  if (S.error) return html`<div class="empty"><h3>Search didn’t run.</h3><p>${S.error}</p></div>`;
+  if (from > 0) { if (S.error || !r || !r.counts?.total) return ''; }
+  else if (S.error) return html`<div class="empty"><h3>Search didn’t run.</h3><p>${S.error}</p></div>`;
   if (!r) return '';
   const idle = !f.q && !activeFilters(f) && f.type === 'all';
   const c = r.counts || {};
@@ -238,17 +313,19 @@ function resultsHtml(S) {
       ${f.q ? html`<button type="button" class="btn btn--ghost" data-sr="clear-q">Clear the search</button>` : ''}</div></div>`;
   }
   const order = f.type === 'all' ? TYPES : TYPES.filter(([k]) => k === f.type);
-  return html`${order.filter(([k]) => (r[k] || []).length).map(([k, label]) => {
-    const list = r[k];
+  return html`${order.filter(([k]) => (r[k] || []).length).slice(from, to).map(([k, label]) => {
+    // drafts group by story and identical notes collapse (Q1); the head count stays the record count
+    const list = k === 'drafts' ? groupDrafts(r[k]) : k === 'notes' ? groupNotes(r[k]) : r[k];
     const shown = f.type === 'all' ? list.slice(0, idle ? IDLE_PER_GROUP[k] : PER_GROUP) : list;
-    const total = c[k] ?? list.length;
+    const total = c[k] ?? r[k].length;
+    const covered = k === 'drafts' ? shown.reduce((a, ds) => a + ds.length, 0) : k === 'notes' ? shown.reduce((a, n) => a + n.count, 0) : shown.length;
     return html`<section class="sr-group" aria-labelledby="sr-g-${k}" data-group="${k}">
       <div class="sr-group-head">
         <h2 class="sr-gh" id="sr-g-${k}">${idle ? IDLE_TITLE[k] : label}<span class="sr-gn">${total}</span></h2>
-        ${f.type === 'all' && total > shown.length ? html`<button type="button" class="btn btn--ghost btn--sm" data-sr-type="${k}">${idle ? `All ${total}` : `Show all ${total}`}${icon('arrow-right')}</button>` : ''}
-        ${f.type !== 'all' && total > shown.length ? html`<span class="sr-gmore">Showing ${shown.length} of ${total}</span>` : ''}
+        ${f.type === 'all' && total > covered ? html`<button type="button" class="btn btn--ghost btn--sm" data-sr-type="${k}">${idle ? `All ${total}` : `Show all ${total}`}${icon('arrow-right')}</button>` : ''}
+        ${f.type !== 'all' && total > covered ? html`<span class="sr-gmore">Showing ${covered} of ${total}</span>` : ''}
       </div>
-      <div class="sr-list">${shown.map(x => ROW[k](x, S))}</div>
+      <div class="sr-list">${shown.map(x => (k === 'drafts' ? draftGroupRow(x, S) : ROW[k](x, S)))}</div>
     </section>`;
   })}`;
 }
@@ -262,11 +339,11 @@ function asideHtml(S) {
   const recent = readRecent();
   const n = activeFilters(f) + (f.type !== 'all' ? 1 : 0);
   return html`
+  <div class="sr-group-head sr-aside-head"><h2 class="sr-gh" id="sr-refine-h">Refine</h2>${n ? html`<button type="button" class="btn btn--ghost btn--sm" data-sr="clear-filters">Clear ${n === 1 ? 'filter' : `${n} filters`}</button>` : ''}</div>
   <section class="sr-refine tile tile--static" aria-labelledby="sr-refine-h">
-    <div class="sr-refine-head"><h2 class="section-label" id="sr-refine-h">Refine</h2>${n ? html`<button type="button" class="btn btn--ghost btn--sm" data-sr="clear-filters">Clear ${n === 1 ? 'filter' : `${n} filters`}</button>` : ''}</div>
     <div class="sr-types" role="radiogroup" aria-label="Result type">
       <button type="button" role="radio" class="sr-type sr-btn" data-sr-type="all" aria-checked="${f.type === 'all'}"><span>All results</span><span class="sr-tn">${f.type === 'all' ? (c.total ?? 0) : ''}</span></button>
-      ${TYPES.map(([k, l]) => html`<button type="button" role="radio" class="sr-type sr-btn" data-sr-type="${k}" aria-checked="${f.type === k}"><span>${l}</span><span class="sr-tn">${f.type === 'all' || f.type === k ? (c[k] ?? 0) : ''}</span><i class="sr-tbar" style="--v:${c.total && (f.type === 'all' || f.type === k) ? ((c[k] || 0) / Math.max(...TYPES.map(([kk]) => c[kk] || 0), 1)).toFixed(3) : 0}" aria-hidden="true"></i></button>`)}
+      ${TYPES.map(([k, l]) => html`<button type="button" role="radio" class="sr-type sr-btn" data-sr-type="${k}" aria-checked="${f.type === k}"><span>${l}</span><span class="sr-tn">${f.type === 'all' || f.type === k ? (c[k] ?? 0) : ''}</span></button>`)}
     </div>
     <details class="sr-more"${!matchMedia('(max-width: 760px)').matches || activeFilters(f) ? raw(' open') : ''}>
     <summary class="sr-more-s">Filters${activeFilters(f) ? html` <span class="sr-cn">${activeFilters(f)}</span>` : ''}</summary>
@@ -278,13 +355,13 @@ function asideHtml(S) {
       ${selectHtml('range', 'Date', RANGES, f.range)}
       ${f.range === 'custom' ? html`<div class="sr-dates"><label class="sr-field"><span>From</span><input class="input" type="date" data-sr-f="from" value="${f.from}"></label><label class="sr-field"><span>To</span><input class="input" type="date" data-sr-f="to" value="${f.to}"></label></div>` : ''}
     </div>
-    <p class="sr-note">Topic, company and source narrow stories (source also claims); status applies to stories and drafts; dates apply to stories, briefs and drafts.</p>
+    <p class="sr-hint">Topic, company and source narrow stories (source also claims); status applies to stories and drafts; dates apply to stories, briefs and drafts.</p>
     </details>
   </section>
   <section class="sr-recent" aria-labelledby="sr-recent-h">
-    <div class="sr-refine-head"><h2 class="section-label" id="sr-recent-h">Recent searches</h2>${recent.length ? html`<button type="button" class="btn btn--ghost btn--sm" data-sr="clear-recent">Clear</button>` : ''}</div>
+    <div class="sr-refine-head"><h2 class="sr-gh" id="sr-recent-h">Recent searches</h2>${recent.length ? html`<button type="button" class="btn btn--ghost btn--sm" data-sr="clear-recent">Clear</button>` : ''}</div>
     ${recent.length ? html`<ul class="sr-recent-list">${recent.map(q => html`<li><button type="button" class="sr-recent-q sr-btn" data-sr-run="${q}">${icon('search')}<span>${q}</span></button><button type="button" class="btn btn--ghost btn--icon btn--sm" data-sr-forget="${q}" aria-label="Remove “${q}” from recent searches">${icon('x')}</button></li>`)}</ul>`
-      : html`<p class="sr-note">Searches you run are kept here, in this browser only.</p>`}
+      : html`<p class="sr-hint">Searches you run are kept here, in this browser only.</p>`}
   </section>`;
 }
 
@@ -298,11 +375,14 @@ function headHtml(S) {
 function chipsHtml(S) {
   const { topics, watch, emps } = S.quick;
   const f = S.f;
-  const row = (label, items) => items.length ? html`<div class="sr-qrow"><span class="sr-qlabel">${label}</span><div class="sr-qchips">${items}</div></div>` : '';
+  const row = (label, items, cls = '') => items.length ? html`<div class="sr-qrow${cls}"><span class="sr-qlabel">${label}</span><div class="sr-qchips">${items}</div></div>` : '';
+  // Q2: quick searches with no matching story don't invite a dead click: they sit last, muted and inert
+  const zero = [...watch.filter(x => !x.n).map(({ q, w }) => ({ q, why: `Watchlist${w.kind === 'question' ? ' question' : ''}: ${w.name}` })), ...emps.filter(e => !e.story_count).map(e => ({ q: e.name, why: `Employer: ${e.name}` }))];
   return html`
     ${row('Topics', topics.map(([t, n]) => html`<button type="button" class="chip chip--filter" data-sr-topic="${t}" aria-pressed="${f.topic === t}" title="${plural(n, 'story', 'stories')} tagged ${t}">${t}<span class="sr-cn">${n}</span></button>`))}
-    ${row('Watchlist', watch.map(({ q, n, w }) => html`<button type="button" class="chip chip--filter${n ? '' : ' is-zero'}" data-sr-run="${q}" aria-pressed="${f.q.toLowerCase() === q.toLowerCase()}" title="Watchlist${w.kind === 'question' ? ' question' : ''}: ${w.name}${q !== w.name ? ` · searches “${q}”` : ''} · ${plural(n, 'story', 'stories')}">${w.pinned ? html`<span class="sr-pin" aria-label="Pinned">●</span>` : ''}${q}<span class="sr-cn">${n}</span></button>`))}
-    ${row('Employers', emps.map(e => html`<button type="button" class="chip chip--filter" data-sr-run="${e.name}" aria-pressed="${f.q.toLowerCase() === e.name.toLowerCase()}" title="${e.name}: in ${plural(e.story_count, 'story', 'stories')} (all time)">${e.name}<span class="sr-cn">${e.story_count}</span></button>`))}`;
+    ${row('Watchlist', watch.filter(x => x.n).map(({ q, n, w }) => html`<button type="button" class="chip chip--filter" data-sr-run="${q}" aria-pressed="${f.q.toLowerCase() === q.toLowerCase()}" title="Watchlist${w.kind === 'question' ? ' question' : ''}: ${w.name}${q !== w.name ? ` · searches “${q}”` : ''} · ${plural(n, 'story', 'stories')}">${w.pinned ? html`<span class="sr-pin" aria-label="Pinned">●</span>` : ''}${q}<span class="sr-cn">${n}</span></button>`))}
+    ${row('Employers', emps.filter(e => e.story_count).map(e => html`<button type="button" class="chip chip--filter" data-sr-run="${e.name}" aria-pressed="${f.q.toLowerCase() === e.name.toLowerCase()}" title="${e.name}: in ${plural(e.story_count, 'story', 'stories')} (all time)">${e.name}<span class="sr-cn">${e.story_count}</span></button>`))}
+    ${row('No matches yet', zero.map(z => html`<span class="chip sr-qzero" title="${z.why} · no story mentions it yet">${z.q}</span>`), ' sr-qrow--zero')}`;
 }
 
 function paint(el, S) {
@@ -322,20 +402,39 @@ function paint(el, S) {
     <div class="sr-quick" data-sr-quick>${chipsHtml(S)}</div>
   </section>
   <div class="sr-body">
-    <div class="sr-results" id="sr-results" data-sr-results aria-live="polite" aria-busy="false">${resultsHtml(S)}</div>
+    <div class="sr-results" id="sr-results" data-sr-results aria-live="polite" aria-busy="false">${resultsHtml(S, { to: FIRST_GROUPS })}</div>
     <aside class="sr-aside" data-sr-aside aria-label="Refine and recent searches">${asideHtml(S)}</aside>
   </div>`);
 }
 
+/**
+ * Q4: swap a head line in place. When only figures changed (same sentence), only the changed <b> figures
+ * fade in (240 ms opacity); a new sentence swaps without any opacity drop on the line itself.
+ */
+const skeleton = (h) => h.replace(/<b>[^<]*<\/b>/g, '<b></b>');
+function swapFigures(node, next) {
+  if (!node) return;
+  const tpl = document.createElement('template');
+  tpl.innerHTML = next;
+  next = tpl.innerHTML;
+  if (node.innerHTML === next) return;
+  const fade = (b) => { if (!reduced()) b.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 240, easing: EASE.fade }); };
+  if (skeleton(node.innerHTML) === skeleton(next)) {
+    const ob = node.querySelectorAll('b'), nb = tpl.content.querySelectorAll('b');
+    nb.forEach((b, i) => { if (ob[i] && ob[i].textContent !== b.textContent) { ob[i].textContent = b.textContent; fade(ob[i]); } });
+  } else {
+    node.innerHTML = next;
+  }
+}
+const HEAD_QUIET_MS = 200;
 /** Update head text, results, aside and chip states in place (the bar keeps focus and caret). */
 function repaint(el, S, { animate = true } = {}) {
-  const hd = headline(S);
-  const h1 = el.querySelector('[data-sr-h]'), l = el.querySelector('[data-sr-l]');
-  if (h1 && h1.textContent !== hd.h) {
-    h1.textContent = hd.h;
-    if (animate && !reduced()) h1.animate([{ opacity: 0.35 }, { opacity: 1 }], { duration: 280, easing: EASE.fade });
-  }
-  if (l) l.innerHTML = String(hd.l);
+  // the headline settles 200 ms after the last keystroke, never mid-word
+  clearTimeout(S.headTimer);
+  const wait = HEAD_QUIET_MS - (performance.now() - (S.lastKey || 0));
+  const head = () => { const hd = headline(S); swapFigures(el.querySelector('[data-sr-h]'), String(hd.h)); swapFigures(el.querySelector('[data-sr-l]'), String(hd.l)); };
+  if (wait > 0) S.headTimer = setTimeout(head, wait); else head();
+  S.rest = true; // a repaint renders every group
   const out = el.querySelector('[data-sr-results]');
   out.innerHTML = String(resultsHtml(S));
   out.setAttribute('aria-busy', 'false');
@@ -365,7 +464,7 @@ export async function render(view, ctx = {}) {
   S.topicOptions = [...new Set([...prio, ...S.allStories.flatMap(s => s.topics || [])])];
   S.companyOptions = [...new Set([...employers.map(e => e.name), ...S.allStories.flatMap(s => s.companies || [])])].sort((a, b) => a.localeCompare(b));
   S.quick = quickChips(S);
-  try { S.res = await api.get(queryUrl(f)); } catch (e) { S.error = e.message; }
+  try { S.res = await fetchRes(f); } catch (e) { S.error = e.message; }
   if (f.q && S.res?.counts?.total) remember(f.q);
 
   const el = document.createElement('div');
@@ -373,6 +472,15 @@ export async function render(view, ctx = {}) {
   view.replaceChildren(el);
   paint(el, S);
   wire(el, S);
+  // the remaining result groups, appended below the first two once the tab change is over
+  afterEnter(view, el, () => {
+    if (S.rest) return;
+    S.rest = true;
+    const out = el.querySelector('[data-sr-results]');
+    const before = out.children.length;
+    out.insertAdjacentHTML('beforeend', String(resultsHtml(S, { from: FIRST_GROUPS })));
+    enterItems([...out.children].slice(before), { stagger: 40, y: 6, duration: 420, fadeDuration: 320 });
+  });
 }
 
 function wire(el, S) {
@@ -388,7 +496,7 @@ function wire(el, S) {
     const seq = ++S.seq;
     setHash();
     el.querySelector('[data-sr-results]')?.setAttribute('aria-busy', 'true');
-    try { const r = await api.get(queryUrl(S.f)); if (seq !== S.seq) return; S.res = r; S.error = null; }
+    try { const r = await fetchRes(S.f); if (seq !== S.seq) return; S.res = r; S.error = null; }
     catch (e) { if (seq !== S.seq) return; S.error = e.message; }
     if (save && S.f.q && S.res?.counts?.total) remember(S.f.q);
     repaint(el, S, { animate });
@@ -403,9 +511,10 @@ function wire(el, S) {
 
   input.addEventListener('input', () => {
     S.f.q = input.value.trim();
+    S.lastKey = performance.now();
     el.querySelector('.sr-clear').hidden = !input.value;
     clearTimeout(deb);
-    deb = setTimeout(() => run({ animate: false }), 180);
+    deb = setTimeout(() => run({ animate: false }), HEAD_QUIET_MS);
   });
   el.querySelector('[data-sr-form]').addEventListener('submit', (e) => { e.preventDefault(); S.f.q = input.value.trim(); run({ save: true }); });
 

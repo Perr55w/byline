@@ -43,7 +43,7 @@ a.pp-name:hover { color: var(--accent-text); text-decoration: underline; text-un
 .pp-card.tile--flush > .pp-empty-line { padding-bottom: 22px; }
 .pp-linkbtn { display: inline; padding: 0; border: 0; background: none; color: var(--text-1); font: 500 15px/21px var(--font-sans); text-align: left; cursor: pointer; }
 .pp-linkbtn:hover { color: var(--accent-text); text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 1px; }
-.pp-dupnote { display: inline-flex; margin-left: 8px; color: var(--warn); font: 500 11px/1 var(--font-mono); letter-spacing: .04em; text-transform: uppercase; vertical-align: 2px; }
+.pp-dupnote { display: inline-flex; margin-left: 8px; color: var(--warn); font: 500 12px/1 var(--font-sans); vertical-align: 1px; }
 .pp-who + .pp-dupnote { margin: 4px 0 0; }
 
 /* ---------------------------------------------------------------- callouts (data hygiene / do-not-contact) */
@@ -76,8 +76,14 @@ a.pp-name:hover { color: var(--accent-text); text-decoration: underline; text-un
 #view .pp-table th:last-child, #view .pp-table td:last-child { padding-right: 24px; }
 .pp-card .pp-table { margin-top: 6px; }
 #view .pp-table--people { table-layout: fixed; }
-#view .pp-table--people th:nth-child(1) { width: 32%; } #view .pp-table--people th:nth-child(2) { width: 15%; }
-#view .pp-table--people th:nth-child(3) { width: 11%; } #view .pp-table--people th:nth-child(5) { width: 18%; }
+#view .pp-table--people th.pp-c-person { width: 34%; } #view .pp-table--people th.pp-c-stage { width: 20%; }
+#view .pp-table--people th.pp-c-emp { width: 12%; } #view .pp-table--people th.pp-c-last { width: 15%; }
+.pp-stagecell .tag { display: flex; width: max-content; }
+.pp-stagecell .tag + .tag { margin-top: 6px; }
+.pp-aside--sticky { position: sticky; top: 72px; align-self: start; }
+#view .pp-table--people td:first-child { padding-right: 8px; }
+#view .pp-table--people .pp-namerow { column-gap: 6px; }
+.pp-h4 { margin: 16px 0 6px; padding-top: 14px; border-top: 1px solid var(--line); color: var(--text-1); font: 500 13.5px/20px var(--font-sans); }
 .pp-who .pp-namerow { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
 .pp-table tbody tr[data-href], .pp-table tbody tr[data-outreach] { cursor: pointer; }
 .pp-table tbody tr.pp-dup { box-shadow: inset 2px 0 0 var(--warn); }
@@ -164,7 +170,7 @@ mark.pp-pd { padding: 0 2px; border-radius: 3px; background: var(--accent-soft);
 
 /* ---------------------------------------------------------------- responsive */
 @media (max-width: 1180px) { .pp-cols { grid-template-columns: minmax(0, 1fr) 300px; } }
-@media (max-width: 1020px) { .pp-cols { grid-template-columns: 1fr; } .pp-ixform { grid-template-columns: 1fr 1fr; } .pp-ixform .pp-grow { grid-column: 1 / -1; } }
+@media (max-width: 1020px) { .pp-cols { grid-template-columns: 1fr; } .pp-aside--sticky { position: static; } .pp-ixform { grid-template-columns: 1fr 1fr; } .pp-ixform .pp-grow { grid-column: 1 / -1; } }
 @media (max-width: 760px) {
   .pp-card { padding: 18px; }
   .pp-pad { padding: 16px 18px 0; }
@@ -197,10 +203,6 @@ mark.pp-pd { padding: 0 2px; border-radius: 3px; background: var(--accent-soft);
    Darkened toward ink with color-mix (tokens only). Shared-file request: fix .tag--ok/--warn/--demo in components.css. */
 :is(.cp-ok, .pp-note--ok) { color: var(--ok-text); }
 :is(.pp-note--warn, .pp-dupnote, .pp-date.is-today) { color: var(--warn-text); }
-/* E1 (tab change ≤ 50 ms at 4× CPU): skip layout of off-screen sections until they scroll near. Static tiles only
-   (paint containment would clip a hover shadow). */
-#view :is(.pp, .cp, .pf, .cr, .em) .tile--static { content-visibility: auto; contain-intrinsic-size: auto 360px; }
-@media (max-width: 760px) { #view .pp-table tbody tr, .pp-fu { content-visibility: auto; contain-intrinsic-size: auto 110px; } }
 /* phone/tablet: on a person, the relationship and outreach come before the long research form */
 @media (max-width: 1020px) {
   .pp-person .pp-cols { display: flex; flex-direction: column; }
@@ -213,6 +215,6 @@ mark.pp-pd { padding: 0 2px; border-radius: 3px; background: var(--accent-soft);
   .pp-person [aria-labelledby="pp-r-h"] { order: 6; }
   .pp-person [aria-labelledby="pp-n-h"] { order: 7; }
 }
-@media (max-width: 1340px) { #view .pp-table .pp-hide-md { display: none; } #view .pp-table--people th:nth-child(1) { width: 38%; } }
+@media (max-width: 1340px) { #view .pp-table .pp-hide-md { display: none; } }
 #view .pp-table--people th { white-space: nowrap; }
-#view .pp-table--people th:nth-child(3), #view .pp-table--people td:nth-child(3) { min-width: 96px; }
+

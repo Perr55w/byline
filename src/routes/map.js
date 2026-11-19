@@ -16,7 +16,7 @@ export function mapFingerprint() {
   const cl = get('SELECT COUNT(*) AS n, MAX(id) AS m FROM claims');
   const w = get("SELECT GROUP_CONCAT(id || name || weight || pinned, '|') AS sig FROM watchlists");
   const pr = JSON.stringify(getSettings().priorities.map(p => [p.topic, p.weight]));
-  return hashString([MAP_VERSION, st.n, st.sig, ar.n, ar.m, ar.sids, cl.n, cl.m, w.sig, pr].join('#'));
+  return hashString([MAP_VERSION, 'payload:2', st.n, st.sig, ar.n, ar.m, ar.sids, cl.n, cl.m, w.sig, pr].join('#'));
 }
 
 function loadPositions() {
@@ -56,9 +56,10 @@ export function buildMap({ nowMs = Date.now() } = {}) {
       watch: d.watch, sources: d.sources.map(x => x.name), x, y, r: Math.round(radiusFor(d.st.score) * 10) / 10, degree: degree.get(d.id)
     };
   });
-  const cl = nodes.length ? clusters(nodesIn, L.positions, L.anchors, { nowMs }) : [];
   const topicCounts = {};
   for (const n of nodes) for (const t of n.topics) topicCounts[t] = (topicCounts[t] || 0) + 1;
+  // count = stories whose MAIN topic it is; in_count = stories carrying the topic anywhere (S17b)
+  const cl = (nodes.length ? clusters(nodesIn, L.positions, L.anchors, { nowMs }) : []).map(c => ({ ...c, in_count: c.topic ? (topicCounts[c.topic] || 0) : 0 }));
   const reasonTotals = (id) => {
     const tally = { companies: 0, watchlist: 0, sources: 0, topics: 0 };
     for (const e of edges) if (e.a === id || e.b === id) for (const k of Object.keys(tally)) tally[k] += e.reasons[k].length;
@@ -70,7 +71,7 @@ export function buildMap({ nowMs = Date.now() } = {}) {
   return {
     nodes, edges, clusters: cl,
     topic_counts: Object.entries(topicCounts).map(([topic, count]) => ({ topic, count, weight: weights[topic] ?? 1 })).sort((a, b) => b.count * (b.weight > 1 ? 2 : 1) - a.count * (a.weight > 1 ? 2 : 1) || b.count - a.count || a.topic.localeCompare(b.topic)),
-    hot_topics: cl.filter(c => c.topic).slice(0, 3).map(c => ({ topic: c.topic, heat: c.heat, count: c.count, recent: c.recent })),
+    hot_topics: cl.filter(c => c.topic).slice(0, 3).map(c => ({ topic: c.topic, heat: c.heat, count: c.count, in_count: c.in_count, recent: c.recent })),
     bridge: bridgeNode && bridgeNode.degree ? { id: bridgeNode.id, short_title: bridgeNode.short_title, degree: bridgeNode.degree, via: reasonTotals(bridgeNode.id) } : null,
     range: { first_seen_min: seen[0] || null, first_seen_max: seen[seen.length - 1] || null },
     bounds: nodes.length ? { x0: Math.min(...xs.map((x, i) => x - rs[i])), y0: Math.min(...ys.map((y, i) => y - rs[i])), x1: Math.max(...xs.map((x, i) => x + rs[i])), y1: Math.max(...ys.map((y, i) => y + rs[i])) } : null,

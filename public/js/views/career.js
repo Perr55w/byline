@@ -54,18 +54,37 @@ function mergeSkills(skills) {
 }
 const jobCount = (s, J) => J.factor && J.factor > 1 ? Math.round(s.job_mentions / J.factor) : s.job_mentions;
 
+const weight = (s, J) => s.source_mentions + 2 * jobCount(s, J);   // job posts count double in the ranking
+const noHistory = (skills) => !skills.some(s => s.older_rate > 0);
+
+/** Headline and one-liner share one subject: the rising skill when there is a baseline to rise from, else the top
+ *  skill by weighted mentions. Fallbacks: the most persistent weekly topic, then "Not enough signal yet." */
 function headline({ skills, weekly, J, articles }) {
-  const baseline = skills.some(s => s.older_rate > 0);
-  const rising = skills.filter(s => s.trend === 'rising' && s.recent >= 3).sort((a, b) => b.recent - a.recent)[0];
-  const persisted = weekly.persisted?.[0];
-  const h = rising && baseline ? `${capFirst(rising.skill)} is rising in your sources.`
-    : persisted ? `${persisted.topic} showed up on ${persisted.days} days this week.`
-    : 'Not enough signal yet.';
-  const s = (rising && baseline) ? rising : (rising || skills[0]);
-  if (!s) return { h, l: html`The radar uses the last 30 days of articles plus pasted job posts; you have <b>${articles}</b> ${articles === 1 ? 'article' : 'articles'} and <b>${J.unique}</b> ${J.unique === 1 ? 'job post' : 'job posts'}.` };
+  const baseline = !noHistory(skills);
+  const rising = baseline ? skills.filter(s => s.trend === 'rising' && s.recent >= 3).sort((a, b) => b.recent - a.recent)[0] : null;
+  const top = [...skills].sort((a, b) => weight(b, J) - weight(a, J) || b.recent - a.recent)[0];
+  const s = rising || (top && weight(top, J) > 0 ? top : null);
+  const persisted = (weekly.persisted || []).filter(p => !/^machine learning$/i.test(p.topic));
+  if (!s) {
+    const h = persisted[0] ? `${persisted[0].topic} showed up on ${persisted[0].days} days this week.` : 'Not enough signal yet.';
+    return { h, l: html`The radar uses the last 30 days of articles plus pasted job posts; you have <b>${articles}</b> ${articles === 1 ? 'article' : 'articles'} and <b>${J.unique}</b> ${J.unique === 1 ? 'job post' : 'job posts'}.` };
+  }
+  const name = capFirst(s.skill);
+  const h = rising ? `${name} is rising in your sources.`
+    : s.recent > 0 ? `${name} leads your skill radar: ${plural(s.recent, 'mention')} this week.`
+    : `${name} leads your skill radar, from job posts alone.`;
   const jm = jobCount(s, J);
-  const l = html`<b>${capFirst(s.skill)}</b>: <b>${s.recent}</b> ${s.recent === 1 ? 'mention' : 'mentions'} this week vs <b>${s.older_rate}</b>/week before${baseline ? '' : ' (no articles older than a week in the 30-day window yet)'}; in <b>${jm}</b> of <b>${J.unique}</b> saved job ${J.unique === 1 ? 'post' : 'posts'}${J.copies ? html` (${J.copies + J.unique} identical copies counted once)` : ''}.`;
-  return { h, l };
+  const copies = J.copies ? html` (${J.copies + J.unique} identical copies counted once)` : '';
+  const jobs = !J.unique ? html`No saved job posts yet.`
+    : jm ? html`In <b>${jm}</b> of <b>${J.unique}</b> saved job ${J.unique === 1 ? 'post' : 'posts'}${copies}.`
+    : html`Not in your <b>${J.unique}</b> saved job ${J.unique === 1 ? 'post' : 'posts'}${copies}.`;
+  const base = rising ? html`<b>${s.recent}</b> mentions this week vs <b>${s.older_rate}</b>/week before. ` : '';
+  const t = persisted.find(p => p.topic.toLowerCase() !== s.skill.toLowerCase());
+  const tSkill = t && skills.find(x => x.skill.toLowerCase() === t.topic.toLowerCase());
+  const topic = !t ? '' : tSkill && tSkill.source_mentions === 0 && jobCount(tSkill, J) > 0
+    ? html` ${t.topic} ran as a story topic on <b>${t.days}</b> days, but as a skill only job posts name it.`
+    : html` ${t.topic} ran as a story topic on <b>${t.days}</b> days this week.`;
+  return { h, l: html`${base}${jobs}${topic}` };
 }
 
 export async function render(el, ctx = {}) {
@@ -74,8 +93,9 @@ export async function render(el, ctx = {}) {
   const [skillsRaw, weekly, jobs, projects, experiences, st] = await Promise.all([
     api.get('/career/radar'), api.get('/career/weekly'), api.get('/jobposts'), api.get('/projects').catch(() => []), api.get('/experiences').catch(() => []), api.get('/status').catch(() => ({}))
   ]);
-  const skills = mergeSkills(skillsRaw);
   const J = jobGroups(jobs);
+  // Rank by weighted mentions with identical job posts counted once (the API ranks by raw job matches).
+  const skills = mergeSkills(skillsRaw).map((s, i) => ({ s, i })).sort((a, b) => weight(b.s, J) - weight(a.s, J) || b.s.source_mentions - a.s.source_mentions || a.i - b.i).map(x => x.s);
   const hd = headline({ skills, weekly, J, articles: st.counts?.articles ?? 0 });
   const demoJobs = jobs.filter(j => isDemoText(j.title)).length;
   const dupGroup = J.groups.find(g => g.length > 1);
@@ -98,7 +118,8 @@ export async function render(el, ctx = {}) {
     <div class="tile tile--static cr-kpi"><span class="cr-kpi-n">${skills.filter(s => s.recent > 0).length}</span><span class="cr-kpi-l">mentioned this week</span></div>
     <div class="tile tile--static cr-kpi"><span class="cr-kpi-n">${J.unique}</span><span class="cr-kpi-l">unique job ${J.unique === 1 ? 'post' : 'posts'}${demoJobs ? ` · ${demoJobs} demo` : ''}</span></div>
     <div class="tile tile--static cr-kpi"><span class="cr-kpi-n">${projects.length}</span><span class="cr-kpi-l">projects · ${projects.filter(p => p.status === 'active').length} active</span></div>
-    <div class="tile tile--static cr-kpi"><span class="cr-kpi-n">${experiences.filter(x => x.public_ok).length}<span class="cr-kpi-of">/${experiences.length}</span></span><span class="cr-kpi-l">experiences public OK</span></div>
+    ${experiences.length ? html`<div class="tile tile--static cr-kpi"><span class="cr-kpi-n">${experiences.filter(x => x.public_ok).length}<span class="cr-kpi-of">/${experiences.length}</span></span><span class="cr-kpi-l">experiences marked public OK</span></div>`
+      : html`<div class="tile tile--static cr-kpi cr-kpi--empty"><span class="cr-kpi-t">No experiences yet</span><span class="cr-kpi-l">Drafts stay in observer voice until you add one. <button class="cr-inline" data-tab="experiences">Add one</button></span></div>`}
   </section>
 
   <div class="cr-tabs" role="tablist" aria-label="Career sections">${TABS.map(([k, l]) => html`<button class="cr-tabbtn" role="tab" id="cr-tab-${k}" aria-controls="cr-pane" aria-selected="${state.tab === k}" tabindex="${state.tab === k ? 0 : -1}" data-tab="${k}">${l}</button>`)}</div>
@@ -137,40 +158,46 @@ export async function render(el, ctx = {}) {
 // ---------------------------------------------------------------- skill radar
 async function radar(pane, again, { skills, jobs, J }) {
   const maxSrc = Math.max(1, ...skills.map(s => s.source_mentions));
+  const fresh = noHistory(skills);
+  const showWeek = skills.some(s => s.recent !== s.source_mentions);
+  const long = skills.length > 20;
+  const trendCell = (s) => s.source_mentions === 0 && jobCount(s, J) > 0 ? html`<span class="tag tag--neutral" title="Only job descriptions mention it">Jobs only</span>`
+    : fresh ? html`<span class="sr-only">No trend yet</span>` : trendTag(s.trend, s);
   pane.innerHTML = String(html`
   <div class="cr-cols">
     <section class="tile tile--static tile--flush" aria-labelledby="cr-r-h">
       <div class="section-head cr-pad"><h2 class="t-h2" id="cr-r-h">Skill radar</h2><span class="section-meta">last 30 days · ${plural(skills.length, 'skill')} with evidence</span></div>
       ${skills.length ? html`<table class="table cr-table">
-        <thead><tr><th>Skill</th><th>Source mentions</th><th class="num">This week</th><th class="num">Job posts</th><th>Trend</th></tr></thead>
-        <tbody>${skills.map((s, i) => html`<tr data-skill="${i}">
-          <td><button class="cr-linkbtn" data-skill-open="${i}">${s.skill}</button>${s.aliases.length ? html`<span class="cr-alias">also “${s.aliases.join('”, “')}”</span>` : ''}</td>
+        <thead><tr><th class="cr-skillcol">Skill</th><th>Source mentions${showWeek ? '' : html`<span class="cr-th-note">all this week</span>`}</th>${showWeek ? html`<th class="num cr-weekcol">This week</th>` : ''}<th class="num">Job posts</th><th class="cr-trendcol">Trend${fresh ? html`<span class="cr-th-note">needs 2+ weeks of history</span>` : ''}</th></tr></thead>
+        <tbody>${skills.map((s, i) => html`<tr data-skill="${i}" class="${long && i >= 12 ? 'cv-row' : ''}">
+          <td class="cr-skillcol"><button class="cr-linkbtn" data-skill-open="${i}">${s.skill}</button>${s.aliases.length ? html`<span class="cr-alias">also “${s.aliases.join('”, “')}”</span>` : ''}</td>
           <td class="cr-barcell"><span class="cr-bar"><span class="meter"><i style="--v:${s.source_mentions / maxSrc}"></i></span><b>${s.source_mentions}</b></span></td>
-          <td class="num">${s.recent}</td>
+          ${showWeek ? html`<td class="num cr-weekcol">${s.recent}</td>` : ''}
           <td class="num">${jobCount(s, J)}${J.factor > 1 && s.job_mentions ? html`<span class="cr-raw" title="${s.job_mentions} raw matches across ${J.factor}× copied posts">/${J.unique}</span>` : J.unique ? html`<span class="cr-raw">/${J.unique}</span>` : ''}</td>
-          <td>${trendTag(s.trend, s)}</td></tr>`)}</tbody></table>
-        <p class="cr-foot cr-pad">Trend compares this week with the weekly rate over the previous three weeks${skills.some(s => s.older_rate > 0) ? '' : '; there are no articles older than a week yet, so skills mentioned now are marked “new this week” rather than rising'}. Job posts count double in the ranking.</p>`
+          <td class="cr-trendcol">${trendCell(s)}</td></tr>`)}</tbody></table>
+        <p class="cr-foot cr-pad">${fresh ? html`Every article in the 30-day window is from this week, so there is no earlier rate to compare against${showWeek ? '' : ' and “this week” equals the 30-day count'}. Trends appear once there are two weeks of history.` : 'Trend compares this week with the weekly rate over the previous three weeks.'} Job posts count double in the ranking.</p>`
       : html`<div class="cr-pad cr-padb"><div class="empty"><h3>No skill evidence yet.</h3><p>Run the daily workflow or paste a job description.</p></div></div>`}
     </section>
-    <aside class="stack">
+    <aside class="stack cr-side">
+      <section class="tile tile--static cr-card" aria-labelledby="cr-jl-h">
+        <div class="section-head"><h2 class="t-h2" id="cr-jl-h">Saved job posts</h2><span class="section-meta">${J.unique} unique${J.copies ? ` · ${jobs.length} saved` : ''}</span></div>
+        ${jobs.length ? html`<ul class="cr-jobs">${J.groups.map(g => { const j = g[0]; return html`<li>
+          <div class="cr-job-h"><span class="cr-job-t">${stripDemo(j.title)}</span></div>
+          <span class="cr-sub">${j.employer || 'No employer'} · saved ${dayLabel((j.created_at || '').slice(0, 10), { weekday: false })}${j.url ? html` · <a href="${j.url}" target="_blank" rel="noopener">posting${icon('arrow-up-right')}</a>` : ''}</span>
+          <div class="cr-job-tags">${demoTag(isDemoText(j.title))}${g.length > 1 ? html`<span class="tag tag--warn" title="${g.length} identical saved copies; counted once">×${g.length} copies</span>` : ''}${J.unique === 1 ? html`<span class="cr-job-n">${plural(skills.filter(s => s.job_mentions > 0).length, 'radar skill')} found in it</span>` : ''}</div>
+          <p class="cr-excerpt">${j.excerpt}…</p>
+          <div class="cr-end"><button class="btn btn--ghost btn--sm" data-del-job="${j.id}">${g.length > 1 ? 'Delete one copy' : 'Delete'}</button></div>
+        </li>`; })}</ul>` : html`<p class="cr-note">None yet. Paste a posting below; job mentions count double in the ranking.</p>`}
+      </section>
       <section class="tile tile--static cr-card" aria-labelledby="cr-jp-h">
         <h2 class="section-label" id="cr-jp-h">Add a job description</h2>
         <form class="cr-form" id="jp">
           <label class="field">Title<input class="input" name="title" placeholder="Associate Product Manager, AI"></label>
           <label class="field">Employer<input class="input" name="employer"></label>
           <label class="field cr-full">Posting URL<input class="input" name="url" placeholder="https://…" inputmode="url"></label>
-          <label class="field cr-full">Description *<textarea class="textarea" name="text" rows="5" required placeholder="Paste the full job description"></textarea></label>
+          <label class="field cr-full">Description *<textarea class="textarea" name="text" rows="4" required placeholder="Paste the full job description"></textarea></label>
           <div class="cr-full cr-end"><button class="btn btn--primary" type="submit">Add to radar</button></div>
         </form>
-      </section>
-      <section class="tile tile--static cr-card" aria-labelledby="cr-jl-h">
-        <h2 class="section-label" id="cr-jl-h">Saved job posts · ${J.unique} unique</h2>
-        ${jobs.length ? html`<ul class="cr-jobs">${J.groups.map(g => { const j = g[0]; return html`<li>
-          <div class="cr-job-h"><span class="cr-job-t">${stripDemo(j.title)}</span>${demoTag(isDemoText(j.title))}${g.length > 1 ? html`<span class="tag tag--warn">×${g.length} copies</span>` : ''}</div>
-          <span class="cr-sub">${j.employer || 'No employer'} · saved ${dayLabel((j.created_at || '').slice(0, 10), { weekday: false })}${j.url ? html` · <a href="${j.url}" target="_blank" rel="noopener">posting${icon('arrow-up-right')}</a>` : ''}</span>
-          <p class="cr-excerpt">${j.excerpt}…</p>
-          <div class="cr-end"><button class="btn btn--ghost btn--sm" data-del-job="${j.id}">${g.length > 1 ? 'Delete one copy' : 'Delete'}</button></div>
-        </li>`; })}</ul>` : html`<p class="cr-note">None yet. Job mentions count double in the ranking.</p>`}
       </section>
     </aside>
   </div>`);

@@ -14,7 +14,7 @@ import { generateVisual } from '../visual.js';
 import { loadDemo, clearDemo } from '../demo.js';
 import { enrich, storyFacts, mainTopic, topicWeights, whyRanked } from '../facts.js';
 import { breakdownView, evidenceGroups, lensView, articlesView, sourcesHeader } from '../dossier.js';
-import { sourceCounts, cleanClaim, numberMarks, shortTitle } from '../finding.js';
+import { sourceCounts, cleanClaim, numberMarks, shortTitle, isBoilerplate } from '../finding.js';
 import { timeLocal, dateLocal, dayLabel, tzAbbr } from '../timefmt.js';
 
 /** Summary of a run for the status pill and Runs tab (times in settings.timezone). */
@@ -97,7 +97,7 @@ export function registerContent(route) {
       publishers: Object.fromEntries(Object.entries(publishers).map(([k, p]) => [k, p.status()])),
       counts: { ...get(`SELECT (SELECT COUNT(*) FROM stories) AS stories, (SELECT COUNT(*) FROM articles) AS articles, (SELECT COUNT(*) FROM sources) AS sources,
         (SELECT COUNT(*) FROM drafts WHERE status IN ('draft','in_review')) AS awaiting, (SELECT COUNT(*) FROM articles WHERE is_demo = 1) AS demo_articles,
-        (SELECT COUNT(*) FROM claims) AS claims, (SELECT COUNT(*) FROM drafts WHERE status NOT IN ('published','archived')) AS drafts_open,
+        (SELECT COUNT(*) FROM claims) AS claims, (SELECT COUNT(*) FROM drafts WHERE status NOT IN ('published','archived')) AS drafts_open, (SELECT COUNT(*) FROM drafts WHERE status = 'in_review') AS in_review,
         (SELECT COUNT(*) FROM notes) AS notes, (SELECT COUNT(*) FROM briefs) AS briefs, (SELECT COUNT(*) FROM sources WHERE paused = 1) AS sources_paused,
         (SELECT COUNT(*) FROM contacts) AS contacts`), schedule_enabled: !!s.schedule?.enabled },
       schedule: { enabled: !!s.schedule?.enabled, time: s.schedule?.time || null },
@@ -223,7 +223,7 @@ export function registerContent(route) {
     Object.assign(data.story, storyFacts(story, data.articles, data.claims), { main_topic: mainTopic(story.topics), threshold: getSettings().publish_threshold });
     const av = articlesView(data.articles, data.claims);
     data.articles_raw = data.articles;
-    data.articles = av.list;
+    data.articles = av.list.map(a => ({ ...a, summary_is_boilerplate: isBoilerplate(a.summary) })); // S17e: the dossier never shows these as "what the source said"
     data.claim_duplicates = av.duplicates;
     data.domain_groups = av.domain_groups;
     data.sources_header = sourcesHeader(data.articles_raw, data.claims);

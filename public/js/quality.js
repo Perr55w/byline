@@ -4,7 +4,8 @@
 // by the shell from /api/status (window.__byline.threshold) is used.
 // The computed inline `--q` is the only literal colour allowed outside tokens.css.
 
-const D = [-30, -15, -1, 0, 8, 15];
+// Stop positions (round-1 ruling 1): 64, 72 and 78 at T=55 land on three distinct colours.
+const D = [-30, -15, -1, 0, 10, 25];
 let memo = { theme: null, S: null };
 
 const lin = (c) => ((c /= 255) <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
@@ -46,11 +47,38 @@ export function qualityColor(score, threshold) {
 export const qualityTier = (s, t) => { const d = Number(s) - th0(t); return d < 0 ? 'below' : d < 8 ? 'clears' : d < 15 ? 'strong' : 'top'; };
 /** "12 below bar" / "+18 over bar" — the text cue under every ring. */
 export const qualityLabel = (s, t) => { const d = Math.round(Number(s) - th0(t)); return d < 0 ? `${-d} below bar` : `+${d} over bar`; };
+/**
+ * Geometry of a ring's gradient line (viewBox 0 0 100 100, r 47, arc from angle 0 to θ = score% of a turn).
+ * The line runs through the centre perpendicular to the arc's bisector, so the colour climbs monotonically from the
+ * arc start to the arc end; past half a turn the two ends clamp to the end colours (no linear gradient can follow
+ * more than half a circle).
+ */
+export function ringGradientLine(score) {
+  const th = 2 * Math.PI * Math.max(1, Math.min(100, Number(score) || 0)) / 100;
+  const phi = th / 2 + Math.PI / 2, ux = Math.cos(phi), uy = Math.sin(phi);
+  const k = 47 * Math.max(0.5, Math.abs(Math.sin(th / 2)));
+  const f = (v) => v.toFixed(2);
+  return { x1: f(50 - k * ux), y1: f(50 - k * uy), x2: f(50 + k * ux), y2: f(50 + k * uy) };
+}
+/** Stroke a ring's arc: below the bar one slate colour (var(--q)); at or above it the threshold → score gradient. */
+export function paintRingGradient(host, score, threshold) {
+  const arc = host?.querySelector?.('.ring-arc');
+  const g = host?.querySelector?.('linearGradient');
+  if (!arc || !g) return;
+  const above = Number(score) >= th0(threshold);
+  if (above) {
+    const st = g.querySelectorAll('stop');
+    st[0]?.setAttribute('stop-color', qualityColor(th0(threshold), threshold));
+    st[1]?.setAttribute('stop-color', qualityColor(score, threshold));
+    arc.style.stroke = `url(#${g.id})`;
+  } else if (arc.style.stroke) arc.style.stroke = '';
+}
 /** Apply --q and data-q to an element (re-run on theme change; the shell fires `byline:theme`). */
 export function paintQuality(el, score, threshold) {
   if (!el) return;
   el.style.setProperty('--q', qualityColor(score, threshold));
   el.dataset.q = qualityTier(score, threshold);
+  if (el.classList?.contains('score-ring') && !el.classList.contains('is-counting')) paintRingGradient(el, score, threshold);
 }
 /** Re-paint every element carrying data-q-score (rings/chips made by ui.js) after a theme change. */
 export function repaintAll(root = document) {

@@ -110,13 +110,25 @@ for (const [theme, vars] of Object.entries(THEMES)) {
     const bg = solid(vars, '--surface-solid');
     assert.ok(bg, `${theme}: --surface-solid missing`);
     const fails = [];
-    const pairs = [['--accent', solid(vars, '--accent')], ['focus ring', focusColor(vars)], ['--line-ctl', solid(vars, '--line-ctl')], ...[0, 1, 2, 3, 4, 5].map(i => [`--q-${i}`, solid(vars, `--q-${i}`)])];
-    for (const [name, fg] of pairs) {
+    // q-2…q-5 (the bar and everything above it) must hold 3:1. q-0 / q-1 are the far-below-bar end of the ramp the
+    // user asked to SEE as a gradient (SPEC §0, round-1 ruling 1): they are never the only cue (fill fraction, the
+    // dotted track / chip outline and the "N below bar" text label carry it), so they get a 1.8:1 floor instead.
+    const pairs = [['--accent', solid(vars, '--accent'), 3], ['focus ring', focusColor(vars), 3], ['--line-ctl', solid(vars, '--line-ctl'), 3],
+      ...[0, 1, 2, 3, 4, 5].map(i => [`--q-${i}`, solid(vars, `--q-${i}`), i < 2 ? 1.8 : 3])];
+    for (const [name, fg, min] of pairs) {
       assert.ok(fg, `${theme}: ${name} is missing or not a parseable colour`);
       const r = contrast(fg, bg);
-      if (r < 3) fails.push(`${name} = ${r.toFixed(2)}`);
+      if (r < min) fails.push(`${name} = ${r.toFixed(2)} (< ${min})`);
     }
-    assert.deepEqual(fails, [], `${theme}: below 3:1 → ${fails.join('; ')}`);
+    assert.deepEqual(fails, [], `${theme}: below floor → ${fails.join('; ')}`);
+  });
+
+  test(`contrast · ${theme}: the quality ramp climbs: each stop further from the surface than the last`, { skip: SKIP }, () => {
+    const bg = solid(vars, '--surface-solid');
+    const r = [0, 1, 2, 3, 4, 5].map(i => contrast(solid(vars, `--q-${i}`), bg));
+    // below the bar the slate deepens toward the bar; above it the blues deepen (q-3 → q-5)
+    assert.ok(r[0] < r[1] && r[1] < r[2], `${theme}: below-bar stops not increasing: ${r.map(x => x.toFixed(2)).join(', ')}`);
+    assert.ok(r[3] < r[4] && r[4] < r[5], `${theme}: above-bar stops not increasing: ${r.map(x => x.toFixed(2)).join(', ')}`);
   });
 
   test(`contrast · ${theme}: text on filled accents ≥ 4.5:1`, { skip: SKIP }, () => {

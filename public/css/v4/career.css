@@ -55,11 +55,16 @@
 #view .cr-table th:last-child, #view .cr-table td:last-child { padding-right: 24px; }
 .cr-table tbody tr { cursor: pointer; }
 .cr-alias { display: block; color: var(--text-3); font: 450 12px/16px var(--font-sans); }
-.cr-barcell { width: 38%; }
+.cr-barcell { width: 36%; }
+#view .cr-table .cr-skillcol { min-width: 200px; white-space: nowrap; }
+#view .cr-table th.cr-trendcol { white-space: normal; width: 184px; line-height: 14px; vertical-align: middle; }
+.cr-th-note { display: block; margin-top: 2px; white-space: nowrap; color: var(--text-3); font: 450 11px/14px var(--font-sans); letter-spacing: 0; text-transform: none; }
+#view .cr-table th:has(.cr-th-note) { height: 44px; }
+#view .cr-table .cv-row { contain-intrinsic-size: auto 46px; }
 .cr-bar { display: grid; grid-template-columns: minmax(60px, 1fr) 28px; align-items: center; gap: 10px; }
 .cr-bar .meter { height: 6px; border-radius: 3px; }
-.cr-bar .meter > i { background: var(--text-3); }
-.cr-table tbody tr:first-child .cr-bar .meter > i { background: var(--accent); }
+.cr-bar .meter { background: var(--track); }
+.cr-bar .meter > i { background: color-mix(in oklab, var(--text-3) 60%, transparent); }
 .cr-bar b { color: var(--text-1); font: 500 13px/1 var(--font-mono); text-align: right; font-variant-numeric: tabular-nums; }
 .cr-raw { color: var(--text-3); }
 .cr-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 14px; }
@@ -71,6 +76,13 @@
 .cr-jobs > li:first-child { border-top: 0; padding-top: 0; }
 .cr-job-h { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin-bottom: 2px; }
 .cr-job-t { color: var(--text-1); font: 500 14.5px/20px var(--font-sans); }
+.cr-job-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin-top: 8px; }
+.cr-job-n { color: var(--text-3); font: 450 12px/16px var(--font-sans); }
+.cr-side { position: sticky; top: 72px; align-self: start; }
+.cr-kpi--empty { justify-content: center; }
+.cr-kpi-t { color: var(--text-1); font: 500 15px/20px var(--font-sans); }
+.cr-inline { padding: 0; border: 0; background: none; color: var(--accent-text); font: inherit; font-weight: 500; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 1px; }
+.cr-inline:focus-visible { outline: 2px solid var(--focus-c); outline-offset: 2px; border-radius: 2px; }
 .cr-excerpt { margin: 8px 0; color: var(--text-2); font: 400 13px/19px var(--font-sans); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .cr-ev-head { display: flex; align-items: center; gap: 12px; margin-bottom: 4px; }
 .cr-ev-head h2 { margin: 0; }
@@ -145,7 +157,7 @@
 .cr-xform { margin-top: 14px; }
 
 @media (max-width: 1180px) { .cr-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); } .cr-grid3 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (max-width: 1100px) { .cr-cols, .cr-proj { grid-template-columns: 1fr; } .cr-short { position: static; } }
+@media (max-width: 1100px) { .cr-cols, .cr-proj { grid-template-columns: 1fr; } .cr-short, .cr-side { position: static; } }
 @media (max-width: 760px) {
   .cr-pad { padding: 16px 18px 0; }
   .cr-card { padding: 18px; }
@@ -156,7 +168,10 @@
   .cr-tabs { width: 100%; }
   #view .cr-table th:first-child, #view .cr-table td:first-child { padding-left: 18px; }
   #view .cr-table th:last-child, #view .cr-table td:last-child { padding-right: 18px; }
-  #view .cr-table th:nth-child(3), #view .cr-table td:nth-child(3) { display: none; }
+  #view .cr-table .cr-weekcol { display: none; }
+  #view .cr-table .cr-skillcol { min-width: 0; white-space: normal; }
+  #view .cr-table .cr-trendcol { display: none; }
+  .cr-th-note { white-space: normal; }
   #view .cr-table th, #view .cr-table td { padding-left: 8px; padding-right: 8px; }
   .cr-barcell { width: 34%; }
   .cr-days li { grid-template-columns: minmax(0, 1fr) auto; }
@@ -168,7 +183,3 @@
    ink with color-mix (tokens only). Shared-file request: fix .tag--ok/--warn/--demo in components.css. */
 :is(.cp-ok, .pp-note--ok) { color: var(--ok-text); }
 :is(.pp-note--warn, .pp-dupnote, .pp-date.is-today) { color: var(--warn-text); }
-/* E1 (tab change ≤ 50 ms at 4× CPU): skip layout of off-screen sections until they scroll near. Static tiles only
-   (paint containment would clip a hover shadow). */
-#view :is(.pp, .cp, .pf, .cr, .em) .tile--static { content-visibility: auto; contain-intrinsic-size: auto 360px; }
-.cr-jobs > li, .cr-changed > li, .cr-shortlist li { content-visibility: auto; contain-intrinsic-size: auto 120px; }

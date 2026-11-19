@@ -11,6 +11,8 @@
 //   setHeat([{ topic, heat, x?, y? }])  heat 0..1; x,y normalised to the content area (optional: hashed from topic)
 //   pulse(x, y)                   one soft light ring (σ 22px, 780ms) at viewport px
 //   setRail({ x, y, w, h }, { animate: ms })   rect the field softens under (no backdrop-filter on the rail)
+//   setBand({ x, y, w, h } | null)             page-head rect in DOCUMENT px: dashes under the h1 + lede drop to
+//                                              ×0.35 alpha with a 48px feather (S13b); scroll is applied per draw
 //   hold(ms)                      skip draws (GPU headroom during route/dossier flights)
 //   resize()                      re-measure (also automatic, debounced)
 //   stats()                       { renderer, draws, hz, N, mode, frozen, backing, ... } for tests
@@ -41,6 +43,7 @@ const S = {
   heat: new Float32Array(64 * 40), heatFrom: null, heatTo: null, heatT0: 0, heatBox: [0, 0, 1, 1], rip: [],
   pulse: null,
   rail: [0, 0, 0, 0], railFrom: null, railTo: null, railT0: 0, railDur: 0,
+  band: [0, 0, 0, 0], scrollY: 0,
 };
 
 // ------------------------------------------------------------------ helpers
@@ -55,11 +58,11 @@ const rgbOf = (v) => { const m = /(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/.exec(v || ''); 
 function readColors() {
   const cs = getComputedStyle(root);
   const g = (n, f) => cs.getPropertyValue(n).trim() || f;
-  return { bg: rgbOf(g('--fd-bg')), ink: rgbOf(g('--fd-ink')), hot: rgbOf(g('--fd-hot')), amin: +g('--fd-amin', .06), amax: +g('--fd-amax', .18), hota: +g('--fd-hot-a', .3), glow: +g('--fd-glow', .05) };
+  return { bg: rgbOf(g('--fd-bg')), ink: rgbOf(g('--fd-ink')), hot: rgbOf(g('--fd-hot')), amin: +g('--fd-amin', .06), amax: +g('--fd-amax', .18), hota: +g('--fd-hot-a', .3), glow: +g('--fd-glow', .05), pool: +g('--fd-pool', .07) };
 }
 function mixColors(a, b, t) {
   const m = (x, y) => x.map((v, i) => lerp(v, y[i], t));
-  return { bg: m(a.bg, b.bg), ink: m(a.ink, b.ink), hot: m(a.hot, b.hot), amin: lerp(a.amin, b.amin, t), amax: lerp(a.amax, b.amax, t), hota: lerp(a.hota, b.hota, t), glow: lerp(a.glow, b.glow, t) };
+  return { bg: m(a.bg, b.bg), ink: m(a.ink, b.ink), hot: m(a.hot, b.hot), amin: lerp(a.amin, b.amin, t), amax: lerp(a.amax, b.amax, t), hota: lerp(a.hota, b.hota, t), glow: lerp(a.glow, b.glow, t), pool: lerp(a.pool, b.pool, t) };
 }
 const intensity = () => (S.mode === 'full' ? 1 : S.mode === 'dim' ? .7 : .6); // opacity does the dimming; I shapes contrast
 
@@ -71,7 +74,7 @@ precision mediump float;
 uniform vec2 u_res; uniform float u_scale; uniform float u_time; uniform vec2 u_grid;
 uniform vec3 u_bg; uniform vec3 u_ink; uniform vec3 u_hot; uniform vec4 u_alpha;
 uniform vec3 u_ptr; uniform vec4 u_rail; uniform vec4 u_rip[3]; uniform vec4 u_heatBox; uniform sampler2D u_heat;
-uniform vec4 u_pool; uniform float u_poolS; uniform vec4 u_pulse;
+uniform vec4 u_pool; uniform float u_poolS; uniform vec4 u_pulse; uniform vec4 u_band; uniform vec2 u_near;
 out vec4 o;
 const float TAU = 6.2831853;
 float wave(vec2 p, float t){
@@ -98,7 +101,10 @@ void main(){
   float sheen = 0.;
   if (L > .003) { float Wu = wave(c - vec2(0., ROW), u_time); sheen = L * clamp((W - Wu)*5., 0., 1.); }
   float P = 0.;
-  if (u_poolS > .001) { float d = max(sdRect(c, u_pool, 12.), 0.); P = u_poolS * exp(-d*d/3200.); }
+  if (u_poolS > .001) { float d = max(sdRect(c, u_pool, 12.), 0.); P = u_poolS * exp(-d*d/3200.) * (u_near.y / .07); }
+  // S13d: the pointer lights the dashes within 160px (full intensity only): alpha toward amax + .08, ink 35% toward hot
+  float N = 0.;
+  if (u_near.x > .001) N = u_near.x * (1. - smoothstep(0., 160., length(dp)));
   float pr = 0.;
   if (u_pulse.w > .001) { float d = distance(c, u_pulse.xy) - u_pulse.z*420.; pr = u_pulse.w * exp(-d*d/968.); }
   float dy = 2.4*W*(.4 + .6*I)*(1. + .4*H);
@@ -111,9 +117,12 @@ void main(){
   float a = u_alpha.x*(.6 + .4*I) + (u_alpha.y - u_alpha.x)*I*u*u + .10*H + .16*L + .22*sheen + .12*P + .2*pr;
   float hot = clamp(.85*H + .5*L + .6*P + .5*pr, 0., 1.);
   a *= mix(1., u_alpha.z / max(u_alpha.y, .01), hot*hot);
+  a = mix(a, max(a, u_alpha.y + .08), N);
+  // S13b: under the page head (h1 + lede) the field steps back to ×0.35 with a 48px feather
+  if (u_band.z > 0.) a *= mix(.35, 1., smoothstep(0., 48., sdRect(f, u_band, 0.)));
   float inside = u_rail.z > 0. ? 1. - smoothstep(-8., 1., sdRect(f, u_rail, 16.)) : 0.;
   cov = mix(cov, (4.*hx*.5)/(ROW*COL)*1.4, inside);
-  vec3 ink = mix(u_ink, u_hot, hot);
+  vec3 ink = mix(mix(u_ink, u_hot, hot), u_hot, .35*N);
   o = vec4(mix(u_bg, ink, clamp(a*cov, 0., 1.)), 1.);
 }`;
 
@@ -138,7 +147,7 @@ function initGL() {
   const buf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, buf);
   gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
   const loc = gl.getAttribLocation(prog, 'p'); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
-  ['u_res', 'u_scale', 'u_time', 'u_grid', 'u_bg', 'u_ink', 'u_hot', 'u_alpha', 'u_ptr', 'u_rail', 'u_rip', 'u_heatBox', 'u_heat', 'u_pool', 'u_poolS', 'u_pulse'].forEach(n => { U[n] = gl.getUniformLocation(prog, n); });
+  ['u_res', 'u_scale', 'u_time', 'u_grid', 'u_bg', 'u_ink', 'u_hot', 'u_alpha', 'u_ptr', 'u_rail', 'u_rip', 'u_heatBox', 'u_heat', 'u_pool', 'u_poolS', 'u_pulse', 'u_band', 'u_near'].forEach(n => { U[n] = gl.getUniformLocation(prog, n); });
   heatTex = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, heatTex);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
@@ -168,6 +177,8 @@ function drawGL() {
   gl.uniform4fv(U.u_heatBox, S.heatBox);
   const pr = S.pool.rect; gl.uniform4f(U.u_pool, pr ? pr[0] : 0, pr ? pr[1] : 0, pr ? pr[2] : 0, pr ? pr[3] : 0); gl.uniform1f(U.u_poolS, S.pool.s);
   const pu = S.pulse; gl.uniform4f(U.u_pulse, pu ? pu.x : 0, pu ? pu.y : 0, pu ? pu.p : 0, pu ? pu.a : 0);
+  const b = bandNow(); gl.uniform4f(U.u_band, b[0], b[1], b[2], b[3]);
+  gl.uniform2f(U.u_near, nearNow(), c.pool ?? .07);
   gl.drawArrays(gl.TRIANGLES, 0, 3);
 }
 
@@ -215,9 +226,14 @@ function rail2D() { if (F) F.rail(S.rail.slice()); }
 function draw2D() {
   if (!F) return;
   const pu = S.pulse, P = S.ptr;
-  F.draw({ col: S.col0, I: intensity(), t: S.t, scale: S.scale, ptr: { x: P.x, y: P.y, s: P.s }, pool: S.pool.rect ? S.pool.rect.slice() : null, poolS: S.pool.s,
+  F.draw({ col: S.col0, I: intensity(), t: S.t, scale: S.scale, ptr: { x: P.x, y: P.y, s: P.s }, near: nearNow(), band: bandNow(), pool: S.pool.rect ? S.pool.rect.slice() : null, poolS: S.pool.s,
     pulse: pu ? { x: pu.x, y: pu.y, p: pu.p, a: pu.a } : null, rip: S.rip.slice(0, 3).map(r => ({ x: r.x, y: r.y, h: r.h, s: r.s })) });
 }
+
+/** Pointer reaction strength (S13d): only at full intensity, never on touch / reduced motion. */
+const nearNow = () => (S.mode === 'full' && !isTouch() && !reduced() ? S.ptr.s : 0);
+/** Page-head band in viewport px (document rect minus the current scroll). */
+const bandNow = () => (S.band[2] > 0 ? [S.band[0], S.band[1] - S.scrollY, S.band[2], S.band[3]] : [0, 0, 0, 0]);
 
 // ------------------------------------------------------------------ sizing
 function measure() {
@@ -229,8 +245,14 @@ function measure() {
   const cap = phone ? 0.6e6 : 2.4e6;
   if (S.W * S.H * s * s > cap) s = Math.sqrt(cap / (S.W * S.H));
   if (S.renderer === 'canvas2d' && phone) s = Math.min(s, 1);
+  // S13a: backing = round(viewport × scale) on both axes (no floor-and-stretch seam); stay inside the pixel cap
+  while (s > 0.1 && Math.round(S.W * s) * Math.round(S.H * s) > cap) s -= 0.0005;
   S.scale = s;
-  S.bw = Math.max(1, Math.floor(S.W * s)); S.bh = Math.max(1, Math.floor(S.H * s));
+  S.bw = Math.max(1, Math.round(S.W * s)); S.bh = Math.max(1, Math.round(S.H * s));
+  // the element is sized in px to the viewport (not 100vw / max-width:100%, which clipped it to the body width)
+  const cw = `${S.W}px`, ch = `${S.H}px`;
+  if (canvas.style.width !== cw) canvas.style.width = cw;
+  if (canvas.style.height !== ch) canvas.style.height = ch;
   if (!offscreen) {
     if (canvas.width !== S.bw) canvas.width = S.bw;
     if (canvas.height !== S.bh) canvas.height = S.bh;
@@ -419,7 +441,20 @@ function applyMode() {
   if (m !== 'still') wake();
   requestDraw();
 }
-function overlay(on) { S.overlays = Math.max(0, S.overlays + (on ? 1 : -1)); applyMode(); }
+/** Dossier / ⌘K / sheet: the field goes still, the pointer light fades out over 240ms and the tile pool stops (S6). */
+function overlay(on) {
+  S.overlays = Math.max(0, S.overlays + (on ? 1 : -1));
+  const any = S.overlays > 0;
+  if (light) light.classList.toggle('is-out', any);
+  if (any) { S.poolEl = null; S.pool.ts = 0; S.pool.s = 0; S.pool.rect = null; }
+  applyMode();
+}
+function setBand(rect) {
+  const next = rect && rect.w > 0 ? [rect.x, rect.y, rect.w, rect.h] : [0, 0, 0, 0];
+  if (next.every((v, i) => Math.abs(v - S.band[i]) < .5)) return;
+  S.band = next;
+  requestDraw();
+}
 function pulse(x, y) { if (reduced()) return; S.pulse = { x, y, t0: performance.now(), p: 0, a: 0 }; kick(); }
 function setRail(rect, { animate = 0 } = {}) {
   const next = rect ? [rect.x, rect.y, rect.w, rect.h] : [0, 0, 0, 0];
@@ -431,7 +466,7 @@ function hold(ms = 450) { S.holdUntil = Math.max(S.holdUntil, performance.now() 
 function stats() {
   return { renderer: S.renderer, draws: S.draws, drawMsAvg: S.draws ? +(S.drawMs / S.draws).toFixed(2) : 0, frames: S.frames, hz: S.hz, N: S.mode === 'full' ? Math.max(1, Math.round(S.hz / 30)) : Math.max(1, Math.round(S.hz / 20)),
     mode: S.mode, frozen: S.frozen, idleMs: IDLE_MS, running: !!S.raf, backing: { w: S.bw || canvas.width, h: S.bh || canvas.height }, offscreen, scale: S.scale, timeScale: S.timeScale, t: S.t,
-    heatTopics: heatInput.map(h => h.topic), rail: S.rail.slice(), reduced: reduced(), glRejected: S.glRejected || null };
+    heatTopics: heatInput.map(h => h.topic), rail: S.rail.slice(), band: S.band.slice(), css: { w: S.W, h: S.H }, reduced: reduced(), glRejected: S.glRejected || null };
 }
 
 function onTheme() {
@@ -463,7 +498,7 @@ function start() {
     input();
   }, { passive: true });
   ['pointerdown', 'keydown', 'wheel', 'touchstart'].forEach(ev => addEventListener(ev, input, { passive: true, capture: true }));
-  addEventListener('scroll', input, { passive: true });
+  addEventListener('scroll', () => { S.scrollY = window.scrollY; input(); }, { passive: true });
   document.addEventListener('pointerleave', () => { S.ptr.seen = false; }, { passive: true });
   addEventListener('resize', onResize, { passive: true });
   document.addEventListener('visibilitychange', () => {
@@ -475,6 +510,7 @@ function start() {
   // tile hover pool (desktop pointers only): read the rect once per enter
   document.addEventListener('pointerover', (e) => {
     if (e.pointerType === 'touch' || isTouch()) return;
+    if (S.overlays > 0) return;
     const t = e.target.closest?.('.tile:not(.tile--static), [data-pool]');
     if (!t || t === S.poolEl) return;
     S.poolEl = t;
@@ -495,8 +531,8 @@ function start() {
   return api;
 }
 
-const api = { start, setMode, overlay, setHeat, pulse, setRail, hold, resize: () => { measure(); requestDraw(); }, stats, get mode() { return S.mode; } };
+const api = { start, setMode, overlay, setHeat, pulse, setRail, setBand, hold, resize: () => { measure(); requestDraw(); }, stats, get mode() { return S.mode; } };
 window.__byline = window.__byline || {};
 window.__byline.bg = api;
 export default api;
-export { start, setMode, overlay, setHeat, pulse, setRail, hold, stats };
+export { start, setMode, overlay, setHeat, pulse, setRail, setBand, hold, stats };

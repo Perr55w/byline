@@ -16,18 +16,18 @@ function headline(emps) {
   const withS = emps.filter(e => e.story_count > 0);
   const contacts = emps.reduce((n, e) => n + e.contact_count, 0);
   const pinnedNone = emps.filter(e => e.pinned && !e.story_count).map(e => e.name);
-  let h;
+  let h, tie = null;
   if (!emps.length) h = 'No employers yet.';
   else if (!withS.length) h = 'No employer appears in your stories yet.';
   else {
     const max = Math.max(...withS.map(e => e.story_count));
     const lead = withS.filter(e => e.story_count === max);
-    h = lead.length === 1 ? `${lead[0].name} appears in ${plural(max, 'story', 'stories')}.`
-      : lead.length <= 4 ? `${listJoin(lead.map(e => e.name))} lead, ${plural(max, 'story', 'stories')} each.`
-      : `${lead.length} employers tie for the lead, ${plural(max, 'story', 'stories')} each.`;
+    // Three or more ties: count in the headline, names in the one-liner (keeps the h1 to two lines).
+    if (lead.length >= 3) { h = `${lead.length} employers tie for the lead with ${plural(max, 'story', 'stories')} each.`; tie = { names: lead.map(e => e.name), n: max }; }
+    else h = lead.length === 1 ? `${lead[0].name} appears in ${plural(max, 'story', 'stories')}.` : `${listJoin(lead.map(e => e.name))} lead, ${plural(max, 'story', 'stories')} each.`;
   }
   const l = !emps.length ? html`Add the companies you want to work for; Byline matches them in every story it ranks.`
-    : html`<b>${withS.length}</b> of <b>${emps.length}</b> employers appear in your stories${pinnedNone.length ? html`; pinned with none yet: <b>${listJoin(pinnedNone)}</b>` : ''}. ${contacts ? html`<b>${contacts}</b> ${contacts === 1 ? 'person is' : 'people are'} linked.` : 'No people are linked to an employer yet.'}`;
+    : html`${tie ? html`<b>${listJoin(tie.names)}</b> each appear in ${tie.n}. ` : ''}<b>${withS.length}</b> of <b>${emps.length}</b> employers appear in your stories${pinnedNone.length ? html`; pinned with none yet: <b>${listJoin(pinnedNone)}</b>` : ''}. ${contacts ? html`<b>${contacts}</b> ${contacts === 1 ? 'person is' : 'people are'} linked.` : 'No people are linked to an employer yet.'}`;
   return { h, l };
 }
 
@@ -39,7 +39,7 @@ export async function render(el, ctx = {}) {
   const rows = [...employers].sort((a, b) => b.story_count - a.story_count || b.pinned - a.pinned || a.name.localeCompare(b.name));
   const max = Math.max(1, ...employers.map(e => e.story_count));
   const teams = employers.reduce((n, e) => n + e.teams.length, 0);
-  const lead = rows[0]?.story_count;
+  const showPeople = employers.some(e => e.contact_count > 0);
 
   const root = document.createElement('div');
   root.className = 'em';
@@ -52,24 +52,24 @@ export async function render(el, ctx = {}) {
   </header>
 
   <section class="tile tile--static tile--flush" aria-labelledby="em-t-h">
-    <div class="section-head em-pad"><h2 class="t-h2" id="em-t-h">Coverage</h2><span class="section-meta">${employers.length} employers · ${employers.filter(e => e.pinned).length} pinned · ${plural(teams, 'team watchlist')} · stories counted all-time</span></div>
+    <div class="section-head em-pad"><h2 class="t-h2" id="em-t-h">Coverage</h2><span class="section-meta">${employers.length} employers · ${employers.filter(e => e.pinned).length} pinned · ${plural(teams, 'team watchlist')} · stories counted all-time${showPeople ? '' : ' · no people linked yet'}</span></div>
     ${employers.length ? html`<table class="table em-table">
-      <thead><tr><th>Employer</th><th>Stories mentioning it <span class="em-th-sub">all-time</span></th><th class="num em-hide-sm">People</th><th>Team watchlists</th><th><span class="sr-only">Actions</span></th></tr></thead>
+      <thead><tr><th>Employer</th><th>Stories mentioning it <span class="em-th-sub">all-time</span></th>${showPeople ? html`<th class="num em-hide-sm">People</th>` : ''}<th>Team watchlists</th><th><span class="sr-only">Actions</span></th></tr></thead>
       <tbody>${rows.map(e => html`<tr data-row class="${e.pinned ? 'is-pinned' : ''}">
         <td class="em-emp">
           <a class="em-name" href="#/employers/${e.id}">${e.name}</a>${e.pinned ? html`<span class="tag tag--neutral em-pintag">Pinned</span>` : ''}
           ${e.parent ? html`<span class="em-sub">part of ${e.parent} · tracked separately</span>` : ''}
           <span class="em-topics">${e.topics.join(' · ') || 'No topics set'}</span>
         </td>
-        <td class="em-cov"><span class="em-bar ${e.story_count ? '' : 'is-zero'} ${e.story_count === lead && lead ? 'is-lead' : ''}"><span class="meter"><i style="--v:${e.story_count / max}"></i></span><b>${e.story_count}</b></span></td>
-        <td class="num em-hide-sm">${e.contact_count}</td>
+        <td class="em-cov"><span class="em-bar ${e.story_count ? '' : 'is-zero'}"><span class="meter"><i style="--v:${e.story_count / max}"></i></span><b>${e.story_count}</b></span></td>
+        ${showPeople ? html`<td class="num em-hide-sm">${e.contact_count}</td>` : ''}
         <td class="em-teams">${e.teams.length ? e.teams.map(t => html`<span class="em-team" title="${(t.terms || []).length ? `Matches ${(t.terms || []).join(', ')}` : 'No match terms'}">
-            <span>${t.name}</span>${t.pinned ? html`<span class="tag tag--neutral">Pinned</span>` : ''}
+            <span class="em-team-n">${t.name}</span>${t.pinned ? html`<span class="tag tag--neutral">Pinned</span>` : ''}
             <button class="btn btn--ghost btn--sm" data-team-pin="${t.id}" data-on="${t.pinned ? 1 : 0}" aria-label="${t.pinned ? 'Unpin' : 'Pin'} team ${t.name}">${t.pinned ? 'Unpin' : 'Pin'}</button>
             <button class="btn btn--ghost btn--sm btn--icon" data-team-del="${t.id}" aria-label="Remove team ${t.name}">${icon('x')}</button></span>`) : ''}
           <button class="btn btn--ghost btn--sm em-addteam" data-team-add="${e.id}">${icon('plus')}Team</button></td>
         <td class="em-act"><span class="cluster">
-          <button class="btn btn--sm ${e.pinned ? '' : 'btn--ghost'}" data-pin="${e.id}" data-on="${e.pinned ? 1 : 0}" aria-pressed="${!!e.pinned}" aria-label="${e.pinned ? 'Unpin' : 'Pin'} ${e.name}">${e.pinned ? 'Unpin' : 'Pin'}</button>
+          <button class="btn btn--sm" data-pin="${e.id}" data-on="${e.pinned ? 1 : 0}" aria-pressed="${!!e.pinned}" aria-label="${e.pinned ? 'Unpin' : 'Pin'} ${e.name}">${e.pinned ? 'Unpin' : 'Pin'}</button>
           <button class="btn btn--sm" data-edit="${e.id}" aria-label="Edit ${e.name}">Edit</button>
           <a class="btn btn--sm btn--ghost" href="#/employers/${e.id}" aria-label="${e.name} activity">Activity${icon('arrow-right')}</a></span></td>
       </tr>`)}</tbody></table>`
