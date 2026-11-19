@@ -173,3 +173,10 @@ main.press[data-route="performance"] .empty { animation: fade 280ms ease-out cal
 /* Runs: only the first eight rows type their timestamp, one per row */
 main.press[data-route="runs"] tbody tr:nth-child(n+9) td { animation: none !important; }
 main.press[data-route="runs"] tbody tr:nth-child(-n+8) > td.mono:first-of-type { animation: type-in 320ms steps(20, end) calc(var(--row-start) + 120ms + var(--i, 0) * 45ms) both; }
+
+/* DOM route transition (replaces the full-page view-transition snapshot) */
+.folio-mark { view-transition-name: none; }
+.page.current { view-transition-name: none; }
+.page.leaving { position: absolute; left: 0; right: 0; visibility: visible; pointer-events: none; animation: page-lift 160ms var(--ease-rule) both; }
+html[data-dir="back"] .page.leaving { animation-name: page-back; }
+.page.entering { animation: fade 1ms linear 140ms both; }

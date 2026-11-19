@@ -10,19 +10,19 @@
 
 /* ---------- Night desk character ---------- */
 :root[data-theme="dark"] {
-  --band: #1C1A15; --highlight: #E8C547; --column-rule: rgba(241, 234, 219, .06);
-  --skeleton: #3A342C; --skeleton-hi: #463F35; --scrim: rgba(12, 10, 8, .6);
+  --band: #19120E; --highlight: #DCA55E; --column-rule: rgba(243, 234, 219, .06);
+  --skeleton: #463B31; --skeleton-hi: #54473B; --scrim: rgba(12, 10, 8, .6);
 }
 :root { --column-rule: rgba(28, 26, 22, .07); --skeleton: #DDD3C0; --skeleton-hi: #EFE8DA; --scrim: rgba(28, 26, 22, .5); }
-:root[data-theme="dark"] body {
-  /* desk-lamp pool: one warm static glow, upper left */
-  background-image: radial-gradient(75% 60% at 14% -6%, rgba(240, 200, 120, .085), transparent 72%), radial-gradient(120% 70% at 50% 0%, transparent 55%, var(--vignette)), var(--grain);
+:root[data-theme="dark"] {
+  /* desk lamp: a warm pool upper-left, deeper edges */
+  --atmos: radial-gradient(60% 55% at 22% 0%, rgba(255, 196, 120, .13), transparent 70%), radial-gradient(140% 90% at 50% 10%, transparent 50%, rgba(10, 6, 3, .35)), var(--grain);
 }
 :root[data-theme="dark"] .masthead { background-image: radial-gradient(circle, rgba(237, 230, 214, .05) 1px, transparent 1.4px); }
 /* baseline marker swipe instead of an alpha wash (ink stays readable on dark) */
-:root[data-theme="dark"] .lead-hl { --hl-h: .16em; background-size: 100% .16em; background-position: 0 94%; }
+:root[data-theme="dark"] .lead-hl { --hl-h: .09em; background-size: 100% .09em; background-position: 0 96%; }
 :root[data-theme="dark"] .brief-item.lead .story-title { line-height: 1.12; }
-:root[data-theme="dark"] ::selection { background: #E8C547; color: #16140F; }
+:root[data-theme="dark"] ::selection { background: #DCA55E; color: #16140F; }
 /* LinkedIn preview in LinkedIn's own dark style */
 :root[data-theme="dark"] .li-preview { background: #1B1F23; border-color: #38434F; color: rgba(255, 255, 255, .9); }
 :root[data-theme="dark"] .li-head div div:nth-child(2), :root[data-theme="dark"] .li-head div div:nth-child(3), :root[data-theme="dark"] .li-more, :root[data-theme="dark"] .li-bar { color: rgba(255, 255, 255, .6) !important; }
@@ -115,7 +115,7 @@ html.theme-wipe::view-transition-new(roller) { animation: roller-down 460ms var(
   mask: linear-gradient(#000 0 0) top / 100% calc(100% - 6px) no-repeat, conic-gradient(from 135deg at 50% 0, #000 90deg, #0000 0) bottom / 10px 6px repeat-x;
   filter: drop-shadow(2px 2px 0 var(--rule-strong)); }
 .clipping .hit::before { display: none; }
-:root[data-theme="dark"] .clipping .hit { background: #38332B; }
+:root[data-theme="dark"] .clipping .hit { background: var(--sheet); }
 
 /* ---------- headlines & numbers ---------- */
 a.story-title { display: block; }
@@ -354,7 +354,7 @@ main :is(.story, .hit, tbody tr, .source-row):nth-child(n+13) { content-visibili
 .nowrap { white-space: nowrap; }
 .card.pinned { border-top: 3px solid var(--pencil-red); }
 .lead-hl { background-position: 0 100%; }
-:root[data-theme="dark"] .lead-hl { background-position: 0 100%; }
+:root[data-theme="dark"] .lead-hl { background-position: 0 96%; }
 .galley-scale { overflow: clip; overflow-clip-margin: 6px; }
 /* masthead stays one row: shed status detail as the window narrows */
 .mast-row { flex-wrap: nowrap; }
@@ -362,3 +362,13 @@ main :is(.story, .hit, tbody tr, .source-row):nth-child(n+13) { content-visibili
 @media (max-width: 1240px) { .mast-status > span:nth-child(2) { display: none; } }
 @media (max-width: 1080px) { .mast-status { display: none; } }
 @media (max-width: 760px) { .mast-row { flex-wrap: wrap; } }
+
+/* Night depth: sheets lift off the desk */
+:root[data-theme="dark"] :is(.slip, .card.accent, .section-block, .cal-tray) { background-color: var(--sheet); }
+:root[data-theme="dark"] :is(.slip, .card.accent) { filter: drop-shadow(0 10px 14px rgba(0, 0, 0, .35)); }
+/* the lamp prints in halftone (static, fixed layer) */
+.shell::before { content: ''; position: fixed; inset: 0; pointer-events: none; z-index: -1; contain: strict; }
+:root[data-theme="dark"] .shell::before { background: radial-gradient(circle, rgba(255, 205, 140, .16) 1.1px, transparent 1.6px) 0 0 / 7px 7px;
+  -webkit-mask-image: radial-gradient(48% 46% at 18% 6%, #000 0%, rgba(0,0,0,.5) 40%, transparent 75%); mask-image: radial-gradient(48% 46% at 18% 6%, #000 0%, rgba(0,0,0,.5) 40%, transparent 75%); }
+:root[data-theme="light"] .shell::before { background: radial-gradient(circle, rgba(28, 26, 22, .11) 1px, transparent 1.5px) 0 0 / 7px 7px;
+  -webkit-mask-image: radial-gradient(40% 40% at 96% 100%, #000, transparent 75%); mask-image: radial-gradient(40% 40% at 96% 100%, #000, transparent 75%); }

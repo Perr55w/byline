@@ -9,7 +9,7 @@
 <link rel="preload" href="/fonts/newsreader-italic.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="/fonts/martian-mono.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/styles.css"><link rel="manifest" href="/manifest.webmanifest">
-<meta name="theme-color" content="#1C1A15">
+<meta name="theme-color" content="#19120E">
 <style>
   body { min-height: 100vh; min-height: 100dvh; display: flex; flex-direction: column; }
   .login-band .mast-row { padding-top: max(12px, env(safe-area-inset-top, 0px)); padding-bottom: 10px; justify-content: space-between; }
@@ -80,7 +80,7 @@
     const form = $('f'), pw = $('pw'), code = $('code'), wrap = $('code-wrap'), msg = $('msg'), go = $('go');
     $('dateline').textContent = new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
     const night = getComputedStyle(document.documentElement).colorScheme === 'dark';
-    document.querySelector('meta[name=theme-color]').content = night ? '#1C1A15' : '#1C1A16';
+    document.querySelector('meta[name=theme-color]').content = night ? '#19120E' : '#1C1A16';
 
     let busy = false;
     const showCode = (focus) => {

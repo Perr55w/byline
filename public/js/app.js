@@ -78,7 +78,7 @@ function paintSwitch() {
   b.setAttribute('aria-checked', String(night));
   b.setAttribute('aria-label', night ? 'Night desk on — switch to Proof desk' : 'Proof desk on — switch to Night desk');
   b.dataset.short = night ? '☾ Night' : '☼ Proof';
-  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', night ? '#1C1A15' : '#1C1A16');
+  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', night ? '#19120E' : '#1C1A16');
 }
 function applyTheme(next) {
   if (next === themeNow()) return;
@@ -146,7 +146,7 @@ async function route() {
   const dir = direction();
   const main = document.getElementById('view');
   const bar = document.getElementById('pressbar');
-  const old = main.querySelector('.page.current');
+  let old = main.querySelector('.page.current');
   const page = document.createElement('div');
   page.className = 'page';
   main.append(page);
@@ -197,12 +197,25 @@ async function route() {
     skeleton.querySelector('.galley')?.classList.add('out');
     setTimeout(() => skeleton.remove(), 160);
     swap(); after();
-  } else if (old && document.startViewTransition && !reducedMotion() && !document.hidden && !matchMedia('(max-width: 760px), (pointer: coarse)').matches) {
-    runningVT?.skipTransition();
-    const vt = runningVT = document.startViewTransition(swap);
-    vt.updateCallbackDone.then(after, after);
-    vt.ready.catch(() => {});
-    vt.finished.catch(() => {}).finally(() => { if (runningVT === vt) runningVT = null; });
+  } else if (old && !reducedMotion() && !document.hidden) {
+    // DOM transition (no full-page snapshot): the old page lifts away in place, the folio mark glides by FLIP
+    const markFrom = document.querySelector('.folio-mark')?.getBoundingClientRect();
+    main.querySelectorAll('.page.leaving').forEach(p => p.remove());
+    old.classList.remove('current'); old.classList.add('leaving');
+    old.style.top = `${old.offsetTop}px`;
+    old.addEventListener('animationend', () => old.remove(), { once: true });
+    setTimeout(() => old.remove(), 400);
+    const keep = old; old = null; // swap() must not remove it
+    swap();
+    page.classList.add('entering');
+    setTimeout(() => page.classList.remove('entering'), 400);
+    const mark = document.querySelector('.folio-mark');
+    if (mark && markFrom) {
+      const to = mark.getBoundingClientRect();
+      if (to.width) mark.animate([{ transform: `translateX(${markFrom.left - to.left}px) scaleX(${markFrom.width / to.width})`, transformOrigin: 'left' }, { transform: 'none', transformOrigin: 'left' }], { duration: 260, easing: 'cubic-bezier(.16,1,.3,1)' });
+    }
+    void keep;
+    after();
   } else { swap(); after(); }
   refreshStatus();
 }
