@@ -25,7 +25,7 @@
 ::view-transition-new(masthead) { animation: none; }
 .page.current { view-transition-name: page; }
 ::view-transition-old(page) { animation: page-lift 180ms var(--ease-rule) both; }
-::view-transition-new(page) { animation: none; }
+::view-transition-new(page) { animation: fade 1ms linear 170ms both; }
 html[data-dir="back"]::view-transition-old(page) { animation: page-back 200ms var(--ease-rule) both; }
 ::view-transition-group(page) { animation-duration: 0s; }
 .folio-mark { position: absolute; left: 10px; right: 10px; bottom: 0; height: 3px; background: var(--band-mark); view-transition-name: folio-mark; pointer-events: none; }
@@ -109,9 +109,10 @@ main.press[data-route="performance"] :is(.bar, .bars i, .chart-bar, .track-bar b
 main.press[data-route="performance"] :is(.axis, .chart-axis) { transform-origin: left; animation: rule-draw 300ms var(--ease-rule) var(--row-start) both; }
 @keyframes tally { from { transform: scaleY(0); } to { transform: none; } }
 
-/* Sources — roll call: names type in, then the status stamp lands */
-main.press[data-route="sources"] .source-row > :first-child, main.press[data-route="sources"] tbody tr > td:first-child { animation: type-in 300ms steps(18, end) calc(var(--row-start) + var(--i, 0) * 45ms) both; }
-main.press[data-route="sources"] :is(.source-row, tbody tr) .status { animation: stamp-land 220ms var(--ease-stamp) calc(var(--row-start) + 260ms + var(--i, 0) * 45ms) both; }
+/* Sources — roll call: names type in, then the status stamp lands (first 8 rows on the page only) */
+main.press[data-route="sources"] :is(tbody tr, .source-row):not(.roll) > *, main.press[data-route="sources"] :is(tbody tr, .source-row):not(.roll)::before { animation: none !important; }
+main.press[data-route="sources"] .roll > :first-child { animation: type-in 300ms steps(18, end) calc(var(--row-start) + var(--i, 0) * 45ms) both; }
+main.press[data-route="sources"] .roll :is(.dot, .chip, .status) { animation: stamp-land 220ms var(--ease-stamp) calc(var(--row-start) + 260ms + var(--i, 0) * 45ms) both; }
 
 /* Runs — press log: rule, then the timestamp is typed */
 
@@ -169,10 +170,6 @@ main[data-route="performance"] .empty::after { content: ''; position: absolute; 
 main.press[data-route="performance"] .empty::before { animation: rule-draw 300ms var(--ease-rule) var(--row-start) both; }
 main.press[data-route="performance"] .empty::after { animation: tally 520ms var(--ease-press) calc(var(--row-start) + 220ms) both; }
 main.press[data-route="performance"] .empty { animation: fade 280ms ease-out calc(var(--row-start) + 600ms) both; }
-/* Sources: stamp the real status marks; cap per page, not per table */
-main.press[data-route="sources"] :is(.source-row, tbody tr) :is(.dot, .chip) { animation: stamp-land 220ms var(--ease-stamp) calc(var(--row-start) + 260ms + var(--i, 0) * 45ms) both; }
-main.press[data-route="sources"] .card:not(:first-of-type) :is(td, td > *, .source-row > *, .dot, .chip),
-main.press[data-route="sources"] tbody tr:nth-child(n+9) :is(td, .dot, .chip) { animation: none !important; }
 /* Runs: only the first eight rows type their timestamp, one per row */
 main.press[data-route="runs"] tbody tr:nth-child(n+9) td { animation: none !important; }
 main.press[data-route="runs"] tbody tr:nth-child(-n+8) > td.mono:first-of-type { animation: type-in 320ms steps(20, end) calc(var(--row-start) + 120ms + var(--i, 0) * 45ms) both; }

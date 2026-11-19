@@ -127,6 +127,8 @@ export async function render(view) {
         </form>
       </section>
   </div>`);
+  // one roll call for the whole page: the first eight rows, staggered continuously across tables
+  [...el.querySelectorAll('tbody tr, .source-row')].slice(0, 8).forEach((r, n) => { r.classList.add('roll'); r.style.setProperty('--i', n); });
 
   // ---- events ----
   on(el, 'change', '[data-kind]', (e, s) => {
