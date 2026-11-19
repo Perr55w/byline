@@ -392,7 +392,7 @@ pre.code { font: 400 var(--fs-xs)/1.55 var(--data); font-stretch: 87.5%; backgro
 @keyframes rise-off { from { clip-path: inset(100% 0 0 0); transform: translateY(35%); } to { clip-path: inset(0); transform: none; } }
 @keyframes type-in { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0); } }
 @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
-@keyframes slug-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+@keyframes slug-in { from { opacity: 0; transform: translateY(9px); } to { opacity: 1; transform: none; } }
 @keyframes hl-sweep { from { background-size: 0% var(--hl-h, .38em); } to { background-size: 100% var(--hl-h, .38em); } }
 @keyframes count { from { --n: 0; } to { --n: var(--score); } }
 @keyframes hide { to { opacity: 0; } }
@@ -477,4 +477,5 @@ main[data-route="story"] h1.long, main[data-route="draft"] h1.long { font-size: 
 .score.inline { text-align: left; font-size: 28px; }
 @media (max-width: 760px) { main[data-route="story"] h1, main[data-route="draft"] h1 { font-size: var(--fs-2xl); } }
 /* every block after the page head waits for the headline (rows inside start later) */
-main.press .page-head ~ * { animation: fade 280ms ease-out calc(var(--row-start) - 60ms) both; }
+main.press .page-head ~ * { animation: slug-up 380ms var(--ease-press) calc(var(--row-start) - 60ms) both; }
+@keyframes slug-up { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }

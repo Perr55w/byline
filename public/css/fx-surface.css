@@ -60,3 +60,6 @@
   .plate.fx-dev img, .plate.fx-dev::after { animation: none !important; -webkit-mask: none !important; mask: none !important; }
   .fx-live-screen { display: none; }
 }
+
+/* hero: the plate develops after the headline has been set, so it is seen */
+main.hero .plate.fx-dev.fx-run img, :root[data-theme="dark"] main.hero .plate.fx-dev.fx-run::after { animation-delay: 600ms; }

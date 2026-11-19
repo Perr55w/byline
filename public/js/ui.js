@@ -276,7 +276,7 @@ export function scoreNum(v, { dec = false, flap = false, from = null } = {}) {
   const shown = dec ? n.toFixed(1) : String(Math.round(n));
   const [i, d] = shown.split('.');
   const t = (window.__byline?.threshold) ?? 55;
-  return html`<b class="score-num${flap ? ' flap' : ''}" data-v="${n}" ${from != null ? html`data-from="${from}"` : ''} style="${inkStyle(n, t)}" ><span class="sr-only">Score ${shown}.</span><span class="int" aria-hidden="true">${i}</span>${d ? html`<span class="dec" aria-hidden="true">.${d}</span>` : ''}</b>`;
+  return html`<b class="score-num${flap ? ' flap' : ''}" data-v="${n}" ${from != null ? html`data-from="${from}"` : ''} style="${inkStyle(reducedMotion() ? n : Number(from ?? 0), t)}" ><span class="sr-only">Score ${shown}.</span><span class="int" aria-hidden="true" data-final="${i}">${reducedMotion() ? i : String(Math.round(Number(from ?? 0)))}</span>${d ? html`<span class="dec" aria-hidden="true">.${d}</span>` : ''}</b>`;
 }
 
 /** Stepped ink density: Martian weight and red-pencil mix in 5 bands, driven by value vs threshold. */
@@ -298,7 +298,7 @@ export function countUp(root = document) {
   if (!els.length) return;
   const t = (window.__byline?.threshold) ?? 55;
   const caretOf = (el) => el.closest('.score')?.querySelector('.galley-scale .caret');
-  if (reducedMotion()) { els.forEach(e => { e.dataset.counted = '1'; const c = caretOf(e); if (c) c.style.transform = `translateX(${Math.min(100, Number(e.dataset.v))}%)`; e.closest('.score')?.classList.add('landed'); }); return; }
+  if (reducedMotion()) { els.forEach(e => { e.dataset.counted = '1'; const ii = e.querySelector('.int'); if (ii?.dataset.final) ii.textContent = ii.dataset.final; const c = caretOf(e); if (c) c.style.transform = `translateX(${Math.min(100, Number(e.dataset.v))}%)`; e.closest('.score')?.classList.add('landed'); }); return; }
   const start = (el) => {
     if (active >= 8) { queue.push(el); return; }
     active++;

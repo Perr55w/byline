@@ -58,7 +58,7 @@ export async function refreshStatus({ flap = false } = {}) {
       ? `No. ${doy} · ${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`
       : `Vol. 1 · No. ${doy} · ${d.toLocaleDateString('en-US', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' }).replace(/,/g, '')}`;
     const dl = document.getElementById('dateline');
-    if (dl.dataset.text !== text) { flapTo(dl, text, { animate: flap || !!dl.dataset.text }); dl.dataset.text = text; }
+    if (dl.dataset.text !== text) { flapTo(dl, text, { animate: true }); dl.dataset.text = text; }
     const badge = document.querySelector('[data-nav="studio"] .badge');
     if (badge) { badge.textContent = s.counts.awaiting || ''; badge.style.display = s.counts.awaiting ? '' : 'none'; }
   } catch (e) { /* server restarting */ }
@@ -196,9 +196,15 @@ async function route() {
     if (heroDue(key)) { main.classList.add('hero'); ink(); }
     const h1 = page.querySelector('.page-head h1');
     if (h1) {
-      const cast = castHeading(h1, { hero: main.classList.contains('hero') });
+      const hero = main.classList.contains('hero');
+      const near = new Promise(res => h1.addEventListener('cast-near', res, { once: true }));
+      castHeading(h1, { hero });
       const dek = page.querySelector('.page-head .live-dek');
-      if (dek) typeDek(dek, { after: cast });
+      const row = page.querySelector('.page-head > .row');
+      if (dek && hero) typeDek(dek, { after: near });
+      else if (dek) { dek.classList.add('fx-wait'); near.then(() => { dek.classList.remove('fx-wait'); dek.classList.add('fx-in'); }); }
+      if (row) { row.classList.add('fx-wait'); near.then(() => { row.classList.remove('fx-wait'); row.classList.add('fx-in'); }); }
+      setTimeout(() => { dek?.classList.remove('fx-wait'); row?.classList.remove('fx-wait'); }, 2000); // never stay hidden
     }
     const fold = page.querySelector('.below-fold');
     if (fold) unfold(fold);
@@ -206,7 +212,7 @@ async function route() {
   };
   const after = () => {
     // keep the main thread clear while the hero heading is being set
-    if (main.classList.contains('hero')) setTimeout(() => decorate(page), 450); else decorate(page);
+    if (main.classList.contains('hero')) setTimeout(() => decorate(page), 450); else requestAnimationFrame(() => setTimeout(() => decorate(page), 0));
     clearTimeout(route.settle);
     route.settle = setTimeout(() => main.classList.remove('press', 'hero'), 1700);
     document.getElementById('route-live').textContent = `${NAV_FLAT.find(n => n.route === (ALIAS[key] || key))?.label || ''} loaded`;
@@ -229,7 +235,7 @@ async function route() {
     setTimeout(() => keep.remove(), 400);
     swap();
     page.classList.add('entering');
-    setTimeout(() => page.classList.remove('entering'), 400);
+    setTimeout(() => page.classList.remove('entering'), 360);
     const mark = document.querySelector('.folio-mark');
     if (mark && markFrom) {
       const to = mark.getBoundingClientRect();

@@ -177,6 +177,13 @@ main.press[data-route="runs"] tbody tr:nth-child(-n+8) > td.mono:first-of-type {
 /* DOM route transition (replaces the full-page view-transition snapshot) */
 .folio-mark { view-transition-name: none; }
 .page.current { view-transition-name: none; }
-.page.leaving { position: absolute; left: 0; right: 0; visibility: visible; pointer-events: none; animation: page-lift 160ms var(--ease-rule) both; }
+.page.leaving { position: absolute; left: max(16px, env(safe-area-inset-left, 0px)); right: max(16px, env(safe-area-inset-right, 0px)); visibility: visible; pointer-events: none; animation: page-lift 160ms var(--ease-rule) both; }
+.page.leaving * { animation: none !important; }
 html[data-dir="back"] .page.leaving { animation-name: page-back; }
-.page.entering { animation: fade 1ms linear 140ms both; }
+.page.entering { animation: fade 1ms linear 100ms both; }
+
+/* head leads, page follows: the dek and action row wait for the cast */
+.page-head .fx-wait { opacity: 0; animation: none !important; }
+.page-head .fx-in { animation: fade 160ms ease-out both !important; }
+main.press.hero { --row-start: 520ms; }
+.folios { min-height: 44px; }

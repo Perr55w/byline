@@ -51,8 +51,8 @@ function measureLines(h1, words) {
   words.forEach((w, i) => {
     const r = w.getBoundingClientRect(); const base = marks[i].getBoundingClientRect().top - box.top;
     let line = lines.find(l => Math.abs(l.base - base) < 2);
-    if (!line) { line = { base, left: Infinity, right: -Infinity, words: [] }; lines.push(line); }
-    line.left = Math.min(line.left, r.left - box.left); line.right = Math.max(line.right, r.right - box.left); line.words.push(w);
+    if (!line) { line = { base, left: Infinity, right: -Infinity, bottom: -Infinity, words: [] }; lines.push(line); }
+    line.left = Math.min(line.left, r.left - box.left); line.right = Math.max(line.right, r.right - box.left); line.bottom = Math.max(line.bottom, r.bottom - box.top); line.words.push(w);
   });
   marks.forEach(m => m.remove());
   return lines.sort((a, b) => a.base - b.base);
@@ -75,19 +75,21 @@ export async function castHeading(h1, { hero = false, delay = 0 } = {}) {
   if (!h1.isConnected) return;
   if (fresh) splitWords(h1);
   const words = [...h1.querySelectorAll('.fx-w')];
-  const lines = measureLines(h1, words);
+  // phone: one rule under the whole heading (no per-word layout reads)
+  const narrow = matchMedia('(max-width: 760px), (pointer: coarse)').matches;
+  const lines = narrow ? [{ left: 0, right: h1.clientWidth, bottom: h1.clientHeight, words }] : measureLines(h1, words);
 
-  const ruleMs = hero ? 360 : 300, wordMs = hero ? 700 : 640, stagger = hero ? 95 : 90, lineGap = 60;
+  const ruleMs = hero ? 360 : 260, wordMs = hero ? 640 : 440, stagger = hero ? 90 : 60, lineGap = 60;
   const fs = parseFloat(getComputedStyle(h1).fontSize) || 48;
   const anims = [];
   const rules = lines.map((l, i) => {
     const r = document.createElement('i'); r.className = 'fx-rule'; r.setAttribute('aria-hidden', 'true');
-    r.style.cssText = `left:${l.left}px;width:${Math.max(0, l.right - l.left)}px;top:${Math.round(l.base + fs * 0.24)}px`;
+    r.style.cssText = `left:${l.left}px;width:${Math.max(0, l.right - l.left)}px;top:${Math.round(l.bottom + fs * 0.08)}px`;
     h1.prepend(r); // under the words in paint order
     anims.push(r.animate([{ transform: 'scaleX(0)' }, { transform: 'scaleX(1)' }], { duration: ruleMs, delay: delay + i * lineGap, easing: EASE.rule(), fill: 'backwards' }));
     return r;
   });
-  const start = delay + Math.round(ruleMs * 0.35); // words start while the rule is still drawing
+  const start = delay + Math.round(ruleMs * 0.4); // words start while the rule is still drawing
   let k = 0, last;
   for (const l of lines) for (const w of l.words) {
     last = w.firstElementChild.animate(
@@ -100,6 +102,8 @@ export async function castHeading(h1, { hero = false, delay = 0 } = {}) {
   rules.forEach(r => anims.push(r.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 240, delay: fadeAt, easing: 'ease-out', fill: 'forwards' })));
   h1._fxCast = anims;
   h1.dataset.fxCast = 'run';
+  // the dek may start once the last word is ~60% seated
+  setTimeout(() => h1.dispatchEvent(new CustomEvent('cast-near')), start + Math.max(0, k - 1) * stagger + wordMs * 0.6);
   if (last) await done(last);
   if (h1._fxCast !== anims) return; // superseded by a newer cast
   h1.dataset.fxCast = 'done';
@@ -160,7 +164,7 @@ export function typeDek(el, { delay = 0, after = null } = {}) {
   const caret = span('fx-caret'); caret.setAttribute('aria-hidden', 'true');
   el.replaceChildren(sr, vis);
   const total = segs.reduce((n, s) => n + s.full.length, 0);
-  const dur = Math.min(500, Math.max(160, total * 9));
+  const dur = Math.min(350, Math.max(160, total * 7));
 
   return new Promise(resolve => {
     let raf = 0, t0 = 0, shown = -1, blink = null, timer = 0;
