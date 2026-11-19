@@ -1,0 +1,364 @@
+<title>Byline v4 Design Questionnaire</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one reading column of question cards, sticky progress rail on top, section jump list beside it on wide screens. */
+:root{
+  --bg:#F5F3FA; --surface:#FFFFFF; --surface-2:#EEEAF7; --line:#DCD5EA;
+  --fg:#1B1726; --fg-2:#4E4763; --fg-3:#7A7290;
+  --accent:#6D3FE0; --accent-soft:#E7DEFC; --on-accent:#FFFFFF; --ok:#1F8A5B;
+  --display:"Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+  --body:"IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --mono:"IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#110E19; --surface:#1A1624; --surface-2:#231E31; --line:#332C45;
+  --fg:#EDE8F7; --fg-2:#BDB4D2; --fg-3:#8D84A6;
+  --accent:#A47BFF; --accent-soft:#2E2350; --on-accent:#140F20; --ok:#5ACB94; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#110E19; --surface:#1A1624; --surface-2:#231E31; --line:#332C45;
+  --fg:#EDE8F7; --fg-2:#BDB4D2; --fg-3:#8D84A6;
+  --accent:#A47BFF; --accent-soft:#2E2350; --on-accent:#140F20; --ok:#5ACB94; color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font:16px/1.55 var(--body);
+  padding-left:max(16px, env(safe-area-inset-left, 0px));padding-right:max(16px, env(safe-area-inset-right, 0px));padding-block:0 64px}
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top, 0px);z-index:10;background:var(--bg)}
+.wrap{max-width:1080px;margin:0 auto;display:grid;grid-template-columns:200px minmax(0,1fr);gap:40px}
+header.intro{grid-column:1/-1;padding-block:40px 8px;max-width:720px}
+.eyebrow{font:500 12px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--accent)}
+h1{font:800 clamp(30px,5vw,46px)/1.05 var(--display);letter-spacing:-.02em;margin:12px 0 14px;text-wrap:balance}
+.intro p{color:var(--fg-2);margin:0 0 10px;max-width:62ch}
+.legend{display:flex;flex-wrap:wrap;gap:8px 18px;margin-top:14px;font:13px/1.4 var(--mono);color:var(--fg-3)}
+.legend b{color:var(--fg-2);font-weight:500}
+
+.bar{position:sticky;top:env(safe-area-inset-top, 0px);z-index:5;grid-column:1/-1;background:var(--bg);padding-block:12px;border-bottom:1px solid var(--line);
+  display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.track{flex:1 1 200px;height:6px;background:var(--surface-2);border-radius:3px;overflow:hidden}
+.fill{height:100%;width:0;background:var(--accent);transition:width .3s ease}
+.count{font:500 13px/1 var(--mono);color:var(--fg-2);font-variant-numeric:tabular-nums;white-space:nowrap}
+.save{font:12px/1 var(--mono);color:var(--fg-3);white-space:nowrap}
+.save.ok{color:var(--ok)}
+
+nav.toc{position:sticky;top:80px;align-self:start;display:flex;flex-direction:column;gap:2px;padding-top:24px}
+nav.toc a{display:flex;justify-content:space-between;gap:8px;text-decoration:none;color:var(--fg-2);font-size:14px;padding:7px 10px;border-radius:6px}
+nav.toc a:hover{background:var(--surface-2);color:var(--fg)}
+nav.toc a span{font:12px/1.6 var(--mono);color:var(--fg-3);font-variant-numeric:tabular-nums}
+nav.toc a.done span{color:var(--ok)}
+
+main{min-width:0;padding-top:24px;display:flex;flex-direction:column;gap:48px}
+section.part>h2{font:700 24px/1.15 var(--display);margin:0 0 4px;letter-spacing:-.01em}
+section.part>.sub{color:var(--fg-3);margin:0 0 18px;font-size:15px}
+.qs{display:flex;flex-direction:column;gap:16px}
+.q{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px 20px 16px;scroll-margin-top:90px}
+.q.answered{border-color:color-mix(in srgb, var(--accent) 45%, var(--line))}
+.qhead{display:flex;gap:12px;align-items:baseline}
+.qn{font:500 13px/1 var(--mono);color:var(--accent);font-variant-numeric:tabular-nums;flex:none;width:2.2em}
+.qt{font:600 17px/1.4 var(--body);margin:0;text-wrap:pretty}
+.kind{display:block;margin:6px 0 12px 3.4em;font:12px/1.3 var(--mono);color:var(--fg-3);letter-spacing:.04em}
+.opts{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:8px;margin-left:3.4em}
+.opt{position:relative;display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border:1px solid var(--line);border-radius:8px;cursor:pointer;background:var(--surface);font-size:15px;line-height:1.35;min-width:0}
+.opt:hover{border-color:var(--fg-3)}
+.opt input{position:absolute;opacity:0;pointer-events:none}
+.mark{flex:none;width:16px;height:16px;margin-top:2px;border:1.5px solid var(--fg-3);background:var(--surface)}
+.opt.radio .mark{border-radius:50%}
+.opt.check .mark{border-radius:4px}
+.opt input:checked + .mark{border-color:var(--accent);background:var(--accent);box-shadow:inset 0 0 0 3px var(--surface)}
+.opt.check input:checked + .mark{box-shadow:none;background:var(--accent) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.5 8.5l3 3 6-7' fill='none' stroke='white' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/12px no-repeat}
+.opt:has(input:checked){border-color:var(--accent);background:var(--accent-soft)}
+.opt:has(input:focus-visible){outline:2px solid var(--accent);outline-offset:2px}
+.opt.locked{opacity:.45;cursor:not-allowed}
+.opt small{display:block;color:var(--fg-3);font-size:13px;margin-top:2px}
+.note{margin:12px 0 0 3.4em}
+.note label{display:block;font:12px/1 var(--mono);color:var(--fg-3);margin-bottom:6px;letter-spacing:.04em}
+textarea{width:100%;min-height:64px;resize:vertical;font:15px/1.5 var(--body);color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 12px}
+textarea:focus{outline:2px solid var(--accent);outline-offset:1px;border-color:transparent}
+
+.finish{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:24px;display:flex;flex-direction:column;gap:12px}
+.finish h2{font:700 22px/1.2 var(--display);margin:0}
+.finish p{margin:0;color:var(--fg-2)}
+.row{display:flex;gap:10px;flex-wrap:wrap}
+button{font:600 15px/1 var(--body);padding:12px 18px;border-radius:8px;border:1px solid var(--accent);cursor:pointer}
+button.primary{background:var(--accent);color:var(--on-accent)}
+button.ghost{background:transparent;color:var(--accent)}
+button:focus-visible{outline:2px solid var(--fg);outline-offset:2px}
+.status{font:13px/1.4 var(--mono);color:var(--fg-3)}
+.status.ok{color:var(--ok)}
+#fallback{width:100%;min-height:120px;font:12px/1.4 var(--mono)}
+
+@media (max-width:820px){
+  .wrap{grid-template-columns:minmax(0,1fr);gap:0}
+  nav.toc{display:none}
+  .opts,.note,.kind{margin-left:0}
+  .q{padding:16px 14px}
+}
+@media (prefers-reduced-motion:reduce){.fill{transition:none}}
+</style>
+
+<div class="wrap">
+  <header class="intro">
+    <div class="eyebrow">Byline · Design round 4</div>
+    <h1>What would make Byline an A?</h1>
+    <p>40 questions in six parts: what is holding the grade back, what A-tier means to you, which direction to take, color and type, motion, and the creative angle.</p>
+    <p>Every question has a box to explain your answer. A short reason ("too brown, feels like a leather wallet") helps more than the choice alone. Skip anything you have no opinion on.</p>
+    <div class="legend"><span><b>One answer</b> = pick one</span><span><b>Pick up to N</b> = multiple answers</span><span><b>Saves as you go</b></span></div>
+  </header>
+
+  <div class="bar" role="status" aria-live="polite">
+    <div class="track" aria-hidden="true"><div class="fill" id="fill"></div></div>
+    <span class="count" id="count">0 / 40 answered</span>
+    <span class="save" id="save">Loading saved answers…</span>
+  </div>
+
+  <nav class="toc" id="toc" aria-label="Parts"></nav>
+  <main id="main"></main>
+</div>
+
+<script>
+const PARTS = [
+ {id:"diagnose", title:"What's holding it back", sub:"Your gut read of the current build (Night and Proof).", qs:[
+  {q:"When you open Byline, what is your first gut reaction?", t:"one", o:[
+    "Nice, but it looks like a well-made template","Good, but busy: too many things competing","Good, but flat and static","Heavy or dated","Distinctive, but unpolished in the details"]},
+  {q:"Which things drag the grade down most?", t:"multi", max:3, o:[
+    "Night palette feels muddy or brown","Too many small details and ornaments","Animations feel slow or decorative","Layout feels dense, like a document","Not enough imagery or visual punch","Typography doesn't feel premium","Moving between tabs feels clunky","Phone feels like an afterthought","Effects feel bolted on instead of designed in","It still reads as AI-generated"]},
+  {q:"Is the gap more about how it looks or how it feels to use?", t:"one", o:[
+    "Mostly how it looks (still frames)","Mostly how it feels (response, motion, speed)","Both equally","Neither: it's the structure and content"]},
+  {q:"Which tabs feel weakest?", t:"multi", max:4, o:[
+    "Today","Feed","Story page","Studio / Draft","Calendar","Career & Employers","Contacts / Outreach","Sources","Runs","Search","Settings"]},
+  {q:"What should happen to the newspaper / press theme?", t:"one", o:[
+    "Keep it and go deeper","Keep it, but as a hint, not a costume","Swap it for a different editorial metaphor (see Part 3)","Drop the metaphor entirely"]},
+  {q:"Which mode feels closer to an A right now?", t:"one", o:["Proof (light)","Night (dark)","Equally far","Neither is close"]},
+  {q:"Which round-3 additions should survive into v4?", t:"multi", max:6, o:[
+    "Lifted Night palette","Heading 'cast' entrance","Issue-number flap in the masthead","Halftone image develop","Ink-roller theme switch","Live dot screen in the masthead","Post-worthy stamp + spatter","Hold to publish","Score count-up","Loading skeletons","⌘K Index","Audio briefing player"]},
+  {q:"How much animation should v4 have overall?", t:"one", o:[
+    "Much less, calmer","Slightly less, but higher quality","Same amount, better executed","More, and more cinematic"]}
+ ]},
+ {id:"atier", title:"What A-tier means to you", sub:"So the council grades against your bar instead of its own.", qs:[
+  {q:"Which products or sites feel A-tier to you?", t:"multi", max:4, o:[
+    "Linear","Stripe","Apple product pages","Arc browser","Raycast","Vercel","Notion","Things 3","Superhuman","The Verge","New York Times","Bloomberg Terminal","Teenage Engineering","Lexus / luxury auto sites"]},
+  {q:"For you, A-tier mostly means:", t:"one", o:[
+    "Every pixel deliberate, calm and precise","It feels alive and reacts to me","An instantly memorable identity","Fast and effortless; nothing in the way","It feels expensive"]},
+  {q:"Which missing qualities cap a site at B, no matter what else it does?", t:"multi", max:4, o:[
+    "Speed / instant response","Consistent spacing and alignment","One signature visual moment","Great typography","Rich imagery","Depth and layering","Personality in the copy","Delightful micro-interactions","Flawless on phone","Sound or haptics"]},
+  {q:"In the first 5 seconds, what should you feel?", t:"one", o:[
+    "Briefed and in control","Impressed / wowed","Calm and focused","Energized and ambitious","Curious to dig in"]},
+  {q:"How dense should screens be?", t:"one", o:[
+    "Airy: few items, big type","Balanced","Dense: terminal-like, lots at once","Mixed: airy Today, dense Feed and tables"]},
+  {q:"Relative to the tools you use at work, Byline should feel:", t:"one", o:[
+    "The opposite: personal and expressive","Like the best pro tools, polished","Like a portfolio piece that shows off skill","Pure utility; design stays out of the way"]},
+  {q:"Will you show Byline to recruiters or employers (IBM, Toyota, Cox) as proof of skill?", t:"one", o:[
+    "Yes, that's a main goal","Maybe, if it's good enough","No, it's a private tool"]},
+  {q:"Which 'wow' moments would earn an A from you?", t:"multi", max:3, o:[
+    "A striking opening sequence each morning","A hero visual for every lead story","A visual map of the day's news landscape","3D or spatial elements","An ambient generative background","Tactile, physical-feeling controls","Voice briefing with a live visualizer","Seamless list → story transitions (the card grows into the page)"]}
+ ]},
+ {id:"direction", title:"Direction", sub:"Where the identity should go, with specifics.", qs:[
+  {q:"Pick up to two creative metaphors for v4.", t:"multi", max:2, o:[
+    {l:"Modern broadsheet",d:"Current direction, refined and quieter"},
+    {l:"Intelligence briefing",d:"Dossiers, case files, redaction, maps"},
+    {l:"Broadcast control room",d:"On-air lights, lower thirds, tickers"},
+    {l:"Analog hi-fi studio",d:"Knobs, VU meters, tape reels"},
+    {l:"Drafting table",d:"Blueprint grids, vellum, measurements"},
+    {l:"Precision automotive",d:"Instrument cluster, brushed metal, gauges"},
+    {l:"Japanese editorial",d:"Ma (negative space), washi paper, vertical accents"},
+    {l:"Quiet luxury app",d:"No metaphor; materials and spacing do the work"}]},
+  {q:"What personality should the interface have?", t:"one", o:[
+    "Serious analyst","Confident insider","Warm mentor","Sharp, witty columnist","Quiet luxury"]},
+  {q:"Should the look change with the time of day?", t:"one", o:[
+    "Yes: morning edition vs evening edition","No: keep the manual Night / Proof switch","Follow my system light/dark setting","Gradual shift through the day"]},
+  {q:"Where should visuals come from?", t:"multi", max:3, o:[
+    "Generated plates per story","Company logos and brand colors","Abstract generative art per topic","Charts and data glyphs","Source article photos","None: typography only"]},
+  {q:"How should employer brands show up (IBM blue, Toyota red, etc.)?", t:"one", o:[
+    "Subtle accents in their own sections","Strong theming per company page","Never; keep one house palette"]},
+  {q:"Which navigation style fits best?", t:"one", o:[
+    "Top masthead tabs (current)","Left rail","Bottom dock, phone-style","Command-first: ⌘K with minimal chrome","Spatial: zoom between 'desks'"]},
+  {q:"How should Today be laid out?", t:"one", o:[
+    "Front page: lead story plus columns","A single scrolling feed","Dashboard tiles","A written briefing you read top to bottom","Swipeable story cards"]},
+  {q:"How should a story page feel?", t:"one", o:[
+    "A long-form article","A dossier: evidence, sources, scores","Split view: the source beside my draft","A stack of cards"]},
+  {q:"Studio (drafting posts) should feel:", t:"one", o:[
+    "Same world as the news side","A distinct workshop space","Minimal, distraction-free writing"]},
+  {q:"Which screen gets priority?", t:"one", o:["Phone first","Desktop first, phone solid","Equal"]}
+ ]},
+ {id:"surface", title:"Color, type & surfaces", sub:"The still frame.", qs:[
+  {q:"Night palette direction:", t:"one", o:[
+    "Warm umber, lifted even further","Cool charcoal-blue","True neutral graphite","Deep ink navy","Rich espresso with gold","Near-black with violet"]},
+  {q:"Main accent color:", t:"one", o:[
+    "Red pencil (current)","Violet","Electric blue","Amber / gold","Green","Two accents (name them below)"]},
+  {q:"Light mode should be:", t:"one", o:[
+    "Warm newsprint (current)","Bright, clean white","Cool grey paper","I don't care much about light mode"]},
+  {q:"Headline typography:", t:"one", o:[
+    "Keep the Newsreader serif","Bold modern grotesk","Condensed display","Serif headlines with mono data (current mix, refined)","Something with more character: a variable or unusual face"]},
+  {q:"Textures (grain, halftone dots, paper fibres):", t:"one", o:["More","Keep as is","Less","Remove them"]},
+  {q:"How should sections sit on the page?", t:"one", o:[
+    "Flat, separated by rules","Layered paper sheets","Soft depth and shadow","Bold color blocks","Mixed by importance"]}
+ ]},
+ {id:"motion", title:"Motion", sub:"How it moves and responds.", qs:[
+  {q:"Motion personality:", t:"one", o:[
+    "Mechanical / press: snappy and physical","Fluid and silky","Cinematic: fewer, bigger moments","Minimal: near-instant"]},
+  {q:"Where does motion matter most?", t:"multi", max:3, o:[
+    "Page load and headings","Switching tabs","Opening a story from a list","Hover and press feedback","Numbers and data","Ambient background","Theme switch","Loading states"]},
+  {q:"What should happen to the heading entrance?", t:"one", o:[
+    "Keep the cast, make it faster","Replace it with a different signature","A simple fade","No heading animation"]},
+  {q:"The background should be:", t:"one", o:[
+    "Static texture","Subtle ambient motion","Reactive to my cursor or the data","A rich generative scene"]},
+  {q:"Sound:", t:"one", o:[
+    "None","Subtle UI sounds, opt-in (press thunk, typewriter)","Only the voice briefing"]}
+ ]},
+ {id:"angle", title:"Creative angle", sub:"How bold to go, and how to get there.", qs:[
+  {q:"Which bigger ideas interest you?", t:"multi", max:3, o:[
+    "Morning 'edition' that prints itself on open","Story importance shown by physical size and weight","A news 'weather map' of topics","A war-room wall with employers and contacts pinned","Audio briefing as a tape deck","A new cover design for each week","Stamps or badges for a posting streak","Zoom out to see the whole desk"]},
+  {q:"How much risk for v4?", t:"one", o:[
+    "Safe: polish what exists","One bold signature move, rest refined","Full redesign"]},
+  {q:"How should we get to v4?", t:"one", o:[
+    "3 mockup directions side by side, then you pick","Moodboard first, then build","Straight to code with the council"]}
+ ]}
+];
+
+const QUESTIONS = []; PARTS.forEach(p => p.qs.forEach(q => { q.part = p.id; q.n = QUESTIONS.length + 1; q.id = "q" + q.n; QUESTIONS.push(q); }));
+const TOTAL = QUESTIONS.length;
+let state = { answers: {}, finished: false };
+const LS = "byline-v4-questionnaire";
+try { const s = JSON.parse(localStorage.getItem(LS) || "null"); if (s && s.answers) state = s; } catch {}
+
+const $ = s => document.querySelector(s);
+const main = $("#main"), toc = $("#toc");
+
+function el(tag, attrs = {}, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) { if (k === "class") e.className = v; else if (k === "text") e.textContent = v; else e.setAttribute(k, v); }
+  kids.flat().forEach(k => k && e.append(k)); return e;
+}
+
+function render() {
+  PARTS.forEach(p => {
+    toc.append(el("a", { href: "#" + p.id, "data-part": p.id }, el("b", { text: p.title, style: "font-weight:500" }), el("span")));
+    const qs = el("div", { class: "qs" });
+    p.qs.forEach(q => {
+      const kind = q.t === "one" ? "One answer" : `Pick up to ${q.max}`;
+      const opts = el("div", { class: "opts", role: q.t === "one" ? "radiogroup" : "group", "aria-labelledby": q.id + "-t" });
+      q.o.forEach((o, i) => {
+        const label = typeof o === "string" ? o : o.l, desc = typeof o === "string" ? "" : o.d;
+        const input = el("input", { type: q.t === "one" ? "radio" : "checkbox", name: q.id, id: `${q.id}-o${i}`, value: label });
+        const lab = el("label", { class: "opt " + (q.t === "one" ? "radio" : "check"), for: input.id }, input, el("span", { class: "mark", "aria-hidden": "true" }),
+          el("span", {}, label, desc ? el("small", { text: desc }) : null));
+        opts.append(lab);
+      });
+      const ta = el("textarea", { id: q.id + "-note", placeholder: "Why? What would you want instead? (optional)" });
+      const card = el("div", { class: "q", id: q.id },
+        el("div", { class: "qhead" }, el("span", { class: "qn", text: String(q.n).padStart(2, "0") }), el("p", { class: "qt", id: q.id + "-t", text: q.q })),
+        el("span", { class: "kind", text: kind }), opts,
+        el("div", { class: "note" }, el("label", { for: ta.id, text: "Explain your answer" }), ta));
+      qs.append(card);
+    });
+    main.append(el("section", { class: "part", id: p.id }, el("h2", { text: p.title }), el("p", { class: "sub", text: p.sub }), qs));
+  });
+  main.append(el("div", { class: "finish" },
+    el("h2", { text: "Done?" }),
+    el("p", { text: "Answers save as you go. Press Finish when you're done so I know to start reading them. You can still change answers afterwards." }),
+    el("div", { class: "row" }, el("button", { class: "primary", id: "finish", type: "button", text: "Finish" }), el("button", { class: "ghost", id: "copy", type: "button", text: "Copy answers as text" })),
+    el("p", { class: "status", id: "fstatus" }),
+    el("textarea", { id: "fallback", hidden: "", readonly: "", "aria-label": "Your answers as text" })));
+}
+
+function fill() {
+  QUESTIONS.forEach(q => {
+    const a = state.answers[q.id] || {};
+    document.querySelectorAll(`input[name="${q.id}"]`).forEach(i => { i.checked = (a.choice || []).includes(i.value); });
+    const ta = document.getElementById(q.id + "-note"); if (document.activeElement !== ta) ta.value = a.note || "";
+    lockMax(q);
+  });
+  progress();
+}
+
+function lockMax(q) {
+  if (q.t !== "multi") return;
+  const boxes = [...document.querySelectorAll(`input[name="${q.id}"]`)];
+  const full = boxes.filter(b => b.checked).length >= q.max;
+  boxes.forEach(b => { const off = full && !b.checked; b.disabled = off; b.parentElement.classList.toggle("locked", off); });
+}
+
+function isAnswered(id) { const a = state.answers[id]; return !!a && ((a.choice && a.choice.length) || (a.note && a.note.trim())); }
+
+function progress() {
+  const n = QUESTIONS.filter(q => isAnswered(q.id)).length;
+  $("#fill").style.width = (n / TOTAL * 100) + "%";
+  $("#count").textContent = `${n} / ${TOTAL} answered`;
+  QUESTIONS.forEach(q => document.getElementById(q.id).classList.toggle("answered", !!isAnswered(q.id)));
+  PARTS.forEach(p => {
+    const done = p.qs.filter(q => isAnswered(q.id)).length;
+    const a = toc.querySelector(`[data-part="${p.id}"]`);
+    a.querySelector("span").textContent = `${done}/${p.qs.length}`; a.classList.toggle("done", done === p.qs.length);
+  });
+}
+
+function readQ(q) {
+  const choice = [...document.querySelectorAll(`input[name="${q.id}"]:checked`)].map(i => i.value);
+  const note = document.getElementById(q.id + "-note").value;
+  state.answers[q.id] = { question: q.q, choice, note };
+}
+
+// ---- saving ----
+let db = null, docRef = null, timer = null, writing = false, again = false;
+const saveEl = $("#save");
+function setSave(text, ok) { saveEl.textContent = text; saveEl.classList.toggle("ok", !!ok); }
+function persistLocal() { try { localStorage.setItem(LS, JSON.stringify(state)); } catch {} }
+function queueSave() {
+  persistLocal();
+  if (!docRef) { setSave("Saved on this device only"); return; }
+  setSave("Saving…"); clearTimeout(timer); timer = setTimeout(flush, 700);
+}
+async function flush() {
+  if (writing) { again = true; return; }
+  writing = true;
+  try { await docRef.set({ answers: state.answers, finished: state.finished, total: TOTAL, updated: new Date().toISOString() }); setSave("Saved", true); }
+  catch (e) { setSave("Couldn't save online (saved on this device). " + (e && e.code ? e.code : "")); }
+  writing = false; if (again) { again = false; flush(); }
+}
+
+document.addEventListener("change", e => {
+  const q = QUESTIONS.find(q => e.target.name === q.id); if (!q) return;
+  readQ(q); lockMax(q); progress(); queueSave();
+});
+document.addEventListener("input", e => {
+  if (e.target.tagName !== "TEXTAREA" || !e.target.id.endsWith("-note")) return;
+  const q = QUESTIONS.find(q => q.id + "-note" === e.target.id); readQ(q); progress(); queueSave();
+});
+
+function asText() {
+  return QUESTIONS.map(q => { const a = state.answers[q.id] || {};
+    return `${q.n}. ${q.q}\n   Answer: ${(a.choice || []).join("; ") || "(none)"}\n   Note: ${a.note || ""}`; }).join("\n\n");
+}
+
+render(); fill();
+
+$("#finish").addEventListener("click", () => {
+  state.finished = true; queueSave(); if (docRef) flush();
+  const n = QUESTIONS.filter(q => isAnswered(q.id)).length;
+  $("#fstatus").textContent = docRef ? `Finished with ${n} of ${TOTAL} answered. Tell me in chat and I'll read them.` : `Saved on this device only. Copy the answers and paste them into chat.`;
+  $("#fstatus").classList.add("ok");
+});
+$("#copy").addEventListener("click", () => {
+  const txt = asText(), fb = $("#fallback");
+  const show = () => { fb.hidden = false; fb.value = txt; fb.focus(); fb.select(); $("#fstatus").textContent = "Select all and copy from the box below."; };
+  try { navigator.clipboard.writeText(txt).then(() => { $("#fstatus").textContent = "Copied. Paste it into chat."; }, show); } catch { show(); }
+});
+
+(async () => {
+  const giveUp = setTimeout(() => { if (!docRef) setSave("Saved on this device only"); }, 10000);
+  try {
+    db = window.claude && await window.claude.use("db");
+    if (!db) { clearTimeout(giveUp); setSave("Saved on this device only"); return; }
+    docRef = db.doc("responses/perry");
+    const snap = await docRef.get();
+    clearTimeout(giveUp);
+    if (snap.exists) {
+      const d = snap.data() || {};
+      const localCount = Object.keys(state.answers).length, remoteCount = Object.keys(d.answers || {}).length;
+      if (remoteCount >= localCount) { state = { answers: d.answers || {}, finished: !!d.finished }; persistLocal(); fill(); }
+      else flush();
+    }
+    setSave("Saved", true);
+  } catch (e) { clearTimeout(giveUp); docRef = null; setSave("Saved on this device only"); }
+})();
+</script>
