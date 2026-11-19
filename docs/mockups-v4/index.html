@@ -1,0 +1,101 @@
+<title>Byline v4 Directions</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,500;6..72,600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: a slim header with direction switcher, then one large live frame of the chosen mockup with its notes beneath. */
+:root{
+  --bg:#F6F7F9; --surface:#FFFFFF; --line:#DDE1E7; --fg:#15181D; --fg-2:#4A515C; --fg-3:#7B838F;
+  --accent:#2563FF; --accent-soft:#E3EBFF; --on-accent:#FFFFFF;
+  --display:"Newsreader", Georgia, serif; --body:"IBM Plex Sans", system-ui, sans-serif; --mono:"IBM Plex Mono", ui-monospace, monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#141619; --surface:#1C1F23; --line:#2E3238; --fg:#ECEEF1; --fg-2:#B3B9C2; --fg-3:#838A95;
+  --accent:#5B8CFF; --accent-soft:#1D2A47; --on-accent:#0B1020; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#141619; --surface:#1C1F23; --line:#2E3238; --fg:#ECEEF1; --fg-2:#B3B9C2; --fg-3:#838A95;
+  --accent:#5B8CFF; --accent-soft:#1D2A47; --on-accent:#0B1020; color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font:15px/1.55 var(--body);
+  padding-left:max(16px, env(safe-area-inset-left, 0px));padding-right:max(16px, env(safe-area-inset-right, 0px));padding-block:0 48px}
+.wrap{max-width:1480px;margin:0 auto}
+header{display:flex;flex-wrap:wrap;gap:16px 32px;align-items:flex-end;justify-content:space-between;padding-block:28px 20px}
+.eyebrow{font:500 12px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--accent)}
+h1{font:600 clamp(28px,4vw,40px)/1.05 var(--display);margin:8px 0 0;letter-spacing:-.01em}
+.switch{display:flex;gap:6px;flex-wrap:wrap}
+.switch button{font:500 14px/1 var(--body);padding:10px 14px;border-radius:8px;border:1px solid var(--line);background:var(--surface);color:var(--fg-2);cursor:pointer;display:flex;gap:8px;align-items:center}
+.switch button b{font:500 12px/1 var(--mono);color:var(--fg-3)}
+.switch button[aria-selected="true"]{border-color:var(--accent);background:var(--accent-soft);color:var(--fg)}
+.switch button[aria-selected="true"] b{color:var(--accent)}
+.switch button:focus-visible,.tools button:focus-visible,.tools a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.stage{background:var(--surface);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.tools{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--line)}
+.tools .name{font:600 15px/1.2 var(--body)}
+.tools .name span{color:var(--fg-3);font-weight:400}
+.tools .act{display:flex;gap:8px;flex-wrap:wrap}
+.tools button,.tools a{font:500 13px/1 var(--body);padding:8px 12px;border-radius:6px;border:1px solid var(--line);background:transparent;color:var(--fg-2);cursor:pointer;text-decoration:none}
+.tools button[aria-pressed="true"]{border-color:var(--accent);color:var(--accent)}
+.frame{display:flex;justify-content:center;background:var(--bg);padding:16px;overflow-x:auto}
+.frame iframe{display:block;border:0;width:100%;max-width:1440px;aspect-ratio:1440/900;background:#000;border-radius:6px}
+.frame.phone iframe{width:390px;max-width:100%;aspect-ratio:390/844}
+.notes{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:24px;padding:20px 20px 24px}
+.notes h3{font:500 12px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--fg-3);margin:0 0 8px}
+.notes p{margin:0;color:var(--fg-2);max-width:60ch}
+.hint{color:var(--fg-3);font-size:13px;margin:12px 4px 0}
+</style>
+
+<div class="wrap">
+  <header>
+    <div><div class="eyebrow">Byline · v4 · pick one</div><h1>Three directions for Today</h1></div>
+    <div class="switch" role="tablist" aria-label="Directions" id="switch"></div>
+  </header>
+  <div class="stage">
+    <div class="tools">
+      <div class="name" id="name"></div>
+      <div class="act">
+        <button type="button" id="replay">Replay intro</button>
+        <button type="button" id="desk" aria-pressed="true">Desktop</button>
+        <button type="button" id="phone" aria-pressed="false">Phone</button>
+        <a id="open" href="#" target="_blank" rel="noopener">Open full screen</a>
+      </div>
+    </div>
+    <div class="frame" id="frame"><iframe id="view" title="Mockup"></iframe></div>
+    <div class="notes" id="notes"></div>
+  </div>
+  <p class="hint">Try in each one: the intro, hovering tiles, clicking the lead story, clicking another tab in the rail, collapsing the rail, and the Night / Proof switch.</p>
+</div>
+
+<script>
+const DIRS = [
+  { key: "instrument", file: "instrument.html", label: "A", name: "Instrument", tag: "Linear / Raycast precision",
+    notes: { "Feel": "Hairline precision on graphite. Calm, technical, exact.", "Signature": "Tiles resolve out of the hot regions of a live news map.", "Risk": "Safest path to “every pixel deliberate.” Least spectacle." } },
+  { key: "glass-atlas", file: "glass-atlas.html", label: "B", name: "Glass Atlas", tag: "Apple-style glass over a spatial map",
+    notes: { "Feel": "Frosted panels with real depth over a drifting topic atlas.", "Signature": "The camera flies across the atlas when you change tabs.", "Risk": "Most wow. Hardest to keep fast and legible." } },
+  { key: "edition", file: "edition.html", label: "C", name: "Edition", tag: "Quiet-luxury morning edition",
+    notes: { "Feel": "Large confident serif, lots of space, editorial without the costume.", "Signature": "Stories size themselves by importance as the edition assembles.", "Risk": "Most memorable. Closest to what you’ve already seen." } }
+];
+const $ = id => document.getElementById(id);
+let cur = 0, phone = false;
+try { const s = localStorage.getItem("v4-dir"); if (s) cur = Math.max(0, DIRS.findIndex(d => d.key === s)); } catch {}
+DIRS.forEach((d, i) => {
+  const b = document.createElement("button");
+  b.type = "button"; b.role = "tab"; b.id = "tab-" + d.key;
+  b.innerHTML = `<b>${d.label}</b>${d.name}`;
+  b.addEventListener("click", () => show(i));
+  $("switch").append(b);
+});
+function show(i) {
+  cur = i; const d = DIRS[i];
+  try { localStorage.setItem("v4-dir", d.key); } catch {}
+  [...$("switch").children].forEach((b, j) => b.setAttribute("aria-selected", j === i ? "true" : "false"));
+  $("name").innerHTML = `${d.label} · ${d.name} <span>· ${d.tag}</span>`;
+  $("view").src = d.file; $("view").title = d.name + " mockup"; $("open").href = d.file;
+  $("notes").innerHTML = Object.entries(d.notes).map(([k, v]) => `<div><h3>${k}</h3><p>${v}</p></div>`).join("");
+}
+function setPhone(p) { phone = p; $("frame").classList.toggle("phone", p); $("desk").setAttribute("aria-pressed", String(!p)); $("phone").setAttribute("aria-pressed", String(p)); }
+$("desk").onclick = () => setPhone(false);
+$("phone").onclick = () => setPhone(true);
+$("replay").onclick = () => { $("view").src = DIRS[cur].file + "?r=" + Date.now(); };
+show(cur);
+</script>
