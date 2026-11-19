@@ -9,12 +9,12 @@
   --ix-select: rgba(28, 26, 22, .05); --ix-shadow: var(--ink);
 }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
-  --sort-face: #3A352C; --sort-side: #201D17; --sort-nick: rgba(0, 0, 0, .35); --sort-ink: #EDE6D6;
+  --sort-face: #4A4339; --sort-side: #2C2822; --sort-nick: rgba(0, 0, 0, .35); --sort-ink: #EDE6D6;
   --ix-scrim: rgba(0, 0, 0, .55);
   --ix-select: rgba(237, 230, 214, .05); --ix-shadow: var(--rule-strong);
 } }
 :root[data-theme="dark"] {
-  --sort-face: #3A352C; --sort-side: #201D17; --sort-nick: rgba(0, 0, 0, .35); --sort-ink: #EDE6D6;
+  --sort-face: #4A4339; --sort-side: #2C2822; --sort-nick: rgba(0, 0, 0, .35); --sort-ink: #EDE6D6;
   --ix-scrim: rgba(0, 0, 0, .55);
   --ix-select: rgba(237, 230, 214, .05); --ix-shadow: var(--rule-strong);
 }

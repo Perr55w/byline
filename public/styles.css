@@ -50,27 +50,27 @@
 
 /* Night desk: warm black, never violet. Redefines tokens only. */
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
-  --paper: #16140F; --paper-2: #26221B; --sheet: #1F1C16;
-  --ink: #EDE6D6; --ink-2: #ADA48F; --ink-3: #988F7B;
-  --rule: #39342A; --rule-strong: #554D3F;
-  --pencil-red: #FF6E4F; --pencil-blue: #86B6E6; --on-red: #16140F;
-  --band: #0E0D0A; --band-text: #EDE6D6; --band-muted: #ADA48F; --band-mark: #FF6E4F; --band-rule: #EDE6D6;
+  --paper: #2A2620; --paper-2: #37322A; --sheet: #322D26;
+  --ink: #F1EADB; --ink-2: #C2B8A3; --ink-3: #A99F8A;
+  --rule: #4A4337; --rule-strong: #675D4C;
+  --pencil-red: #FF7A5C; --pencil-blue: #93C0EC; --on-red: #2A2620;
+  --band: #1C1A15; --band-text: #EDE6D6; --band-muted: #ADA48F; --band-mark: #FF6E4F; --band-rule: #EDE6D6;
   --highlight: rgba(242, 214, 107, .40); --focus: #FF6E4F;
   --ev-announcement: #E0B055; --ev-reporting: #86B6E6; --ev-research: #8CC79A; --ev-commentary: #E39AC0; --ev-community: #6CC9C4; --ev-applied: #C2CB6E;
   --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .93 0 0 0 0 .90 0 0 0 0 .84 0 0 0 .28 -.1'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-  --vignette: rgba(0, 0, 0, .25); --column-rule: rgba(237, 230, 214, .045);
+  --vignette: rgba(0, 0, 0, .16); --column-rule: rgba(237, 230, 214, .045);
   color-scheme: dark;
 } }
 :root[data-theme="dark"] {
-  --paper: #16140F; --paper-2: #26221B; --sheet: #1F1C16;
-  --ink: #EDE6D6; --ink-2: #ADA48F; --ink-3: #988F7B;
-  --rule: #39342A; --rule-strong: #554D3F;
-  --pencil-red: #FF6E4F; --pencil-blue: #86B6E6; --on-red: #16140F;
-  --band: #0E0D0A; --band-text: #EDE6D6; --band-muted: #ADA48F; --band-mark: #FF6E4F; --band-rule: #EDE6D6;
+  --paper: #2A2620; --paper-2: #37322A; --sheet: #322D26;
+  --ink: #F1EADB; --ink-2: #C2B8A3; --ink-3: #A99F8A;
+  --rule: #4A4337; --rule-strong: #675D4C;
+  --pencil-red: #FF7A5C; --pencil-blue: #93C0EC; --on-red: #2A2620;
+  --band: #1C1A15; --band-text: #EDE6D6; --band-muted: #ADA48F; --band-mark: #FF6E4F; --band-rule: #EDE6D6;
   --highlight: rgba(242, 214, 107, .40); --focus: #FF6E4F;
   --ev-announcement: #E0B055; --ev-reporting: #86B6E6; --ev-research: #8CC79A; --ev-commentary: #E39AC0; --ev-community: #6CC9C4; --ev-applied: #C2CB6E;
   --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .93 0 0 0 0 .90 0 0 0 0 .84 0 0 0 .28 -.1'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-  --vignette: rgba(0, 0, 0, .25); --column-rule: rgba(237, 230, 214, .045);
+  --vignette: rgba(0, 0, 0, .16); --column-rule: rgba(237, 230, 214, .045);
   color-scheme: dark;
 }
 

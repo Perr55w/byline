@@ -10,13 +10,13 @@
 
 /* ---------- Night desk character ---------- */
 :root[data-theme="dark"] {
-  --band: #0B0A08; --highlight: #E8C547; --column-rule: rgba(237, 230, 214, .055);
-  --skeleton: #26221B; --skeleton-hi: #2E2920; --scrim: rgba(5, 4, 3, .66);
+  --band: #1C1A15; --highlight: #E8C547; --column-rule: rgba(241, 234, 219, .06);
+  --skeleton: #3A342C; --skeleton-hi: #463F35; --scrim: rgba(12, 10, 8, .6);
 }
 :root { --column-rule: rgba(28, 26, 22, .07); --skeleton: #DDD3C0; --skeleton-hi: #EFE8DA; --scrim: rgba(28, 26, 22, .5); }
 :root[data-theme="dark"] body {
   /* desk-lamp pool: one warm static glow, upper left */
-  background-image: radial-gradient(70% 55% at 14% -6%, rgba(232, 197, 71, .055), transparent 70%), radial-gradient(120% 70% at 50% 0%, transparent 55%, var(--vignette)), var(--grain);
+  background-image: radial-gradient(75% 60% at 14% -6%, rgba(240, 200, 120, .085), transparent 72%), radial-gradient(120% 70% at 50% 0%, transparent 55%, var(--vignette)), var(--grain);
 }
 :root[data-theme="dark"] .masthead { background-image: radial-gradient(circle, rgba(237, 230, 214, .05) 1px, transparent 1.4px); }
 /* baseline marker swipe instead of an alpha wash (ink stays readable on dark) */
@@ -115,7 +115,7 @@ html.theme-wipe::view-transition-new(roller) { animation: roller-down 460ms var(
   mask: linear-gradient(#000 0 0) top / 100% calc(100% - 6px) no-repeat, conic-gradient(from 135deg at 50% 0, #000 90deg, #0000 0) bottom / 10px 6px repeat-x;
   filter: drop-shadow(2px 2px 0 var(--rule-strong)); }
 .clipping .hit::before { display: none; }
-:root[data-theme="dark"] .clipping .hit { background: #221F18; }
+:root[data-theme="dark"] .clipping .hit { background: #38332B; }
 
 /* ---------- headlines & numbers ---------- */
 a.story-title { display: block; }
@@ -356,3 +356,9 @@ main :is(.story, .hit, tbody tr, .source-row):nth-child(n+13) { content-visibili
 .lead-hl { background-position: 0 100%; }
 :root[data-theme="dark"] .lead-hl { background-position: 0 100%; }
 .galley-scale { overflow: clip; overflow-clip-margin: 6px; }
+/* masthead stays one row: shed status detail as the window narrows */
+.mast-row { flex-wrap: nowrap; }
+.dateline { white-space: nowrap; }
+@media (max-width: 1240px) { .mast-status > span:nth-child(2) { display: none; } }
+@media (max-width: 1080px) { .mast-status { display: none; } }
+@media (max-width: 760px) { .mast-row { flex-wrap: wrap; } }
