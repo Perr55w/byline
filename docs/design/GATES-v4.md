@@ -56,7 +56,7 @@ CDP supplies CPU throttling (`Emulation.setCPUThrottlingRate`) and `Performance.
 - Phone: 390×844 at DPR 3, `isMobile`, touch.
 - The 4× CPU throttle applies where the council says so.
 
-**Renderer.** Headless Chromium here has only a software GPU. With `failIfMajorPerformanceCaveat` the field correctly falls back to Canvas2D, which DECISIONS caps at 20 fps (static on phone). Gate 5's draw-rate window therefore depends on the renderer that ran:
+**Renderer.** Headless Chromium here has only a software GPU. The Canvas2D fallback draws on an OffscreenCanvas in a worker when the browser allows it, so E5's `TaskDuration` (main thread) measures the app, not the field's raster; `?bg2d=main` measures the main-thread fallback. With `failIfMajorPerformanceCaveat` the field correctly falls back to Canvas2D, which DECISIONS caps at 20 fps (static on phone). Gate 5's draw-rate window therefore depends on the renderer that ran:
 - WebGL2: 27–32 draws/s (E's number).
 - Canvas2D desktop: 15–21.
 - Canvas2D phone: at most about 1 (static).
@@ -71,6 +71,7 @@ All selectors live in `test/e2e/lib/selectors.mjs`. If the DOM changes, fix that
 |---|---|
 | `window.__byline.bg.stats()` → `{ renderer, draws, hz, N, mode, frozen, running, backing }` | E4, E5, E7, E9, C-pacing |
 | `?bgidle=<ms>` (idle-freeze timeout) and `?bg=gl\|2d\|off` | E4, E10, `--gl` |
+| `?bg2d=main` keeps the Canvas2D field on the main thread (default: an OffscreenCanvas in `bg2d-worker.js`); `stats().offscreen` says which ran | E5 |
 | `html[data-bg="full\|dim\|still"]`; `#bg` opacity .35 when dim | E5 |
 | `document` event `byline:routed` `{detail:{key,page}}` after each route swap | every navigation wait (falls back to a timeout) |
 | `html.rail-collapsed`, `#rail-collapse`, `.rail-nav > .rail-item` (slots), `.rail-nav > .rail-group` (dividers), `.icon` | E2, E11, C-rules |
@@ -146,3 +147,9 @@ If `tokens.css` is missing, the theme tests are skipped with a message.
 - **E8's ⌘K case** counts only if Ctrl+K opens something over the dossier. Otherwise it is noted as not measured.
 - **C-entrance** samples about 400 elements per frame with `getComputedStyle`. That costs time, so it runs on its own (no throttle) and never alongside the perf measurements.
 - **Contrast** ignores background images and gradients behind text (the detail flags them) and the canvas field.
+
+## Integration notes (v4 integrator)
+
+- **E4 timing.** bg.js now finishes its 1200 ms freeze ease *inside* the idle window (fully at rest `bgidle` ms after the last input), and programmatic changes (`setHeat`, `pulse`, `setRail`) no longer restart the idle clock; they run the loop only until their tween settles. Chrome's zero-movement synthetic `pointermove` (sent when layout changes under a resting cursor) is not treated as input.
+- **F-structure `aria-current`.** Sub-routes map to their tab: `draft/:id` → Studio, `person/:id` → People, `employers/:id` → Employers.
+- **Stylesheets.** Every tab stylesheet is linked in `index.html`; `useStyle()` resolves at once. Inserting a stylesheet at route time restyled the whole document inside the tab switch (E1).

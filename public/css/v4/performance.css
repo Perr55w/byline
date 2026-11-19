@@ -1,0 +1,88 @@
+/* =====================================================================
+   Byline v4 — Performance (views/performance.js). Comparison table with labelled bars, metric entry,
+   draft pipeline when nothing is published, CSV import. Tab-only layout. Tokens only.
+   ===================================================================== */
+
+.pf { display: flex; flex-direction: column; gap: var(--gap); }
+.pf > .page-head { margin-bottom: 12px; }
+.pf-pad { padding: 20px 24px 0; }
+.pf-card { padding: 22px 24px; }
+.pf-card > .section-label { margin: 0 0 10px; }
+.pf-card .section-head { margin-bottom: 12px; }
+.pf-cols { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: var(--gap); align-items: start; }
+.pf-cols > * { min-width: 0; }
+.pf-sub { margin: 0; color: var(--text-2); font: 400 13.5px/20px var(--font-sans); text-wrap: pretty; max-width: 76ch; }
+.pf-sub b { color: var(--text-1); font-weight: 500; }
+.pf-sub code, .pf-import code { padding: 1px 5px; border-radius: var(--r-tag); background: var(--inset); color: var(--text-1); font: 450 12px/1 var(--font-mono); }
+.tile--flush > .pf-sub { padding-bottom: 12px; }
+.pf-h3 { margin: 20px 0 6px; color: var(--text-1); font: 500 14px/20px var(--font-sans); }
+.pf-goal { display: flex; flex-direction: column; gap: 6px; color: var(--text-3); font: 450 12.5px/1 var(--font-sans); }
+.pf-goal .select { width: 240px; }
+.pf-err { color: var(--err); font: 450 13px/18px var(--font-sans); }
+
+/* ---------------------------------------------------------------- tables */
+.pf-scroll { overflow-x: auto; overscroll-behavior-x: contain; }
+#view .pf-table { min-width: 100%; font: 400 14px/20px var(--font-sans); }
+#view .pf-table th { height: 36px; padding: 0 12px; white-space: nowrap; background: transparent; position: static; border-bottom: 1px solid var(--line); }
+#view .pf-table td { height: 52px; padding: 10px 12px; border-top: 1px solid var(--line); white-space: nowrap; }
+#view .pf-table tr:first-child td { border-top: 0; }
+#view .pf-table th:first-child, #view .pf-table td:first-child { padding-left: 24px; }
+#view .pf-table th:last-child, #view .pf-table td:last-child { padding-right: 24px; }
+.pf-key { color: var(--text-1); font-weight: 500; }
+.pf-small { margin-left: 8px; color: var(--text-3); font: 450 11px/1 var(--font-mono); letter-spacing: .04em; text-transform: uppercase; font-weight: 450; }
+.pf-goalcol { min-width: 220px; }
+.pf-bar { display: grid; grid-template-columns: minmax(80px, 1fr) auto; align-items: center; gap: 10px; }
+.pf-bar b { color: var(--text-1); font: 500 13px/1 var(--font-mono); font-variant-numeric: tabular-nums; }
+.pf-bar .meter { height: 6px; border-radius: 3px; }
+.pf-na { color: var(--text-3); font-style: italic; }
+.pf-post { min-width: 280px; white-space: normal !important; }
+.pf-title { color: var(--text-1); font: 500 14.5px/20px var(--font-sans); text-decoration: none; }
+.pf-title:hover { color: var(--accent-text); text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 1px; }
+.pf-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 6px; color: var(--text-3); font: 450 12.5px/18px var(--font-sans); }
+.pf-metric { width: 92px; height: 32px; padding: 0 8px; text-align: right; font-family: var(--font-mono); font-size: 13px; font-variant-numeric: tabular-nums; }
+
+/* ---------------------------------------------------------------- pipeline (0 published) */
+.pf-pipe { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 0; margin: 4px 0 16px; padding: 0; list-style: none; border-radius: var(--r-tile); box-shadow: inset 0 0 0 1px var(--line); overflow: hidden; }
+.pf-pipe li { position: relative; display: flex; flex-direction: column; gap: 6px; padding: 16px 18px; border-left: 1px solid var(--line); }
+.pf-pipe li:first-child { border-left: 0; }
+.pf-pipe-n { color: var(--text-1); font: 320 36px/1 var(--font-sans); letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
+.pf-pipe-l { color: var(--text-2); font: 450 13px/18px var(--font-sans); }
+.pf-pipe li.is-zero .pf-pipe-n { color: var(--text-3); }
+.pf-pipe-end { background: var(--inset); }
+.pf-near { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
+.pf-near li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 16px; padding: 12px 0; border-top: 1px solid var(--line); }
+.pf-near li:first-child { border-top: 0; }
+.pf-near .pf-meta { margin: 0; }
+.pf-metric-list { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0 0; padding: 0; list-style: none; }
+.pf-metric-list li { height: 24px; padding: 0 10px; border-radius: var(--r-chip); background: var(--tint-2); color: var(--text-2); font: 500 12.5px/24px var(--font-sans); }
+.pf-metric-list li::first-letter, .pf-pipe-l::first-letter { text-transform: uppercase; }
+
+/* ---------------------------------------------------------------- import */
+.pf-csv { margin-top: 12px; font: 450 13px/20px var(--font-mono); }
+.pf-import-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; margin-top: 12px; }
+
+@media (max-width: 1100px) { .pf-cols { grid-template-columns: 1fr; } }
+@media (max-width: 760px) {
+  .pf-pad { padding: 16px 18px 0; }
+  .pf-card { padding: 18px; }
+  .pf-goal .select { width: 100%; }
+  .pf-goal { width: 100%; }
+  .tile--flush .section-head.pf-pad { flex-wrap: wrap; }
+  .pf-pipe { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .pf-pipe li:nth-child(4) { border-left: 0; }
+  .pf-pipe li:nth-child(n+4) { border-top: 1px solid var(--line); }
+  .pf-pipe li { padding: 12px 14px; }
+  .pf-pipe-n { font-size: 28px; }
+  #view .pf-table th:first-child, #view .pf-table td:first-child { padding-left: 18px; }
+}
+
+/* AA for status tags inside this tab (Proof): shared --ok/--warn tag text is ~3:1 on its soft fill; darkened toward
+   ink with color-mix (tokens only). Shared-file request: fix .tag--ok/--warn/--demo in components.css. */
+:is(.cp-ok, .pp-note--ok) { color: var(--ok-text); }
+:is(.pp-note--warn, .pp-dupnote, .pp-date.is-today) { color: var(--warn-text); }
+/* E1 (tab change ≤ 50 ms at 4× CPU): skip layout of off-screen sections until they scroll near. Static tiles only
+   (paint containment would clip a hover shadow). */
+#view :is(.pp, .cp, .pf, .cr, .em) .tile--static { content-visibility: auto; contain-intrinsic-size: auto 360px; }
+
+.pf-x { font-family: var(--font-sans); font-weight: 340; letter-spacing: -0.03em; }
+.tile--flush > .section-head.pf-pad { margin-bottom: 4px; }

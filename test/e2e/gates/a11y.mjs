@@ -146,7 +146,9 @@ export async function fStructure(ctx) {
         check(g, 'first focusable is the skip link to #main', s.skipFirst === 'yes', 'true', true, { scope: 'shell', detail: `first: ${s.skipFirst}` });
         check(g, 'every visible nav is labelled', s.navs.length > 0 && s.navs.every(Boolean), 'true', true, { scope: 'shell', detail: `navs: ${s.navs.map(n => `“${n}”`).join(', ') || 'none'}` });
       }
-      const nav = ['story', 'draft', 'person'].includes(key) ? null : key;
+      // sub-routes light their parent tab: draft/:id → Studio, person/:id → People, employers/:id → Employers; story/:id is an overlay
+      const base = key.split('/')[0];
+      const nav = base === 'story' ? null : ({ draft: 'studio', person: 'people' })[base] || base;
       if (nav) check(g, 'aria-current="page" on the active nav item', s.current.includes(nav), 'true', true, { scope: key, detail: `current: ${s.current.join(', ') || 'none'}` });
     }
     for (const [el, keys] of placeholder) g.notes.push(`placeholder is the only name: ${el} (${where(keys)})`);

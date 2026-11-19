@@ -93,7 +93,7 @@ for (const [theme, vars] of Object.entries(THEMES)) {
   test(`contrast · ${theme}: text tokens ≥ 4.5:1 on every surface`, { skip: SKIP }, () => {
     const surfaces = ['--bg', '--surface-solid', '--raised', '--inset', '--surface', '--surface-glass-strong'];
     const fails = [];
-    for (const t of ['--text-1', '--text-2', '--text-3', '--accent-text']) {
+    for (const t of ['--text-1', '--text-2', '--text-3', '--accent-text', '--ok-text', '--warn-text', '--err-text']) {
       const fg = solid(vars, t);
       assert.ok(fg, `${theme}: ${t} is missing or not a parseable colour`);
       for (const s of surfaces) {

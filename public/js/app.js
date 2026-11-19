@@ -1,10 +1,11 @@
 // Byline v4 shell: router (E §3), rail (D §1), status pill (F), theme, background wiring, dossier overlay.
 import { api } from './api.js';
 import { html, raw, toast, countUp, reducedMotion, inField, stampChanged, skeleton, icon, sheet, lattice, esc } from './ui.js';
-import { enterHeading, DUR, EASE } from './motion.js';
+import { enterHeading, prepareHeading, DUR, EASE } from './motion.js';
 import { repaintAll } from './quality.js';
 import bg from './bg.js';
 import * as dossier from './dossier.js';
+import './views/story-dossier.js';
 
 // ---------------------------------------------------------------- navigation model
 // [key, label, g-shortcut]. Map uses `g n` (g m stays Campaigns, g a stays Search/Archive).
@@ -247,6 +248,14 @@ const cur = { page: null, key: null, hash: null, seq: 0 };
 const dz = { back: false, base: '#/feed' };
 let firstRoute = true, settleT = 0;
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+const nextFrame = () => new Promise(r => { if (document.hidden) { setTimeout(r, 0); return; } requestAnimationFrame(() => setTimeout(r, 0)); });
+/** A view that changes its own filters with replaceState tells the router, so the next hashchange compares correctly. */
+export function replaceHash(hash) {
+  if (!hash || hash === location.hash) { cur.hash = location.hash; return; }
+  history.replaceState(history.state, '', hash);
+  cur.hash = hash;
+}
+window.__byline.replaceHash = replaceHash;
 
 function settleInFlight() {
   view.querySelectorAll('.page.leaving').forEach(p => p.remove());
@@ -265,9 +274,10 @@ function enterTargets(page) {
   }
   return out;
 }
-function leave(old, { quick = false } = {}) {
+function leave(old, { quick = false, top = null } = {}) {
   if (!old) return;
-  const top = old.offsetTop; // the single forced read of a transition
+  old.__mod?.destroy?.(old);
+  if (top == null) top = old.offsetTop; // the single read of a transition (pre-read by routeTo when it can)
   old.style.top = `${top}px`;
   old.classList.remove('current', 'entering', 'in');
   if (quick) old.classList.add('skeleton-page');
@@ -285,10 +295,9 @@ function showSkeleton(key, old) {
   if (!reducedMotion()) sk.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 240, easing: EASE.fade });
   return sk;
 }
-function swapIn(page, old, { key, hash, fromSkeleton }) {
-  const scrolled = window.scrollY > 0;
+function swapIn(page, old, { key, hash, fromSkeleton, oldTop = null, scrolled = window.scrollY > 0 }) {
   const motion = !reducedMotion() && !document.hidden;
-  if (old) { if (motion) leave(old, { quick: fromSkeleton }); else old.remove(); }
+  if (old) { if (motion) leave(old, { quick: fromSkeleton, top: oldTop }); else { old.__mod?.destroy?.(old); old.remove(); } }
   page.classList.remove('is-pending');
   page.classList.add('current');
   cur.page = page; cur.key = key; cur.hash = hash;
@@ -324,6 +333,7 @@ async function routeTo(key, params, hash) {
   setActive(key);
   bg.setMode(BG_FULL.has(key) ? 'full' : 'dim');
   bg.hold(450);
+  heatFromToday.last = null; // a view (Map) may have set its own heat: Today's comes back on the next status paint
   const old = cur.page && cur.page.isConnected ? cur.page : view.querySelector('.page.current');
   const page = document.createElement('div');
   page.className = 'page is-pending';
@@ -333,19 +343,27 @@ async function routeTo(key, params, hash) {
   const slow = setTimeout(() => { if (seq === cur.seq) { sk = showSkeleton(key, cur.page && cur.page.isConnected ? cur.page : old); skAt = performance.now(); cur.page = sk; } }, 120);
   try {
     const mod = await import(await moduleFor(key));
+    page.__mod = mod;
     await mod.render(page, { name: key, params });
   } catch (e) {
     console.error(e);
     page.innerHTML = String(html`<div class="page-head"><p class="eyebrow">Something went wrong</p><h1>This tab didn’t load.</h1><p class="lede">${e.message}</p></div>`);
   }
+  // E1: let the browser lay the hidden page out in its own frame instead of forcing it inside the render task,
+  // then do every read of the transition (old page top, heading metrics) against that clean layout.
   clearTimeout(slow);
+  await nextFrame();
   if (seq !== cur.seq) { page.remove(); return; }
+  const prevPage = sk || old;
+  const oldTop = prevPage && prevPage.isConnected ? prevPage.offsetTop : null;
+  const scrolled = window.scrollY > 0;
+  if (!reducedMotion() && !document.hidden) prepareHeading(page.querySelector('.page-head h1') || page.querySelector('h1'));
   if (sk) {
     const wait = 320 - (performance.now() - skAt); // hold the skeleton ≥ 320ms, then crossfade
     if (wait > 0) await sleep(wait);
     if (seq !== cur.seq) { page.remove(); return; }
   }
-  swapIn(page, sk || old, { key, hash, fromSkeleton: !!sk });
+  swapIn(page, sk || old, { key, hash, fromSkeleton: !!sk, oldTop: sk ? null : oldTop, scrolled: sk ? window.scrollY > 0 : scrolled });
   refreshStatus();
 }
 

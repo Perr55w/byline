@@ -1,90 +1,194 @@
+// Career (v4). F §2 Career: "{Skill} is rising in your sources." only when the radar has an earlier baseline to
+// rise from (with no articles older than a week, "rising" would be trivially true), else "{Topic} showed up on
+// {days} days this week." from /api/career/weekly, else "Not enough signal yet." The one-liner gives the top
+// skill's mentions vs its weekly baseline and how many saved job posts mention it.
+// Data hygiene (F amendment 6): identical job posts are grouped and counted once, demo posts carry a Demo tag,
+// and a callout offers to remove the copies; the radar's job counts are divided by the copy factor when every
+// post is copied the same number of times (otherwise the raw count is shown with a note). Skills that differ
+// only by case ("evals" / "Evals") are merged.
+// Kept from v3: skill radar with evidence modal, add / delete job descriptions, collections with interview
+// talking points (labelled so nothing is presented as your own work), projects editor with drafts per channel,
+// weekly recap (persisted trends, changed claims, ideas, shortlist with pursue / skip), experiences with the
+// public-OK gate.
 import { api } from '../api.js';
-import { html, on, act, toast, modal, confirmBox, strikeOut, status, fmtDate, channelLabel } from '../ui.js';
-
-const rowOf = (b) => b.closest('tr, [data-exp], .source-row, .watch-row, .card, li') || b.parentElement;
+import { html, on, act, toast, modal, confirmBox, strikeOut, status, channelLabel, icon, useStyle } from '../ui.js';
+import { enterItems, reduced } from '../motion.js';
+import { plural, listJoin, isDemoText, stripDemo, demoTag, dayLabel } from './people.js';
 
 const TABS = [['radar', 'Skill radar'], ['collections', 'Collections'], ['projects', 'Projects'], ['weekly', 'Weekly recap'], ['experiences', 'Experiences']];
 const GROUPS = ['AI product management', 'Business analysis', 'Data analytics'];
 const KINDS = ['experiment', 'teardown', 'case study', 'demo video', 'comparison', 'dashboard'];
 const PSTATUS = ['idea', 'active', 'done'];
 const state = { tab: 'radar', project: null, interview: {}, skipped: new Set() };
-const fresh = (el) => { const root = document.createElement('div'); el.replaceChildren(root); return root; };
-const trendChip = (t) => html`<span class="chip ${({ rising: 'green', steady: 'blue', cooling: 'amber' })[t] || ''}">${t}</span>`;
-const pchip = (s) => html`<span class="chip ${({ idea: '', active: 'amber', done: 'green' })[s] || ''}">${s}</span>`;
+const TREND_TAG = { rising: 'tag--ok', steady: 'tag--neutral', cooling: 'tag--warn' };
+const trendTag = (t, s) => s && s.source_mentions === 0 ? html`<span class="tag tag--neutral" title="Only job descriptions mention it">jobs only</span>`
+  : s && s.recent > 0 && !(s.older_rate > 0) ? html`<span class="tag tag--neutral" title="No mentions in the three weeks before this one">new this week</span>`
+  : html`<span class="tag ${TREND_TAG[t] || 'tag--neutral'}">${t}</span>`;
+const pTag = (s) => html`<span class="tag ${s === 'active' ? 'tag--warn' : s === 'done' ? 'tag--ok' : 'tag--neutral'}">${s}</span>`;
+const capFirst = (s) => s ? s[0].toUpperCase() + s.slice(1) : s;
 
 export function labelChip(l = '') {
   const s = l.toLowerCase();
-  const [cls, short] = s.startsWith('work you have done') ? ['green', 'Work you have done'] : s.startsWith('example') ? ['blue', 'Example — not your work']
-    : s.startsWith('hypothesis') ? ['amber', 'Hypothesis'] : s.startsWith('future') ? ['violet', 'Future experiment — not yet done'] : ['', l];
-  return html`<span class="chip ${cls}" title="${l}">${short}</span>`;
+  const [cls, short] = s.startsWith('work you have done') ? ['tag--ok', 'Work you have done'] : s.startsWith('example') ? ['tag--neutral', 'Example, not your work']
+    : s.startsWith('hypothesis') ? ['tag--warn', 'Hypothesis'] : s.startsWith('future') ? ['tag--neutral cr-tag-future', 'Future experiment, not yet done'] : ['tag--neutral', l];
+  return html`<span class="tag ${cls}" title="${l}">${short}</span>`;
+}
+
+/** Identical job posts (same title, employer and opening text) grouped; `factor` when every group has the same size. */
+function jobGroups(jobs) {
+  const m = new Map();
+  for (const j of jobs) { const k = `${j.title}|${j.employer}|${j.excerpt}`; if (!m.has(k)) m.set(k, []); m.get(k).push(j); }
+  const groups = [...m.values()];
+  const sizes = new Set(groups.map(g => g.length));
+  return { groups, unique: groups.length, factor: sizes.size === 1 ? [...sizes][0] : null, copies: jobs.length - groups.length };
+}
+/** Merge skills that differ only by case (the radar tracks "evals" and a watchlist "Evals"). */
+function mergeSkills(skills) {
+  const out = [], seen = new Map();
+  for (const s of skills) {
+    const k = s.skill.toLowerCase();
+    if (seen.has(k)) { seen.get(k).aliases.push(s.skill); continue; }
+    const c = { ...s, aliases: [] }; seen.set(k, c); out.push(c);
+  }
+  return out;
+}
+const jobCount = (s, J) => J.factor && J.factor > 1 ? Math.round(s.job_mentions / J.factor) : s.job_mentions;
+
+function headline({ skills, weekly, J, articles }) {
+  const baseline = skills.some(s => s.older_rate > 0);
+  const rising = skills.filter(s => s.trend === 'rising' && s.recent >= 3).sort((a, b) => b.recent - a.recent)[0];
+  const persisted = weekly.persisted?.[0];
+  const h = rising && baseline ? `${capFirst(rising.skill)} is rising in your sources.`
+    : persisted ? `${persisted.topic} showed up on ${persisted.days} days this week.`
+    : 'Not enough signal yet.';
+  const s = (rising && baseline) ? rising : (rising || skills[0]);
+  if (!s) return { h, l: html`The radar uses the last 30 days of articles plus pasted job posts; you have <b>${articles}</b> ${articles === 1 ? 'article' : 'articles'} and <b>${J.unique}</b> ${J.unique === 1 ? 'job post' : 'job posts'}.` };
+  const jm = jobCount(s, J);
+  const l = html`<b>${capFirst(s.skill)}</b>: <b>${s.recent}</b> ${s.recent === 1 ? 'mention' : 'mentions'} this week vs <b>${s.older_rate}</b>/week before${baseline ? '' : ' (no articles older than a week in the 30-day window yet)'}; in <b>${jm}</b> of <b>${J.unique}</b> saved job ${J.unique === 1 ? 'post' : 'posts'}${J.copies ? html` (${J.copies + J.unique} identical copies counted once)` : ''}.`;
+  return { h, l };
 }
 
 export async function render(el, ctx = {}) {
+  await useStyle('/css/v4/career.css');
   if (ctx.params?.[0] && TABS.some(([k]) => k === ctx.params[0])) state.tab = ctx.params[0];
-  const root = fresh(el);
+  const [skillsRaw, weekly, jobs, projects, experiences, st] = await Promise.all([
+    api.get('/career/radar'), api.get('/career/weekly'), api.get('/jobposts'), api.get('/projects').catch(() => []), api.get('/experiences').catch(() => []), api.get('/status').catch(() => ({}))
+  ]);
+  const skills = mergeSkills(skillsRaw);
+  const J = jobGroups(jobs);
+  const hd = headline({ skills, weekly, J, articles: st.counts?.articles ?? 0 });
+  const demoJobs = jobs.filter(j => isDemoText(j.title)).length;
+  const dupGroup = J.groups.find(g => g.length > 1);
+
+  const root = document.createElement('div');
+  root.className = 'cr';
   root.innerHTML = String(html`
-    <div class="page-head">
-      <div>
-        <div class="kicker">Career intelligence</div>
-        <h1>Career</h1>
-        <p class="lede">Which skills keep showing up, what you can talk about in interviews, and which stories are worth turning into a portfolio project.</p>
-      </div>
-    </div>
-    <div class="tabs">${TABS.map(([k, l]) => html`<button data-tab="${k}" class="${state.tab === k ? 'on' : ''}">${l}</button>`)}</div>
-    <div id="pane"><div class="muted"><span class="spinner"></span> Loading…</div></div>`);
-  on(root, 'click', '[data-tab]', (e, b) => { state.tab = b.dataset.tab; render(el, { ...ctx, params: [] }); });
-  const pane = root.querySelector('#pane');
-  const again = () => render(el, { ...ctx, params: [] });
-  await ({ radar, collections, projects, weekly, experiences })[state.tab](pane, again);
+  <header class="page-head">
+    <p class="eyebrow">Career intelligence</p>
+    <h1>${hd.h}</h1>
+    <p class="lede">${hd.l}</p>
+  </header>
+
+  ${dupGroup ? html`<div class="cr-callout" role="note">${icon('alert')}
+    <p><b>${plural(jobs.length, 'saved job post')}, ${J.unique} unique.</b> “${stripDemo(dupGroup[0].title)}” is saved ${dupGroup.length} times${isDemoText(dupGroup[0].title) ? ' (demo data)' : ''}, so raw job counts would be inflated ${dupGroup.length}×. The radar below counts it once.</p>
+    <button class="btn btn--sm" data-act="dedupe">Remove ${plural(J.copies, 'copy', 'copies')}</button></div>` : ''}
+
+  <section class="cr-kpis" aria-label="Career summary">
+    <div class="tile tile--static cr-kpi"><span class="cr-kpi-n">${skills.length}</span><span class="cr-kpi-l">skills with evidence · 30 days</span></div>
+    <div class="tile tile--static cr-kpi"><span class="cr-kpi-n">${skills.filter(s => s.recent > 0).length}</span><span class="cr-kpi-l">mentioned this week</span></div>
+    <div class="tile tile--static cr-kpi"><span class="cr-kpi-n">${J.unique}</span><span class="cr-kpi-l">unique job ${J.unique === 1 ? 'post' : 'posts'}${demoJobs ? ` · ${demoJobs} demo` : ''}</span></div>
+    <div class="tile tile--static cr-kpi"><span class="cr-kpi-n">${projects.length}</span><span class="cr-kpi-l">projects · ${projects.filter(p => p.status === 'active').length} active</span></div>
+    <div class="tile tile--static cr-kpi"><span class="cr-kpi-n">${experiences.filter(x => x.public_ok).length}<span class="cr-kpi-of">/${experiences.length}</span></span><span class="cr-kpi-l">experiences public OK</span></div>
+  </section>
+
+  <div class="cr-tabs" role="tablist" aria-label="Career sections">${TABS.map(([k, l]) => html`<button class="cr-tabbtn" role="tab" id="cr-tab-${k}" aria-controls="cr-pane" aria-selected="${state.tab === k}" tabindex="${state.tab === k ? 0 : -1}" data-tab="${k}">${l}</button>`)}</div>
+  <div id="cr-pane" class="cr-pane" role="tabpanel" aria-labelledby="cr-tab-${state.tab}"></div>`);
+  el.replaceChildren(root);
+
+  const pane = root.querySelector('#cr-pane');
+  const data = { skills, weekly, jobs, J, projects, experiences };
+  const show = async (animate) => {
+    await PANES[state.tab](pane, () => render(el, { ...ctx, params: [] }), data);
+    if (animate && !reduced()) enterItems([...pane.children].slice(0, 4), { y: 6, duration: 420, fadeDuration: 300 });
+  };
+  const select = (k, focus) => {
+    state.tab = k;
+    root.querySelectorAll('.cr-tabbtn').forEach(b => { const on1 = b.dataset.tab === k; b.setAttribute('aria-selected', String(on1)); b.tabIndex = on1 ? 0 : -1; if (on1 && focus) b.focus(); });
+    pane.setAttribute('aria-labelledby', `cr-tab-${k}`);
+    try { history.replaceState(history.state, '', `#/career/${k}`); } catch (e) { /* ignore */ }
+    show(true);
+  };
+  on(root, 'click', '[data-tab]', (e, b) => select(b.dataset.tab));
+  root.querySelector('.cr-tabs').addEventListener('keydown', (e) => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return;
+    e.preventDefault();
+    const i = TABS.findIndex(t => t[0] === state.tab);
+    const n = e.key === 'Home' ? 0 : e.key === 'End' ? TABS.length - 1 : (i + (e.key === 'ArrowRight' ? 1 : -1) + TABS.length) % TABS.length;
+    select(TABS[n][0], true);
+  });
+  on(root, 'click', '[data-act="dedupe"]', async (e, b) => {
+    const extra = J.groups.flatMap(g => g.slice(1));
+    if (!(await confirmBox(`Delete ${plural(extra.length, 'identical copy', 'identical copies')} of saved job posts? One of each is kept.`, 'Remove copies'))) return;
+    await act(b, async () => { for (const j of extra) await api.del(`/jobposts/${j.id}`); toast(`Removed ${plural(extra.length, 'copy', 'copies')}`, 'ok'); render(el, { ...ctx, params: [] }); }, 'Removing…');
+  });
+  await show(false);
 }
 
 // ---------------------------------------------------------------- skill radar
-async function radar(pane, again) {
-  const [skills, jobs] = await Promise.all([api.get('/career/radar'), api.get('/jobposts')]);
+async function radar(pane, again, { skills, jobs, J }) {
+  const maxSrc = Math.max(1, ...skills.map(s => s.source_mentions));
   pane.innerHTML = String(html`
-  <div class="split reveal">
-    <section class="card">
-      <div class="row between"><h3>Skill radar · last 30 days</h3><span class="mono faint">${skills.length} skills with evidence</span></div>
-      ${skills.length ? html`<table>
-        <thead><tr><th>Skill</th><th>Source mentions</th><th>Job mentions</th><th>Trend</th><th></th></tr></thead>
-        <tbody>${skills.map((s, i) => html`<tr class="click" data-skill="${i}"><td><strong>${s.skill}</strong></td>
-          <td>${s.source_mentions} <span class="faint small">(${s.recent} this week)</span></td><td>${s.job_mentions}</td><td>${trendChip(s.trend)}</td><td class="faint small">evidence →</td></tr>`)}</tbody></table>`
-      : html`<div class="empty">No skill evidence yet. Run the daily workflow or paste a job description.</div>`}
+  <div class="cr-cols">
+    <section class="tile tile--static tile--flush" aria-labelledby="cr-r-h">
+      <div class="section-head cr-pad"><h2 class="t-h2" id="cr-r-h">Skill radar</h2><span class="section-meta">last 30 days · ${plural(skills.length, 'skill')} with evidence</span></div>
+      ${skills.length ? html`<table class="table cr-table">
+        <thead><tr><th>Skill</th><th>Source mentions</th><th class="num">This week</th><th class="num">Job posts</th><th>Trend</th></tr></thead>
+        <tbody>${skills.map((s, i) => html`<tr data-skill="${i}">
+          <td><button class="cr-linkbtn" data-skill-open="${i}">${s.skill}</button>${s.aliases.length ? html`<span class="cr-alias">also “${s.aliases.join('”, “')}”</span>` : ''}</td>
+          <td class="cr-barcell"><span class="cr-bar"><span class="meter"><i style="--v:${s.source_mentions / maxSrc}"></i></span><b>${s.source_mentions}</b></span></td>
+          <td class="num">${s.recent}</td>
+          <td class="num">${jobCount(s, J)}${J.factor > 1 && s.job_mentions ? html`<span class="cr-raw" title="${s.job_mentions} raw matches across ${J.factor}× copied posts">/${J.unique}</span>` : J.unique ? html`<span class="cr-raw">/${J.unique}</span>` : ''}</td>
+          <td>${trendTag(s.trend, s)}</td></tr>`)}</tbody></table>
+        <p class="cr-foot cr-pad">Trend compares this week with the weekly rate over the previous three weeks${skills.some(s => s.older_rate > 0) ? '' : '; there are no articles older than a week yet, so skills mentioned now are marked “new this week” rather than rising'}. Job posts count double in the ranking.</p>`
+      : html`<div class="cr-pad cr-padb"><div class="empty"><h3>No skill evidence yet.</h3><p>Run the daily workflow or paste a job description.</p></div></div>`}
     </section>
-    <div class="stack">
-      <section class="card accent">
-        <h3>Add a job description</h3>
-        <form class="stack" id="jp">
-          <div class="form-grid"><label class="field">Title<input name="title" placeholder="Associate Product Manager, AI"></label><label class="field">Employer<input name="employer"></label></div>
-          <label class="field">Posting URL<input name="url" placeholder="https://…"></label>
-          <label class="field">Description *<textarea name="text" rows="6" required placeholder="Paste the full job description"></textarea></label>
-          <div class="row" style="justify-content:flex-end"><button class="primary" type="submit">Add to radar</button></div>
+    <aside class="stack">
+      <section class="tile tile--static cr-card" aria-labelledby="cr-jp-h">
+        <h2 class="section-label" id="cr-jp-h">Add a job description</h2>
+        <form class="cr-form" id="jp">
+          <label class="field">Title<input class="input" name="title" placeholder="Associate Product Manager, AI"></label>
+          <label class="field">Employer<input class="input" name="employer"></label>
+          <label class="field cr-full">Posting URL<input class="input" name="url" placeholder="https://…" inputmode="url"></label>
+          <label class="field cr-full">Description *<textarea class="textarea" name="text" rows="5" required placeholder="Paste the full job description"></textarea></label>
+          <div class="cr-full cr-end"><button class="btn btn--primary" type="submit">Add to radar</button></div>
         </form>
       </section>
-      <section class="card">
-        <h3>Job posts</h3>
-        ${jobs.length ? jobs.map(j => html`<div class="list-row"><div class="row between"><span><strong>${j.title}</strong> <span class="faint small">${j.employer}</span></span>
-          <span class="row">${j.url ? html`<a class="small" href="${j.url}" target="_blank" rel="noopener">posting ↗</a>` : ''}<button class="sm ghost" data-del-job="${j.id}">Delete</button></span></div>
-          <div class="faint small">${j.excerpt}…</div></div>`) : html`<p class="muted small">None yet. Job mentions count double in the ranking.</p>`}
+      <section class="tile tile--static cr-card" aria-labelledby="cr-jl-h">
+        <h2 class="section-label" id="cr-jl-h">Saved job posts · ${J.unique} unique</h2>
+        ${jobs.length ? html`<ul class="cr-jobs">${J.groups.map(g => { const j = g[0]; return html`<li>
+          <div class="cr-job-h"><span class="cr-job-t">${stripDemo(j.title)}</span>${demoTag(isDemoText(j.title))}${g.length > 1 ? html`<span class="tag tag--warn">×${g.length} copies</span>` : ''}</div>
+          <span class="cr-sub">${j.employer || 'No employer'} · saved ${dayLabel((j.created_at || '').slice(0, 10), { weekday: false })}${j.url ? html` · <a href="${j.url}" target="_blank" rel="noopener">posting${icon('arrow-up-right')}</a>` : ''}</span>
+          <p class="cr-excerpt">${j.excerpt}…</p>
+          <div class="cr-end"><button class="btn btn--ghost btn--sm" data-del-job="${j.id}">${g.length > 1 ? 'Delete one copy' : 'Delete'}</button></div>
+        </li>`; })}</ul>` : html`<p class="cr-note">None yet. Job mentions count double in the ranking.</p>`}
       </section>
-    </div>
+    </aside>
   </div>`);
   pane.querySelector('#jp').addEventListener('submit', async (e) => {
     e.preventDefault();
     await act(e.submitter, async () => { await api.post('/jobposts', Object.fromEntries(new FormData(e.target))); toast('Job post added', 'ok'); again(); });
   });
-  on(pane, 'click', '[data-del-job]', (e, b) => { const id = b.dataset.delJob; strikeOut(rowOf(b), { message: 'Job post deleted.', commit: () => api.del(`/jobposts/${id}`) }); });
-  on(pane, 'click', '[data-skill]', (e, tr) => {
+  on(pane, 'click', '[data-del-job]', (e, b) => { const id = b.dataset.delJob; strikeOut(b.closest('li'), { message: 'Job post deleted.', commit: () => api.del(`/jobposts/${id}`) }); });
+  on(pane, 'click', 'tr[data-skill]', (e, tr) => {
     const s = skills[tr.dataset.skill];
-    modal(String(html`<div class="row between"><h2 style="margin:0">${s.skill}</h2>${trendChip(s.trend)}</div>
-      <p class="muted small">${s.source_mentions} source mention(s) in 30 days (${s.recent} this week, baseline ${s.older_rate}/week) · ${s.job_mentions} job description(s)</p>
-      ${s.evidence.map(ev => html`<div class="evidence ${ev.kind === 'job' ? 'commentary' : 'reporting'}">
-        <div class="row"><span class="chip ${ev.kind === 'job' ? 'amber' : 'blue'}">${ev.kind === 'job' ? 'job description' : 'source'}</span>
-          ${ev.kind === 'job' ? html`<span class="small">${ev.title}</span>` : html`<span class="mono faint">${ev.domain}</span>`}</div>
-        <div class="small" style="margin-top:4px">“${ev.snippet}”</div>
-        <div class="row small" style="margin-top:4px">${ev.story_id ? html`<a href="#/story/${ev.story_id}" data-close>open story →</a>` : ''}${ev.url ? html`<a href="${ev.url}" target="_blank" rel="noopener">original ↗</a>` : ''}</div>
-      </div>`)}
-      <div class="row" style="justify-content:flex-end;margin-top:14px"><button data-close>Close</button></div>`));
+    modal(String(html`<div class="cr-ev-head"><h2>${s.skill}</h2>${trendTag(s.trend, s)}</div>
+      <p class="cr-note">${plural(s.source_mentions, 'source mention')} in 30 days (${s.recent} this week, baseline ${s.older_rate}/week) · ${plural(jobCount(s, J), 'job post')}${J.factor > 1 && s.job_mentions ? ` (${s.job_mentions} raw matches across copies)` : ''}</p>
+      <ul class="cr-ev">${s.evidence.map(ev => html`<li class="${ev.kind === 'job' ? 'is-job' : ''}">
+        <div class="cr-ev-meta"><span class="tag tag--neutral">${ev.kind === 'job' ? 'Job description' : 'Source'}</span>${ev.kind === 'job' ? html`<span>${stripDemo(ev.title)}</span>${demoTag(isDemoText(ev.title))}` : html`<span class="cr-mono">${ev.domain}</span>`}</div>
+        <p>“${ev.snippet}”</p>
+        <div class="cluster">${ev.story_id ? html`<a class="btn btn--sm" href="#/story/${ev.story_id}" data-close>Open story</a>` : ''}${ev.url ? html`<a class="btn btn--sm btn--ghost" href="${ev.url}" target="_blank" rel="noopener">Original${icon('arrow-up-right')}</a>` : ''}</div>
+      </li>`)}</ul>
+      <div class="modal-actions"><button class="btn" data-close>Close</button></div>`));
   });
 }
 
@@ -92,21 +196,21 @@ async function radar(pane, again) {
 async function collections(pane, again) {
   const g = await api.get('/collections');
   const names = [...new Set([...GROUPS, ...Object.keys(g)])];
+  const total = Object.values(g).reduce((n, a) => n + a.length, 0);
   pane.innerHTML = String(html`
-  <p class="muted small">Saved stories grouped by target role. Talking points are labelled so you never present someone else's work — or an idea you haven't tried — as your own.</p>
-  <div class="row" style="margin:6px 0 16px">${labelChip('work you have done')}${labelChip('example')}${labelChip('hypothesis')}${labelChip('future experiment')}</div>
-  <div class="grid g3 reveal">${names.map(n => html`<section class="card">
-    <div class="row between"><h3 style="margin:0">${n}</h3><span class="mono faint">${(g[n] || []).length}</span></div>
-    ${(g[n] || []).length ? html`<div class="stack" style="margin-top:10px">${g[n].map(s => html`<div><a href="#/story/${s.story_id}" style="color:var(--text)">${s.title}</a>
-      ${s.note ? html`<div class="faint small">${s.note}</div>` : ''}<div class="row" style="margin-top:4px">${(s.topics || []).slice(0, 3).map(t => html`<span class="chip violet">${t}</span>`)}</div></div>`)}</div>
-      <div class="row" style="margin-top:14px"><button class="sm" data-iv="${n}">Interview talking points</button></div>`
-    : html`<p class="muted small" style="margin-top:10px">Nothing saved yet. Save stories to “${n}” from the feed.</p>`}
+  <div class="cr-legend"><p class="cr-note">Saved stories grouped by target role (${plural(total, 'story', 'stories')} saved). Talking points are labelled so you never present someone else’s work, or an idea you haven’t tried, as your own.</p>
+    <div class="cluster">${labelChip('work you have done')}${labelChip('example')}${labelChip('hypothesis')}${labelChip('future experiment')}</div></div>
+  <div class="cr-grid3">${names.map(n => html`<section class="tile tile--static cr-card" aria-label="${n}">
+    <div class="cr-card-h"><h2 class="t-title">${n}</h2><span class="cr-count">${(g[n] || []).length}</span></div>
+    ${(g[n] || []).length ? html`<ul class="cr-saved">${g[n].map(s => html`<li data-dossier-src><a href="#/story/${s.story_id}">${s.title}</a>${s.note ? html`<span class="cr-sub">${s.note}</span>` : ''}<span class="cluster">${(s.topics || []).slice(0, 3).map((t, k) => html`<span class="chip ${k === 0 ? 'chip--main' : ''}">${t}</span>`)}</span></li>`)}</ul>
+      <div class="cr-end"><button class="btn btn--sm" data-iv="${n}">Interview talking points</button></div>`
+    : html`<p class="cr-note">Nothing saved yet. Save stories to “${n}” from a story’s dossier.</p>`}
   </section>`)}</div>
-  ${Object.entries(state.interview).map(([n, res]) => html`<section class="card accent" style="margin-top:18px">
-    <div class="row between"><h3 style="margin:0">Talking points · ${n}</h3><button class="sm ghost" data-iv-close="${n}">Hide</button></div>
-    ${res.length ? res.map(r => html`<div style="margin-top:14px"><a href="#/story/${r.story_id}" class="story-title" style="color:var(--text)">${r.title}</a>
-      ${r.items.map(it => html`<div class="evidence"><div class="row">${labelChip(it.label)}</div><div class="claim" style="margin-top:6px">${it.question}</div><div class="small muted">${it.notes}</div></div>`)}</div>`)
-    : html`<p class="muted small">No stories to build points from.</p>`}
+  ${Object.entries(state.interview).map(([n, res]) => html`<section class="tile tile--static cr-card cr-iv" aria-labelledby="cr-iv-h">
+    <div class="section-head"><h2 class="t-h2" id="cr-iv-h">Talking points · ${n}</h2><button class="btn btn--ghost btn--sm" data-iv-close="${n}">Hide</button></div>
+    ${res.length ? res.map(r => html`<div class="cr-iv-story"><a class="t-title" href="#/story/${r.story_id}">${r.title}</a>
+      ${r.items.map(it => html`<div class="nested cr-iv-item"><div>${labelChip(it.label)}</div><p class="cr-iv-q">${it.question}</p><p class="cr-note">${it.notes}</p></div>`)}</div>`)
+    : html`<p class="cr-note">No stories to build points from.</p>`}
   </section>`)}`);
   on(pane, 'click', '[data-iv]', async (e, b) => act(b, async () => { state.interview = { [b.dataset.iv]: await api.post('/career/interview', { collection: b.dataset.iv }) }; again(); }, 'Preparing…'));
   on(pane, 'click', '[data-iv-close]', (e, b) => { delete state.interview[b.dataset.ivClose]; again(); });
@@ -118,37 +222,42 @@ async function projects(pane, again) {
   if (state.project && !list.some(p => p.id === state.project)) state.project = null;
   if (!state.project && list.length) state.project = list[0].id;
   const p = state.project ? await api.get(`/projects/${state.project}`) : null;
-  const field = (k, l, rows = 2) => html`<label class="field full">${l}<textarea name="${k}" rows="${rows}">${p[k] || ''}</textarea></label>`;
+  const fld = (k, l, rows = 2, half = false) => html`<label class="field ${half ? '' : 'cr-full'}">${l}<textarea class="textarea" name="${k}" rows="${rows}">${p[k] || ''}</textarea></label>`;
+  const filled = (x) => ['question', 'inputs', 'deliverable', 'success', 'tested', 'findings'].filter(k => (x[k] || '').trim()).length;
   pane.innerHTML = String(html`
-  <div class="split reveal" style="grid-template-columns:minmax(260px,.8fr) minmax(0,1.6fr)">
-    <section class="card">
-      <div class="row between"><h3 style="margin:0">Projects</h3><button class="sm primary" data-act="new">New project</button></div>
-      <div class="stack" style="margin-top:12px">${list.length ? list.map(x => html`<div class="proj-item ${x.id === state.project ? 'on' : ''}" data-pick="${x.id}">
-        <div>${x.title}</div><div class="row" style="margin-top:4px">${pchip(x.status)}<span class="chip">${x.kind}</span>${x.employer ? html`<span class="chip violet">${x.employer}</span>` : ''}</div></div>`)
-      : html`<div class="empty">No projects yet. Generate one from a story, or start blank.</div>`}</div>
+  <div class="cr-proj">
+    <section class="tile tile--static tile--flush" aria-labelledby="cr-pl-h">
+      <div class="section-head cr-pad"><h2 class="t-h2" id="cr-pl-h">Projects</h2><button class="btn btn--primary btn--sm" data-act="new">${icon('plus')}New</button></div>
+      ${list.length ? html`<ul class="cr-plist" role="listbox" aria-label="Projects">${list.map(x => html`<li role="option" aria-selected="${x.id === state.project}" tabindex="0" class="${x.id === state.project ? 'is-on' : ''}" data-pick="${x.id}">
+        <span class="cr-pl-t">${x.title}</span>
+        <span class="cluster">${pTag(x.status)}<span class="chip">${x.kind}</span>${x.employer ? html`<span class="chip">${x.employer}</span>` : ''}</span>
+        <span class="cr-sub">${filled(x)} of 6 fields filled · updated ${dayLabel((x.updated_at || '').slice(0, 10), { weekday: false })}</span></li>`)}</ul>`
+      : html`<div class="cr-pad cr-padb"><div class="empty"><h3>No projects yet.</h3><p>Generate one from a story, or start blank.</p></div></div>`}
     </section>
-    ${p ? html`<section class="card accent">
-      <form id="pf" class="form-grid">
-        <label class="field full">Title<input name="title" value="${p.title || ''}"></label>
-        <label class="field">Kind<select name="kind">${KINDS.map(k => html`<option ${k === p.kind ? 'selected' : ''}>${k}</option>`)}</select></label>
-        <label class="field">Status<select name="status">${PSTATUS.map(k => html`<option ${k === p.status ? 'selected' : ''}>${k}</option>`)}</select></label>
-        <label class="field full">Employer connection<select name="employer"><option value="">— none —</option>${employers.map(e => html`<option ${e.name === p.employer ? 'selected' : ''}>${e.name}</option>`)}</select></label>
-        ${field('question', 'Question')}${field('inputs', 'Inputs / data')}${field('deliverable', 'Deliverable')}${field('success', 'Success measure')}${field('extension', 'Extension (Lot Intelligence / Research Bench)')}
-        <div class="full hr" style="margin:4px 0"></div>
-        ${field('tested', 'What I tested', 3)}${field('findings', 'What I found', 3)}${field('next_steps', 'Next', 2)}
-        <div class="full row between">
-          <span class="faint small">${p.story_id ? html`From <a href="#/story/${p.story_id}">story #${p.story_id}</a> · ` : ''}updated ${fmtDate(p.updated_at)}</span>
-          <span class="row"><button type="button" class="danger sm" data-act="delete">Delete</button><button class="primary" type="submit">Save project</button></span>
+    ${p ? html`<section class="tile tile--static cr-card" aria-labelledby="cr-pe-h">
+      <h2 class="sr-only" id="cr-pe-h">Edit ${p.title}</h2>
+      <form id="pf" class="cr-form">
+        <label class="field cr-full">Title<input class="input cr-ptitle" name="title" value="${p.title || ''}"></label>
+        <label class="field">Kind<select class="select" name="kind">${KINDS.map(k => html`<option ${k === p.kind ? 'selected' : ''}>${k}</option>`)}</select></label>
+        <label class="field">Status<select class="select" name="status">${PSTATUS.map(k => html`<option ${k === p.status ? 'selected' : ''}>${k}</option>`)}</select></label>
+        <label class="field cr-full">Employer connection<select class="select" name="employer"><option value="">None</option>${employers.map(e => html`<option ${e.name === p.employer ? 'selected' : ''}>${e.name}</option>`)}</select></label>
+        ${fld('question', 'Question')}${fld('inputs', 'Inputs / data', 2, true)}${fld('deliverable', 'Deliverable', 2, true)}${fld('success', 'Success measure', 2, true)}${fld('extension', 'Extension (Lot Intelligence / Research Bench)', 2, true)}
+        <div class="cr-full cr-rule"></div>
+        ${fld('tested', 'What I tested', 3, true)}${fld('findings', 'What I found', 3, true)}${fld('next_steps', 'Next', 2)}
+        <div class="cr-full cr-pfoot">
+          <span class="cr-sub">${p.story_id ? html`From <a href="#/story/${p.story_id}">its story</a> · ` : ''}updated ${dayLabel((p.updated_at || '').slice(0, 10), { weekday: false })}</span>
+          <span class="cluster"><button type="button" class="btn btn--danger btn--sm" data-act="delete">Delete</button><button class="btn btn--primary" type="submit">Save project</button></span>
         </div>
       </form>
-      <div class="hr"></div>
-      <h3>Create drafts from this project</h3>
-      <p class="faint small" style="margin-top:-4px">Drafts use only what you wrote above as first-person content. Fill in “What I tested / found” before claiming results.</p>
-      <div class="row">${['linkedin', 'instagram', 'video'].map(ch => html`<button data-draft="${ch}">${channelLabel(ch)} draft</button>`)}</div>
-      ${p.drafts?.length ? html`<div class="stack" style="margin-top:12px">${p.drafts.map(d => html`<div class="row between"><a href="#/draft/${d.id}">${d.title}</a><span class="row">${status(d.status)}<span class="chip">${channelLabel(d.channel, d.format)}</span></span></div>`)}</div>` : ''}
-    </section>` : html`<section class="card"><div class="empty">Select or create a project.</div></section>`}
+      <div class="cr-rule"></div>
+      <h3 class="cr-h3">Create drafts from this project</h3>
+      <p class="cr-note">Drafts use only what you wrote above as first-person content. Fill in “What I tested” and “What I found” before claiming results.${(p.tested || p.findings) ? '' : ' Both are empty now.'}</p>
+      <div class="cluster cr-drafts-btns">${['linkedin', 'instagram', 'video'].map(ch => html`<button class="btn" data-draft="${ch}">${channelLabel(ch)} draft</button>`)}</div>
+      ${p.drafts?.length ? html`<ul class="cr-pdrafts">${p.drafts.map(d => html`<li><a href="#/draft/${d.id}">${d.title}</a><span class="cluster">${status(d.status)}<span class="chip">${channelLabel(d.channel, d.format)}</span></span></li>`)}</ul>` : ''}
+    </section>` : html`<section class="tile tile--static cr-card"><div class="empty"><h3>Select or create a project.</h3><p>Projects turn a story into original analysis you can show.</p></div></section>`}
   </div>`);
   on(pane, 'click', '[data-pick]', (e, d) => { state.project = Number(d.dataset.pick); again(); });
+  on(pane, 'keydown', '[data-pick]', (e, d) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); state.project = Number(d.dataset.pick); again(); } });
   on(pane, 'click', '[data-act="new"]', (e, b) => act(b, async () => { state.project = (await api.post('/projects', { title: 'Untitled project' })).id; again(); }));
   if (!p) return;
   const form = pane.querySelector('#pf');
@@ -163,44 +272,44 @@ async function projects(pane, again) {
 }
 
 // ---------------------------------------------------------------- weekly recap
-async function weekly(pane, again) {
-  const w = await api.get('/career/weekly');
+async function weekly(pane, again, { weekly: w0 }) {
+  const w = w0 || await api.get('/career/weekly');
   const key = (s) => `${s.kind}:${s.ref}`;
   const short = w.shortlist.filter(s => !state.skipped.has(key(s)));
   pane.innerHTML = String(html`
-  <div class="split reveal">
+  <div class="cr-cols">
     <div class="stack">
-      <section class="card">
-        <h3>Trends that persisted <span class="faint">· ${w.story_count} stories this week</span></h3>
-        ${w.persisted.length ? html`<table><thead><tr><th>Topic</th><th>Days seen</th><th>Stories</th></tr></thead>
-          <tbody>${w.persisted.map(p => html`<tr><td><span class="chip violet">${p.topic}</span></td><td>${p.days}</td><td>${p.stories}</td></tr>`)}</tbody></table>`
-        : html`<p class="muted small">No topic appeared on two or more days this week.</p>`}
+      <section class="tile tile--static cr-card" aria-labelledby="cr-w1">
+        <div class="section-head"><h2 class="t-h2" id="cr-w1">Trends that persisted</h2><span class="section-meta">${plural(w.story_count, 'story', 'stories')} updated this week</span></div>
+        ${w.persisted.length ? html`<ul class="cr-days">${w.persisted.map(p => html`<li><span class="cr-days-t">${p.topic}</span>
+          <span class="cr-days-dots" role="img" aria-label="Seen on ${p.days} of 7 days">${Array.from({ length: 7 }, (_, i) => html`<i class="${i < p.days ? 'on' : ''}"></i>`)}</span>
+          <span class="cr-days-n">${p.days} days · ${plural(p.stories, 'story', 'stories')}</span></li>`)}</ul>`
+        : html`<p class="cr-note">No topic appeared on two or more days this week.</p>`}
       </section>
-      <section class="card">
-        <h3>Claims that changed</h3>
-        ${w.changed.length ? w.changed.map(c => html`<div class="list-row">
-          <a href="#/story/${c.story_id}" class="story-title" style="color:var(--text)">${c.title}</a>
-          <div class="small faint">First: <a href="${c.original.url}" target="_blank" rel="noopener">${c.original.domain}</a> · ${fmtDate(c.original.fetched_at)}</div>
-          ${c.follow_ups.map(f => html`<div class="evidence ${f.evidence_kind || ''} small"><a href="${f.url}" target="_blank" rel="noopener">${f.title}</a> <span class="faint">${f.domain} · ${fmtDate(f.fetched_at)}</span></div>`)}
-          ${c.new_claims.length ? html`<ul class="small muted">${c.new_claims.map(t => html`<li>${t}</li>`)}</ul>` : ''}
-        </div>`) : html`<p class="muted small">No follow-up reporting changed a story this week.</p>`}
+      <section class="tile tile--static cr-card" aria-labelledby="cr-w2">
+        <div class="section-head"><h2 class="t-h2" id="cr-w2">Claims that changed</h2><span class="section-meta">${w.changed.length}</span></div>
+        ${w.changed.length ? html`<ul class="cr-changed">${w.changed.map(c => html`<li data-dossier-src>
+          <a class="t-title" href="#/story/${c.story_id}">${c.title}</a>
+          <span class="cr-sub">First: <a href="${c.original.url}" target="_blank" rel="noopener">${c.original.domain}</a> · ${dayLabel((c.original.fetched_at || '').slice(0, 10), { weekday: false })}</span>
+          ${c.follow_ups.map(f => html`<span class="cr-fu">${icon('arrow-right')}<a href="${f.url}" target="_blank" rel="noopener">${f.title}</a><span class="cr-mono">${f.domain} · ${dayLabel((f.fetched_at || '').slice(0, 10), { weekday: false })}</span></span>`)}
+          ${c.new_claims.length ? html`<ul class="cr-claims">${c.new_claims.map(t => html`<li>${t}</li>`)}</ul>` : ''}
+        </li>`)}</ul>` : html`<p class="cr-note">No follow-up reporting changed a story this week.</p>`}
       </section>
-      <section class="card">
-        <h3>Project ideas</h3>
-        ${w.ideas.length ? w.ideas.map(i => html`<div class="list-row"><a href="#" data-open-project="${i.id}">${i.title}</a><div class="small muted">${i.question}</div></div>`) : html`<p class="muted small">No ideas waiting. Generate one from a story.</p>`}
+      <section class="tile tile--static cr-card" aria-labelledby="cr-w3">
+        <div class="section-head"><h2 class="t-h2" id="cr-w3">Project ideas</h2><span class="section-meta">${w.ideas.length}</span></div>
+        ${w.ideas.length ? html`<ul class="cr-ideas">${w.ideas.map(i => html`<li><button class="cr-linkbtn" data-open-project="${i.id}">${i.title}</button><span class="cr-sub">${i.question}</span></li>`)}</ul>` : html`<p class="cr-note">No ideas waiting. Generate one from a story.</p>`}
       </section>
     </div>
-    <section class="card ledger">
-      <h3>This week's shortlist</h3>
-      ${short.length ? short.map(s => html`<div class="list-row"><div class="row" style="margin-bottom:6px"><span class="chip ${({ trend: 'violet', update: 'blue', project: 'amber' })[s.kind]}">${s.kind}</span></div>
-        <div>${s.label}</div>
-        <div class="row" style="margin-top:8px"><button class="sm primary" data-pursue="${short.indexOf(s)}">Pursue</button><button class="sm ghost" data-skip="${key(s)}">Skip</button></div></div>`)
-      : html`<p class="muted small">${w.shortlist.length ? 'All skipped for now.' : 'Nothing shortlisted this week.'}</p>`}
-      ${state.skipped.size ? html`<button class="sm ghost" data-act="unskip" style="margin-top:10px">Show ${state.skipped.size} skipped</button>` : ''}
+    <section class="tile tile--static cr-card cr-short" aria-labelledby="cr-w4">
+      <h2 class="section-label" id="cr-w4">This week’s shortlist · ${short.length}</h2>
+      ${short.length ? html`<ul class="cr-shortlist">${short.map(s => html`<li><span class="tag tag--neutral">${s.kind}</span><p>${s.label}</p>
+        <div class="cluster"><button class="btn btn--sm" data-pursue="${short.indexOf(s)}">Pursue</button><button class="btn btn--ghost btn--sm" data-skip="${key(s)}">Skip</button></div></li>`)}</ul>`
+      : html`<p class="cr-note">${w.shortlist.length ? 'All skipped for now.' : 'Nothing shortlisted this week.'}</p>`}
+      ${state.skipped.size ? html`<button class="btn btn--ghost btn--sm" data-act="unskip">Show ${state.skipped.size} skipped</button>` : ''}
     </section>
   </div>`);
-  on(pane, 'click', '[data-skip]', (e, b) => { state.skipped.add(b.dataset.skip); again(); });
-  on(pane, 'click', '[data-act="unskip"]', () => { state.skipped.clear(); again(); });
+  on(pane, 'click', '[data-skip]', (e, b) => { state.skipped.add(b.dataset.skip); weekly(pane, again, { weekly: w }); });
+  on(pane, 'click', '[data-act="unskip"]', () => { state.skipped.clear(); weekly(pane, again, { weekly: w }); });
   on(pane, 'click', '[data-open-project]', (e, a) => { e.preventDefault(); state.project = Number(a.dataset.openProject); state.tab = 'projects'; again(); });
   on(pane, 'click', '[data-pursue]', async (e, b) => {
     const s = short[b.dataset.pursue];
@@ -214,23 +323,24 @@ async function weekly(pane, again) {
 async function experiences(pane, again) {
   const list = await api.get('/experiences');
   pane.innerHTML = String(html`
-  <div class="split reveal">
-    <section class="card">
-      <h3>Your experiences</h3>
-      ${list.length ? list.map(x => html`<div class="list-row" data-exp="${x.id}">
-        <textarea rows="2" data-text>${x.text}</textarea>
-        <div class="row between" style="margin-top:6px">
-          <label class="check"><input type="checkbox" data-public ${x.public_ok ? 'checked' : ''}> Public OK — may appear as a first-person claim</label>
-          <span class="row"><button class="sm" data-save>Save</button><button class="sm ghost" data-del>Delete</button></span>
-        </div></div>`) : html`<div class="empty">No experiences yet. Without them, drafts stay in observer voice.</div>`}
+  <div class="cr-cols">
+    <section class="tile tile--static cr-card" aria-labelledby="cr-x1">
+      <div class="section-head"><h2 class="t-h2" id="cr-x1">Your experiences</h2><span class="section-meta">${list.filter(x => x.public_ok).length} of ${list.length} public OK</span></div>
+      ${list.length ? html`<ul class="cr-exps">${list.map(x => html`<li data-exp="${x.id}">
+        <textarea class="textarea" rows="2" data-text aria-label="Experience">${x.text}</textarea>
+        <div class="cr-exp-foot">
+          <label class="pp-check"><input type="checkbox" data-public ${x.public_ok ? 'checked' : ''}> Public OK: may appear as a first-person claim</label>
+          <span class="cluster"><button class="btn btn--sm" data-save>Save</button><button class="btn btn--ghost btn--sm" data-del>Delete</button></span>
+        </div></li>`)}</ul>`
+      : html`<div class="empty"><h3>No experiences yet.</h3><p>Without them, drafts stay in observer voice: nothing is written as “I built” or “I led”.</p></div>`}
     </section>
-    <section class="card accent">
-      <h3>Add an experience</h3>
-      <p class="muted small">Byline never invents experiences. Only entries marked <strong>public OK</strong> may appear as first-person claims (“I built…”, “I led…”) in drafts and outreach. Everything else is used privately for context, or not at all.</p>
-      <form id="xf" class="stack">
-        <textarea name="text" rows="4" required placeholder="e.g. Built a Tableau dashboard tracking dealership lead response times for a class project (Fall 2026)."></textarea>
-        <label class="check"><input type="checkbox" name="public_ok"> Public OK</label>
-        <div class="row" style="justify-content:flex-end"><button class="primary" type="submit">Add</button></div>
+    <section class="tile tile--static cr-card" aria-labelledby="cr-x2">
+      <h2 class="section-label" id="cr-x2">Add an experience</h2>
+      <p class="cr-note">Byline never invents experiences. Only entries marked <b>public OK</b> may appear as first-person claims (“I built…”, “I led…”) in drafts and outreach. Everything else is used privately for context, or not at all.</p>
+      <form id="xf" class="stack-sm cr-xform">
+        <textarea class="textarea" name="text" rows="4" required aria-label="New experience" placeholder="e.g. Built a Tableau dashboard tracking dealership lead response times for a class project (Fall 2026)."></textarea>
+        <label class="pp-check"><input type="checkbox" name="public_ok"> Public OK</label>
+        <div class="cr-end"><button class="btn btn--primary" type="submit">Add</button></div>
       </form>
     </section>
   </div>`);
@@ -245,3 +355,6 @@ async function experiences(pane, again) {
   on(pane, 'click', '[data-save]', (e, b) => act(b, async () => { const row = b.closest('[data-exp]'); await api.patch(`/experiences/${row.dataset.exp}`, { text: row.querySelector('[data-text]').value }); toast('Saved', 'ok'); }));
   on(pane, 'click', '[data-del]', (e, b) => { const row = b.closest('[data-exp]'); const id = row.dataset.exp; strikeOut(row, { message: 'Experience deleted.', commit: () => api.del(`/experiences/${id}`) }); });
 }
+
+const PANES = { radar, collections, projects, weekly, experiences };
+void listJoin;

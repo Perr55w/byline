@@ -76,7 +76,7 @@ export function checkDraft({ draft, story, articles = [], claims = [], notes = [
     const credible = new Set(external.filter(a => CREDIBLE.has(a.evidence_kind)).map(a => a.domain));
     if (credible.size < rules.min_independent_sources)
       flags.push({ section_id: null, sentence: '', type: 'thin_evidence', blocking: true,
-        message: `${credible.size} credible independent source${credible.size === 1 ? '' : 's'} (announcement, research, or reporting); your rule requires ${rules.min_independent_sources}. Commentary, community, and applied sources don't count.`,
+        message: `${credible.size} outlet${credible.size === 1 ? '' : 's'} with first-party, research or reporting posts; your rule requires ${rules.min_independent_sources}. Commentary, community and applied posts don't count.`,
         evidence: external.slice(0, 3).map(a => refFor(a)), suggestion: 'Submit an independent report or the original announcement via Feed → Add story, or change the rule in Settings.' });
   }
 

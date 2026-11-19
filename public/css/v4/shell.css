@@ -197,6 +197,7 @@ html.scrolled .crumb { opacity: 0; pointer-events: none; }
   font: 450 13px/1 var(--font-sans); transition: color var(--dur-micro) var(--ease-fade), box-shadow var(--dur-micro) var(--ease-fade);
 }
 .cmdk:hover { color: var(--text-1); box-shadow: inset 0 0 0 1px var(--line-3), var(--shadow-1); }
+.cmdk:focus-visible { color: var(--text-1); box-shadow: var(--focus); }
 .cmdk .icon { width: 16px; height: 16px; }
 .cmdk .keycap { height: 22px; border-radius: var(--r-chip); padding: 0 8px; }
 @media (max-width: 1180px) { .cmdk-label { display: none; } .cmdk { padding-left: 9px; } }

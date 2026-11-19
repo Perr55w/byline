@@ -15,8 +15,10 @@
 //   resize()                      re-measure (also automatic, debounced)
 //   stats()                       { renderer, draws, hz, N, mode, frozen, backing, ... } for tests
 
+import { createField } from './bg2d.js';
 const Q = new URLSearchParams(location.search);
 const IDLE_MS = Number(Q.get('bgidle')) || 20000;
+const FREEZE_MS = 1200; // ease-out of the drift before the freeze
 const FORCE = Q.get('bg'); // 'gl' (skip the perf-caveat check), '2d', 'off'
 const root = document.documentElement;
 let canvas = document.getElementById('bg');
@@ -31,7 +33,7 @@ const S = {
   W: 0, H: 0, bw: 0, bh: 0, scale: 1, row: 18, col: 8,
   t: 40, timeScale: 1, wake: null, freezeFrom: 0,
   draws: 0, frames: 0, hz: 60, intervals: [], lastNow: 0, sinceDraw: 0, raf: 0, holdUntil: 0,
-  lastInput: performance.now(), frozen: false, freezing: false,
+  lastInput: performance.now(), frozen: false, freezing: false, drawMs: 0,
   col0: null, colFrom: null, colTo: null, colT0: 0,
   ptr: { x: -9999, y: -9999, tx: -9999, ty: -9999, s: 0, ts: 0, seen: false, lastMove: 0 },
   lightPos: { x: 0, y: 0, k: 1, tk: 1, o: 0 },
@@ -169,9 +171,10 @@ function drawGL() {
   gl.drawArrays(gl.TRIANGLES, 0, 3);
 }
 
-// ------------------------------------------------------------------ Canvas2D fallback (B's bucketed method)
-let ctx = null, D = null;
-const NB = 24, bk = Array.from({ length: NB * 2 }, () => []);
+// ------------------------------------------------------------------ Canvas2D fallback (B's bucketed method, in bg2d.js)
+// Preferred: an OffscreenCanvas in a module worker, so the ambient field costs the main thread only a postMessage per
+// draw (E5; and no field raster competes with tab switches, E1/E2). Otherwise the same field runs on the main thread.
+let ctx = null, F = null, offscreen = false;
 function fallback2D() {
   // a canvas that had a webgl context can't give a 2d one: swap the element
   if (canvas.dataset.gl) {
@@ -180,77 +183,40 @@ function fallback2D() {
   }
   ctx = canvas.getContext('2d', { alpha: false });
   S.renderer = ctx ? 'canvas2d' : 'none';
+  if (ctx) F = createField(ctx);
   layout2D();
 }
+/** Start the Canvas2D field: in a worker when the browser can transfer the canvas, else on this thread. */
+function start2D() {
+  S.renderer = 'canvas2d';
+  if (Q.get('bg2d') !== 'main' && typeof canvas.transferControlToOffscreen === 'function' && typeof Worker === 'function') {
+    try {
+      measure(); // size the element before the transfer (its width/height attributes are fixed afterwards)
+      const off = canvas.transferControlToOffscreen();
+      const w = new Worker(new URL('./bg2d-worker.js', import.meta.url), { type: 'module' });
+      w.postMessage({ m: 'init', canvas: off }, [off]);
+      const call = (m) => (...a) => w.postMessage({ m, a });
+      F = { layout: call('layout'), heat: call('heat'), rail: call('rail'), draw: call('draw') };
+      offscreen = true;
+      return;
+    } catch (e) { F = null; offscreen = false; }
+  }
+  ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
+  S.renderer = ctx ? 'canvas2d' : 'none';
+  if (ctx) F = createField(ctx);
+}
 function layout2D() {
-  if (!ctx) return;
-  const cols = Math.ceil(S.W / S.col) + 1, rows = Math.ceil(S.H / S.row) + 1, n = cols * rows;
-  D = { cols, rows, n, x: new Float32Array(n), y: new Float32Array(n), heat: new Float32Array(n), rail: new Uint8Array(n), prevW: new Float32Array(cols), curW: new Float32Array(cols) };
-  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) { const i = r * cols + c; D.x[i] = c * S.col + (r % 2 ? S.col / 2 : 0) + S.col / 2; D.y[i] = r * S.row + S.row / 2; }
+  if (!F) return;
+  F.layout({ W: S.W, H: S.H, col: S.col, row: S.row, bw: S.bw, bh: S.bh });
   heat2D(); rail2D();
 }
-function heat2D() {
-  if (!D) return;
-  const [hx, hy, hw, hh] = S.heatBox;
-  for (let i = 0; i < D.n; i++) {
-    const u = (D.x[i] - hx) / hw, v = (D.y[i] - hy) / hh;
-    if (u < 0 || u > 1 || v < 0 || v > 1) { D.heat[i] = 0; continue; }
-    const gx = Math.min(63, Math.round(u * 63)), gy = Math.min(39, Math.round(v * 39));
-    D.heat[i] = S.heat[gy * 64 + gx];
-  }
-}
-function rail2D() {
-  if (!D) return;
-  const [x, y, w, h] = S.rail;
-  for (let i = 0; i < D.n; i++) D.rail[i] = w > 0 && D.x[i] > x - 2 && D.x[i] < x + w + 2 && D.y[i] > y - 2 && D.y[i] < y + h + 2 ? 1 : 0;
-}
+function heat2D() { if (F) F.heat(Float32Array.from(S.heat), S.heatBox.slice()); }
+function rail2D() { if (F) F.rail(S.rail.slice()); }
 function draw2D() {
-  if (!ctx || !D) return;
-  const c = S.col0, I = intensity(), t = S.t;
-  const toByte = (v) => Math.round(v * 255);
-  const ink = c.ink.map(toByte).join(','), hotc = c.hot.map(toByte).join(',');
-  ctx.setTransform(S.scale, 0, 0, S.scale, 0, 0);
-  ctx.fillStyle = `rgb(${c.bg.map(toByte).join(',')})`;
-  ctx.fillRect(0, 0, S.W, S.H);
-  for (const b of bk) b.length = 0;
-  const k1 = 0.0069813, k2 = 0.0120830, k3 = 0.0044880, p1 = 0.1256637 * t, p2 = 0.1329136 * t, p3 = 0.0314159 * t;
-  const rips = S.rip.slice(0, 3), px = S.ptr.x, py = S.ptr.y, ps = S.ptr.s * (.5 + .5 * I);
-  const pool = S.pool.rect, poolS = S.pool.s, pu = S.pulse;
-  const { cols, rows } = D;
-  const amax = c.amax, amin = c.amin, hratio = c.hota / Math.max(amax, .01);
-  for (let r = 0; r < rows; r++) {
-    for (let col = 0; col < cols; col++) {
-      const i = r * cols + col;
-      if (D.rail[i]) { D.curW[col] = 0; continue; }
-      const x = D.x[i], y = D.y[i];
-      let w = .55 * Math.sin(k1 * (x * .9397 + y * .3420) - p1) + .30 * Math.sin(k2 * (x * .8290 - y * .5592) - p2) + .15 * Math.sin(k3 * (-x * .0872 + y * .9962) + p3);
-      for (let k = 0; k < rips.length; k++) { const R = rips[k], dx = x - R.x, dy = y - R.y, d = Math.sqrt(dx * dx + dy * dy); w += .5 * R.h * Math.cos(0.0349066 * d - 0.4886922 * t) * Math.exp(-d * d / (2 * R.s * R.s)); }
-      w = Math.max(-1, Math.min(1, w / 1.2));
-      D.curW[col] = w;
-      const ddx = x - px, ddy = y - py, L = ps * Math.exp(-(ddx * ddx + ddy * ddy) / 96800);
-      const sheen = L * Math.max(0, Math.min(1, (w - D.prevW[col]) * 5));
-      let P = 0;
-      if (poolS > .001 && pool) { const qx = Math.max(pool[0] - x, 0, x - pool[0] - pool[2]), qy = Math.max(pool[1] - y, 0, y - pool[1] - pool[3]), d2 = qx * qx + qy * qy; P = poolS * Math.exp(-d2 / 3200); }
-      let pr = 0;
-      if (pu && pu.a > .001) { const d = Math.hypot(x - pu.x, y - pu.y) - pu.p * 420; pr = pu.a * Math.exp(-d * d / 968); }
-      const he = D.heat[i], u = .5 + .5 * w;
-      let a = amin * (.6 + .4 * I) + (amax - amin) * I * u * u + he * .10 + L * .16 + sheen * .22 + P * .12 + pr * .2;
-      const hot = Math.min(1, he * .85 + L * .5 + P * .6 + pr * .5);
-      a *= 1 + (hratio - 1) * hot * hot;
-      const g = hot > .45 ? 1 : 0;
-      const bi = Math.max(0, Math.min(NB - 1, Math.round(a * NB / .6)));
-      const len = 1 + .45 * he + .7 * L;
-      bk[g * NB + bi].push(x, y + 2.4 * w * (.4 + .6 * I) * (1 + .4 * he), len);
-    }
-    D.prevW.set(D.curW);
-  }
-  for (let g = 0; g < 2; g++) for (let b = 0; b < NB; b++) {
-    const arr = bk[g * NB + b]; if (!arr.length) continue;
-    ctx.fillStyle = `rgba(${g ? hotc : ink},${(b * .6 / NB).toFixed(3)})`;
-    ctx.beginPath();
-    for (let j = 0; j < arr.length; j += 3) { const s = arr[j + 2]; ctx.rect(arr[j] - 1.6 * s, arr[j + 1] - .5, 3.2 * s, 1); }
-    ctx.fill();
-  }
+  if (!F) return;
+  const pu = S.pulse, P = S.ptr;
+  F.draw({ col: S.col0, I: intensity(), t: S.t, scale: S.scale, ptr: { x: P.x, y: P.y, s: P.s }, pool: S.pool.rect ? S.pool.rect.slice() : null, poolS: S.pool.s,
+    pulse: pu ? { x: pu.x, y: pu.y, p: pu.p, a: pu.a } : null, rip: S.rip.slice(0, 3).map(r => ({ x: r.x, y: r.y, h: r.h, s: r.s })) });
 }
 
 // ------------------------------------------------------------------ sizing
@@ -265,10 +231,12 @@ function measure() {
   if (S.renderer === 'canvas2d' && phone) s = Math.min(s, 1);
   S.scale = s;
   S.bw = Math.max(1, Math.floor(S.W * s)); S.bh = Math.max(1, Math.floor(S.H * s));
-  if (canvas.width !== S.bw) canvas.width = S.bw;
-  if (canvas.height !== S.bh) canvas.height = S.bh;
+  if (!offscreen) {
+    if (canvas.width !== S.bw) canvas.width = S.bw;
+    if (canvas.height !== S.bh) canvas.height = S.bh;
+  }
   placeHeat();
-  if (ctx) layout2D();
+  if (F) layout2D();
 }
 let rzT = 0;
 function onResize() { clearTimeout(rzT); rzT = setTimeout(() => { measure(); requestDraw(); }, 150); }
@@ -305,7 +273,7 @@ function setHeat(list = []) {
   const next = placeHeat();
   if (reduced() || !S.started) { S.heat = next; S.heatFrom = null; uploadHeat(); heat2D(); requestDraw(); return; }
   S.heatFrom = S.heat.slice(); S.heatTo = next; S.heatT0 = performance.now();
-  wake(); requestDraw();
+  kick();
 }
 
 // ------------------------------------------------------------------ the loop
@@ -353,12 +321,14 @@ function tick(now) {
   moveLight(dt);
 
   // idle freeze: ease the time scale to 0, draw one settled frame, then no rAF at all
-  const idle = now - S.lastInput > IDLE_MS;
-  if (idle && !S.freezing && !tweening) { S.freezing = true; S.freezeFrom = now; S.wake = null; }
+  // The 1200ms ease-out sits inside the idle window, so the field is fully at rest IDLE_MS after the last input.
+  const idle = now - S.lastInput > Math.max(0, IDLE_MS - FREEZE_MS);
+  if (idle && !S.freezing && !tweening) { S.freezing = true; S.freezeFrom = now; S.freezeScale = S.timeScale; S.wake = null; }
   if (S.freezing) {
-    const p = Math.min(1, (now - S.freezeFrom) / 1200);
-    S.timeScale = 1 - easeAmbient(p);
-    if (p >= 1) { S.timeScale = 0; draw(); S.frozen = true; S.freezing = false; if (light) light.style.opacity = '0'; return; }
+    const p = Math.min(1, (now - S.freezeFrom) / FREEZE_MS);
+    S.timeScale = S.freezeScale * (1 - easeAmbient(p));
+    // a pulse / heat tween that is still playing holds the loop open; the drift stays at rest meanwhile
+    if (p >= 1 && !tweening) { S.timeScale = 0; draw(); S.frozen = true; S.freezing = false; if (light) light.style.opacity = '0'; return; }
   } else if (S.wake) {
     const p = Math.min(1, (now - S.wake) / 600);
     S.timeScale = easeAmbient(p);
@@ -378,7 +348,9 @@ function tick(now) {
 }
 function draw() {
   if (!S.col0) S.col0 = readColors();
-  if (gl) drawGL(); else if (ctx) draw2D();
+  const t0 = performance.now();
+  if (gl) drawGL(); else if (F) draw2D();
+  S.drawMs += performance.now() - t0;
   S.draws++;
 }
 function loop() { if (!S.raf && !document.hidden && S.started) S.raf = requestAnimationFrame(tick); }
@@ -395,6 +367,15 @@ function requestDraw() {
     requestAnimationFrame(() => { drawQueued = false; draw(); });
     return;
   }
+  loop();
+}
+/**
+ * Programmatic changes (heat, pulse, rail, theme) are not input: they must not restart the idle clock (E4).
+ * When frozen, the loop runs only until the tween settles, with the drift held at rest, then freezes again.
+ */
+function kick() {
+  if (reduced() || (S.renderer === 'canvas2d' && isPhone())) { requestDraw(); return; }
+  if (S.frozen) { S.frozen = false; S.freezing = true; S.freezeFrom = performance.now() - FREEZE_MS; S.freezeScale = 0; S.timeScale = 0; S.lastNow = 0; S.sinceDraw = 0; }
   loop();
 }
 function wake() {
@@ -439,17 +420,17 @@ function applyMode() {
   requestDraw();
 }
 function overlay(on) { S.overlays = Math.max(0, S.overlays + (on ? 1 : -1)); applyMode(); }
-function pulse(x, y) { if (reduced()) return; S.pulse = { x, y, t0: performance.now(), p: 0, a: 0 }; wake(); }
+function pulse(x, y) { if (reduced()) return; S.pulse = { x, y, t0: performance.now(), p: 0, a: 0 }; kick(); }
 function setRail(rect, { animate = 0 } = {}) {
   const next = rect ? [rect.x, rect.y, rect.w, rect.h] : [0, 0, 0, 0];
   if (!animate || reduced() || !S.started) { S.rail = next; S.railTo = null; S.heat = placeHeat(); uploadHeat(); heat2D(); rail2D(); requestDraw(); return; }
   S.railFrom = S.rail.slice(); S.railTo = next; S.railT0 = performance.now(); S.railDur = animate;
-  wake();
+  kick();
 }
 function hold(ms = 450) { S.holdUntil = Math.max(S.holdUntil, performance.now() + ms); }
 function stats() {
-  return { renderer: S.renderer, draws: S.draws, frames: S.frames, hz: S.hz, N: S.mode === 'full' ? Math.max(1, Math.round(S.hz / 30)) : Math.max(1, Math.round(S.hz / 20)),
-    mode: S.mode, frozen: S.frozen, idleMs: IDLE_MS, running: !!S.raf, backing: { w: canvas.width, h: canvas.height }, scale: S.scale, timeScale: S.timeScale, t: S.t,
+  return { renderer: S.renderer, draws: S.draws, drawMsAvg: S.draws ? +(S.drawMs / S.draws).toFixed(2) : 0, frames: S.frames, hz: S.hz, N: S.mode === 'full' ? Math.max(1, Math.round(S.hz / 30)) : Math.max(1, Math.round(S.hz / 20)),
+    mode: S.mode, frozen: S.frozen, idleMs: IDLE_MS, running: !!S.raf, backing: { w: S.bw || canvas.width, h: S.bh || canvas.height }, offscreen, scale: S.scale, timeScale: S.timeScale, t: S.t,
     heatTopics: heatInput.map(h => h.topic), rail: S.rail.slice(), reduced: reduced(), glRejected: S.glRejected || null };
 }
 
@@ -467,7 +448,7 @@ function start() {
   if (FORCE !== '2d' && initGL()) { S.renderer = 'webgl2'; canvas.dataset.gl = '1'; }
   else {
     if (S.glRejected) { const c2 = canvas.cloneNode(false); canvas.replaceWith(c2); canvas = c2; }
-    ctx = canvas.getContext('2d', { alpha: false }); S.renderer = ctx ? 'canvas2d' : 'none';
+    start2D();
   }
   S.col0 = readColors();
   measure();
@@ -475,6 +456,8 @@ function start() {
   const input = () => wake();
   addEventListener('pointermove', (e) => {
     if (e.pointerType === 'touch') { input(); return; }
+    // Chrome sends a zero-movement mousemove when layout changes under a resting cursor: not input, no light
+    if (!e.movementX && !e.movementY && (!S.ptr.seen || (e.clientX === S.ptr.tx && e.clientY === S.ptr.ty))) return;
     const P = S.ptr; P.tx = e.clientX; P.ty = e.clientY; P.lastMove = performance.now();
     if (!P.seen) { P.seen = true; P.x = P.tx; P.y = P.ty; }
     input();

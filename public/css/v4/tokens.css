@@ -83,6 +83,10 @@
   --ok-soft: rgba(14,159,110,.12);
   --warn-soft: rgba(183,121,31,.13);
   --err-soft: rgba(217,54,54,.11);
+  /* status text on soft fills / tags: AA (≥4.5:1) on --bg, --surface and --inset (the hues above are for marks, dots and bars) */
+  --ok-text: #066847;
+  --warn-text: #7A500F;
+  --err-text: #B42323;
 
   /* ---- quality ramp (B §2): stops by delta = score − threshold ---- */
   --q-0: #8A8F98;  /* ≤ −30 */
@@ -171,6 +175,9 @@
   --ok-soft: rgba(60,203,143,.14);
   --warn-soft: rgba(227,165,66,.15);
   --err-soft: rgba(242,107,107,.14);
+  --ok-text: #3CCB8F;
+  --warn-text: #E3A542;
+  --err-text: #F58A8A;
 
   --q-0: #65696F; --q-1: #6A7183; --q-2: #717F98; --q-3: #4580F7; --q-4: #5A93FF; --q-5: #86B0FF;
   --q-on5: #0A0F1E;

@@ -3,6 +3,7 @@
 // Reduced motion: final state immediately, no Animation objects created.
 //
 //   enterHeading(h1, { variant: 'load' | 'tab', lede, eyebrow })  "Settle" — line-split heading entrance
+//   prepareHeading(h1)                                             do enterHeading's reads early (router, hidden page)
 //   enterItems(container | elements, { stagger, cap, delay, y })  block arrivals with a capped stagger
 //   exitView(el)                                                   200ms fade + drift out
 //   flip(el, fromRect, opts) / rectDelta(from, to)                 FLIP helpers (transform only)
@@ -131,6 +132,25 @@ export function splitLines(el) {
 
 // ------------------------------------------------------------------ Settle (C §1)
 const seenHeadings = new Map(); // route key → heading text, for the "same text again" plain fade
+const prepared = new WeakMap();
+function measureHeading(el) {
+  const style = getComputedStyle(el);
+  const fs = parseFloat(style.fontSize) || 48;
+  const ls = style.letterSpacing === 'normal' ? 0 : parseFloat(style.letterSpacing) || 0;
+  const wMatch = /"?wght"?\s+([\d.]+)/.exec(style.fontVariationSettings || '');
+  const W = wMatch ? Number(wMatch[1]) : Number(style.fontWeight) || 400;
+  const oMatch = /"?opsz"?\s+([\d.]+)/.exec(style.fontVariationSettings || '');
+  const O = oMatch ? Number(oMatch[1]) : 72;
+  return { fs, ls, W, O, lines: splitLines(el) };
+}
+/**
+ * Do enterHeading's reads (computed style, line split) ahead of time, while the layout is already clean
+ * (the router calls this on the still-hidden page one frame after render), so the swap itself reads nothing.
+ */
+export function prepareHeading(el) {
+  if (!el || reduced() || prepared.has(el)) return;
+  prepared.set(el, measureHeading(el));
+}
 
 /**
  * Heading entrance. variant 'load' (≈1000ms, opsz/wght/tracking morph + blur on the h1 lines) or 'tab'
@@ -153,14 +173,8 @@ export function enterHeading(el, { variant = 'load', lede = null, eyebrow = null
   }
   if (key) seenHeadings.set(key, text);
 
-  const style = getComputedStyle(el);
-  const fs = parseFloat(style.fontSize) || 48;
-  const ls = style.letterSpacing === 'normal' ? 0 : parseFloat(style.letterSpacing) || 0;
-  const wMatch = /"?wght"?\s+([\d.]+)/.exec(style.fontVariationSettings || '');
-  const W = wMatch ? Number(wMatch[1]) : Number(style.fontWeight) || 400;
-  const oMatch = /"?opsz"?\s+([\d.]+)/.exec(style.fontVariationSettings || '');
-  const O = oMatch ? Number(oMatch[1]) : 72;
-  const lines = splitLines(el);
+  const { fs, ls, W, O, lines } = prepared.get(el) || measureHeading(el);
+  prepared.delete(el);
   const load = variant === 'load';
   const stagger = load ? DUR.staggerLine : DUR.staggerLineTab;
   const dur = load ? DUR.heading : DUR.headingTab;

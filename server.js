@@ -50,7 +50,7 @@ function sendFile(res, file, download) {
   if (['.html', '.js', '.css', '.webmanifest'].includes(ext)) headers['Cache-Control'] = 'no-cache';
   else if (ext === '.woff2' || file.includes(`${path.sep}icons${path.sep}`)) headers['Cache-Control'] = 'public, max-age=604800';
   res.writeHead(200, headers);
-  fs.createReadStream(file).pipe(res);
+  fs.createReadStream(file).on('error', () => res.destroy()).pipe(res);
 }
 
 // ----- access control -----
@@ -192,7 +192,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (url.pathname.startsWith('/media/')) {
       const file = path.join(MEDIA_DIR, path.basename(decodeURIComponent(url.pathname.slice(7))));
-      if (!fs.existsSync(file)) { res.writeHead(404); return res.end('Not found'); }
+      if (!fs.existsSync(file) || !fs.statSync(file).isFile()) { res.writeHead(404); return res.end('Not found'); } // '/media/' alone is the directory: never stream it
       return sendFile(res, file, url.searchParams.has('download'));
     }
     let file = path.join(PUBLIC, path.normalize(decodeURIComponent(url.pathname)).replace(/^(\.\.[\/\\])+/, ''));

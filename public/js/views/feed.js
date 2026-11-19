@@ -1,218 +1,348 @@
+// Feed (SPEC §5, F §2 Feed headline template, F §4 row anatomy). Every figure comes from /api/stories and
+// /api/settings; the threshold is settings.publish_threshold. Story detail lives in the dossier overlay
+// (views/story-dossier.js); each row is a dossier flight source (data-shared title / chip→ring / topic).
+//
+// Kept from v3: topic filter + Archived, Add story URL (POST /api/intake/url with evidence kind),
+// score change since last viewed, "N new since you looked", saved collections, engagement note,
+// keyboard rows (app.js j/k/Enter via [data-row]). New: min score, date range, sort, threshold divider,
+// hover actions Draft / Save / Dismiss (Restore in Archived).
+
 import { api } from '../api.js';
-import { html, on, act, toast, evChip, demoFlag, status, channelLabel, timeAgo, fmtDate, pct, modal, scoreNum, topicsLine, titleWithFlag } from '../ui.js';
+import { html, raw, esc, on, act, toast, icon, scoreChip, strikeOut, useStyle } from '../ui.js';
+import { enterItems, reduced } from '../motion.js';
+import * as dossier from '../dossier.js';
 
-const COLLECTIONS = ['AI product management', 'Business analysis', 'Data analytics', 'Career watchlist'];
+const DEFAULT_COLLECTION = 'AI product management';
+const DAYS = [['7', '7 days'], ['30', '30 days'], ['all', 'All time']];
+const SORTS = [['score', 'Score'], ['new', 'Newest']];
 
-export async function render(view, ctx) {
-  const el = document.createElement('div');
-  view.replaceChildren(el);
-  if (ctx.name === 'story') return renderStory(el, view, Number(ctx.params[0]));
-  return renderFeed(el, view);
+// ------------------------------------------------------------------ helpers
+const tz = () => window.__byline?.timezone || undefined;
+const dayLabel = (iso) => new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: tz() });
+function age(iso) {
+  if (!iso) return '';
+  const h = (Date.now() - new Date(iso)) / 36e5;
+  if (h < 1) return `${Math.max(1, Math.round(h * 60))}m`;
+  if (h < 24) return `${Math.round(h)}h`;
+  return dayLabel(iso);
+}
+const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+function marked(text, marks) {
+  const t = String(text ?? '');
+  if (!marks?.length) return raw(esc(t));
+  let out = '', at = 0;
+  for (const [a, b] of marks) { if (a < at || b > t.length || b <= a) continue; out += esc(t.slice(at, a)) + `<mark class="num-hl">${esc(t.slice(a, b))}</mark>`; at = b; }
+  return raw(out + esc(t.slice(at)));
+}
+function markers(s) {
+  const fp = Math.min(8, (s.first_party || 0) + (s.primary || 0)), ind = Math.min(8, s.independent || 0), com = Math.min(8, s.commentary || 0);
+  const more = (s.posts || 0) - fp - ind - com;
+  const run = (k, n) => (n ? raw(`<i class="mkr mkr--${k}" style="--n:${n}"></i>`) : '');
+  return html`<span class="fd-mks" aria-hidden="true">${run('fp', fp)}${raw('<i class="mk mk--ind"></i>'.repeat(ind))}${run('com', com)}${more > 0 ? html`<b>+${more}</b>` : ''}</span>`;
 }
 
-const meter = (b = {}) => html`<div class="meter">${[['interest', 'Interest'], ['novelty', 'Novelty'], ['evidence', 'Evidence'], ['impact', 'Impact']].map(([k, l]) =>
-  html`<div>${l}<b class="v">${pct(b[k])}</b><i><b style="width:${pct(b[k])}%"></b></i></div>`)}</div>`;
-
-const engagementNote = (e) => {
-  const entries = Object.entries(e || {});
-  if (!entries.length) return '';
-  return html`<span class="chip" title="Engagement is shown separately and does not count as evidence">engagement (not evidence): ${entries.map(([k, v]) => `${v.toLocaleString()} ${k.replace('_count', 's')}`).join(' · ')}</span>`;
-};
-
-async function renderFeed(el, view) {
+function params() {
   const q = new URLSearchParams(location.hash.split('?')[1] || '');
-  const [settings, stories] = await Promise.all([api.get('/settings'), api.get(`/stories?${q.toString()}`)]);
+  return { topic: q.get('topic') || '', status: q.get('status') === 'archived' ? 'archived' : '', days: DAYS.some(([k]) => k === q.get('days')) ? q.get('days') : '7', min: q.get('min') || '', sort: q.get('sort') === 'new' ? 'new' : 'score' };
+}
+function hashFor(st) {
+  const q = new URLSearchParams();
+  if (st.topic) q.set('topic', st.topic);
+  if (st.status) q.set('status', st.status);
+  if (st.days !== '7') q.set('days', st.days);
+  if (st.min) q.set('min', st.min);
+  if (st.sort !== 'score') q.set('sort', st.sort);
+  const s = q.toString();
+  return `#/feed${s ? `?${s}` : ''}`;
+}
+function storiesUrl(st) {
+  const q = new URLSearchParams();
+  if (st.days !== 'all') q.set('days', st.days);
+  if (st.topic) q.set('topic', st.topic);
+  if (st.status) q.set('status', st.status);
+  q.set('limit', st.days === 'all' || st.status ? '200' : '100');
+  return `/stories?${q}`;
+}
+
+// ------------------------------------------------------------------ headline + one-liner (F §2 Feed, verbatim templates)
+function headline(st, stories, T, status) {
+  const total = stories.length;
+  const cleared = stories.filter(s => s.score >= T);
+  const below = total - cleared.length;
+  const unopened = stories.filter(s => !s.last_viewed_at).length;
+  const withIndep = cleared.filter(s => (s.independent_outlets || 0) > 0).length;
+  const when = st.days === '7' ? 'this week' : st.days === '30' ? 'this month' : 'in your archive';
+  const window = st.days === 'all' ? 'in total' : `in the last ${st.days} days`;
+  if (st.status === 'archived') {
+    return {
+      h: total ? `${plural(total, 'archived story', 'archived stories')}.` : 'Nothing is archived.',
+      l: total ? html`Dismissed stories stay searchable; <b>${cleared.length}</b> of them still score at or above your bar of <b>${T}</b>. Restore one to put it back in the ranking.` : html`Stories you dismiss land here. They stay searchable and can be restored.`
+    };
+  }
+  if (!total) {
+    const paused = status?.counts?.sources_paused, n = status?.counts?.sources;
+    return {
+      h: st.topic ? `No ${st.topic} stories ${window}.` : `No stories ${st.days === 'all' ? 'yet' : `in the last ${st.days} days`}.`,
+      l: n && paused === n ? html`Collection is off: all <b>${n}</b> sources are paused. Add a story URL, or resume a source under Sources.` : html`Add a story URL to start${st.days !== 'all' ? ', or widen the date range' : ''}.`
+    };
+  }
+  const lede = html`<b>${total}</b> updated ${window}; <b>${cleared.length}</b> at or above <b>${T}</b>, <b>${below}</b> below. <b>${unopened}</b> you haven’t opened. ${cleared.length ? html`<b>${withIndep}</b> of the ${cleared.length} ${withIndep === 1 ? 'has' : 'have'} an independent report.` : ''}`;
+  if (st.topic) return { h: `${plural(total, `${st.topic} story`, `${st.topic} stories`)}; ${cleared.length} above ${T}.`, l: lede };
+  return { h: `${cleared.length} of ${plural(total, 'story', 'stories')} ${when} ${cleared.length === 1 ? 'is' : 'are'} worth a post.`, l: lede };
+}
+
+// ------------------------------------------------------------------ row (F §4)
+function row(s, T, archived) {
+  const topics = s.topics || [];
+  const main = s.main_topic || topics[0] || null;
+  const second = topics.find(t => t !== main) || null;
+  const below = s.score < T;
+  const changed = s.viewed_score != null && Math.round(s.viewed_score) !== Math.round(s.score);
+  const eng = Object.entries(s.breakdown?.engagement || {});
+  const counts = `${(s.first_party || 0) + (s.primary || 0)} first-hand, ${s.independent || 0} independent, ${s.commentary || 0} commentary`;
+  return html`<article class="fd-row${below ? ' is-below' : ''}" data-row data-dossier-src data-id="${s.id}" data-score="${s.score}">
+    <div class="fd-score">${raw(String(scoreChip(s.score, T)).replace('<span class="score-chip"', '<span class="score-chip" data-shared="ring"'))}${changed ? html`<span class="fd-was" title="Score when you last opened it">was ${Math.round(s.viewed_score)}</span>` : ''}</div>
+    <div class="fd-main">
+      <h3 class="fd-h"><a class="fd-title" href="#/story/${s.id}" data-shared="title">${s.title}</a>${s.is_demo ? html` <span class="tag tag--demo" title="Fictional sample data">Demo</span>` : ''}</h3>
+      ${s.finding ? html`<p class="fd-finding">${marked(s.finding, s.finding_marks)}</p>` : ''}
+      ${s.new_since_view || s.collections || eng.length ? html`<p class="fd-flags">
+        ${s.new_since_view ? html`<span class="tag tag--ok">${s.new_since_view} new since you looked</span>` : ''}
+        ${s.collections ? html`<span class="fd-saved">${icon('bookmark')}Saved: ${String(s.collections).split(',').join(', ')}</span>` : ''}
+        ${eng.length ? html`<span class="fd-eng" title="Engagement is shown separately and does not count as evidence">engagement (not evidence): ${eng.map(([k, v]) => `${Number(v).toLocaleString()} ${k.replace('_count', 's')}`).join(' · ')}</span>` : ''}
+      </p>` : ''}
+    </div>
+    <div class="fd-meta">
+      <div class="fd-topics">${main ? html`<span class="chip chip--main" data-shared="topic">${main}</span>` : html`<span class="fd-none">No topic matched</span>`}${second ? html`<span class="chip chip--topic">${second}</span>` : ''}</div>
+      <p class="fd-src" title="${counts}">${markers(s)}<span>${s.source_line}</span><span class="sr-only"> (${counts})</span><span class="fd-age-m" aria-hidden="true">· ${age(s.updated_at)}</span></p>
+    </div>
+    <div class="fd-end">
+      <time class="fd-age" datetime="${s.updated_at}" title="Updated ${new Date(s.updated_at).toLocaleString('en-GB', { timeZone: tz() })}">${age(s.updated_at)}</time>
+    </div>
+  </article>`;
+}
+
+/** One toolbar for the whole list (keeps per-row DOM small); it moves into the row under the pointer or focus. */
+function actsHtml(archived) {
+  return html`<div class="fd-acts" role="group" aria-label="Story actions" data-acts>
+    ${archived
+      ? html`<button type="button" class="btn btn--ghost btn--sm" data-fd="restore">Restore</button>`
+      : html`<button type="button" class="btn btn--ghost btn--sm btn--icon" data-fd="draft" aria-label="Draft a post" title="Draft a post">${icon('pen')}</button>
+        <button type="button" class="btn btn--ghost btn--sm btn--icon" data-fd="save" aria-label="Save to ${DEFAULT_COLLECTION}" title="Save to ${DEFAULT_COLLECTION}">${icon('bookmark')}</button>
+        <button type="button" class="btn btn--ghost btn--sm btn--icon" data-fd="dismiss" aria-label="Dismiss" title="Dismiss (moves it to Archived)">${icon('x')}</button>`}
+  </div>`;
+}
+function placeActs(el, rowEl, state) {
+  if (!rowEl) return;
+  let bar = el.querySelector('.fd-list [data-acts]');
+  if (!bar) bar = el.querySelector('template[data-acts-home]')?.content.firstElementChild?.cloneNode(true);
+  if (!bar || bar.parentElement === rowEl.querySelector('.fd-end')) return;
+  rowEl.querySelector('.fd-end').append(bar);
+  const s = state.stories.find(x => String(x.id) === rowEl.dataset.id);
+  bar.setAttribute('aria-label', `Actions for ${s?.short_title || s?.title || 'story'}`);
+  bar.querySelector('[data-fd="save"]')?.setAttribute('aria-pressed', String(!!s?.collections));
+}
+
+function listHtml(st, stories, T) {
+  let list = stories.filter(s => !st.min || s.score >= Number(st.min));
+  const hidden = stories.length - list.length;
+  if (st.sort === 'new') list = list.slice().sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at)));
+  if (!stories.length) return '';
+  if (!list.length) return html`<div class="empty"><h3>Nothing at or above ${st.min}.</h3><p>${plural(hidden, 'story', 'stories')} in this range score lower. Lower the minimum score to see them.</p></div>`;
+  const out = [];
+  let divided = false;
+  const belowCount = list.filter(s => s.score < T).length;
+  list.forEach((s, i) => {
+    if (st.sort === 'score' && !divided && s.score < T) {
+      divided = true;
+      out.push(html`<div class="divider-label fd-divider" role="separator">Below your bar · ${T} — ${plural(belowCount, 'story', 'stories')}</div>`);
+    }
+    out.push(row(s, T, st.status === 'archived'));
+    void i;
+  });
+  return html`<div class="tile tile--static tile--flush fd-list" data-fd-list>${out}</div><template data-acts-home>${actsHtml(st.status === 'archived')}</template>
+    ${hidden ? html`<p class="fd-foot">${plural(hidden, 'story', 'stories')} below ${st.min} hidden by the minimum score.</p>` : ''}`;
+}
+
+// ------------------------------------------------------------------ page
+export async function render(view, ctx = {}) {
+  await useStyle('/css/v4/feed.css');
+  const st = params();
+  const [settings, stories] = await Promise.all([api.get('/settings'), api.get(storiesUrl(st))]);
+  const status = stories.length ? null : await api.get('/status').catch(() => null);
+  const T = Number(settings.publish_threshold ?? 55);
+  const topics = (settings.priorities || []).filter(p => p.weight > 0).map(p => p.topic);
+  const el = document.createElement('div');
+  el.className = 'fd';
+  view.replaceChildren(el);
+  const all = st.topic ? await api.get(storiesUrl({ ...st, topic: '' })).catch(() => null) : null;
+  const state = { st, stories, T, settings, status, all };
+  paint(el, state);
+  wire(el, state, topics);
+  // story/:id deep link fallback (app.js normally opens the overlay over Feed itself)
+  if (ctx.name === 'story' && ctx.params?.[0]) dossier.open(ctx.params[0]);
+}
+
+function showing(st, stories) {
+  const n = stories.filter(s => !st.min || s.score >= Number(st.min)).length;
+  const range = st.days === 'all' ? 'all time' : `last ${st.days} days`;
+  return `${plural(n, st.status === 'archived' ? 'archived story' : 'story', st.status === 'archived' ? 'archived stories' : 'stories')}${st.topic ? ` in ${st.topic}` : ''} · ${range} · ${st.sort === 'new' ? 'newest first' : 'highest score first'}${st.min ? ` · ${st.min}+` : ''}`;
+}
+
+/** Topic chips: the priorities that appear in this date range, most stories first, with their counts. */
+function topicCounts(state, topics) {
+  const base = state.all || state.stories;
+  const n = new Map(topics.map(t => [t, 0]));
+  for (const s of base) for (const t of s.topics || []) if (n.has(t)) n.set(t, n.get(t) + 1);
+  return [...n].filter(([t, c]) => c > 0 || t === state.st.topic).sort((a, b) => b[1] - a[1]);
+}
+
+function paint(el, state) {
+  const { st, stories, T, settings } = state;
+  const topics = (settings.priorities || []).filter(p => p.weight > 0).map(p => p.topic);
+  const head = headline(st, stories, T, state.status);
+  const prioCount = (settings.priorities || []).filter(p => p.weight > 0).length;
   el.innerHTML = String(html`
-  <div class="page-head">
-    <div><div class="kicker">Ranked by your priorities</div><h1>Feed</h1>
-      <p class="live-dek"><b>${stories.length}</b> stories · <b>${stories.filter(x => x.score >= settings.publish_threshold).length}</b> above your threshold of ${settings.publish_threshold} · ranked by your <b>${settings.priorities.filter(x => x.weight > 0).length}</b> priorities</p></div>
-  </div>
-  <div style="margin-bottom:18px">
-    <a href="#" class="add-url-link" data-act="add-url">+ Add story URL</a>
-    <form class="row intake-form" id="intake">
-      <input name="url" placeholder="Submit a story URL (when no connector covers it)…" style="flex:1;min-width:260px">
-      <select name="evidence_kind" style="width:auto">
+  <header class="page-head">
+    <p class="eyebrow">Ranked by your ${prioCount} priorities · bar ${T}</p>
+    <h1>${head.h}</h1>
+    <p class="lede">${head.l}</p>
+    <div class="page-head-actions"><button type="button" class="btn btn--secondary" data-fd="add" aria-expanded="false" aria-controls="fd-intake">${icon('plus')}Add story URL</button></div>
+  </header>
+  <form class="fd-intake tile tile--static" id="fd-intake" data-intake>
+    <label class="fd-intake-l" for="fd-url">Add a story by URL <span class="ink-3">when no source covers it</span></label>
+    <div class="fd-intake-row">
+      <input class="input" id="fd-url" name="url" type="url" required placeholder="https://…" autocomplete="off">
+      <select class="select" name="evidence_kind" aria-label="Evidence kind">
         <option value="reporting">Independent reporting</option><option value="announcement">Announcement</option>
         <option value="research">Research</option><option value="commentary">Commentary</option>
       </select>
-      <button class="primary" type="submit">Add story</button>
-    </form>
+      <button class="btn btn--primary" type="submit">Add story</button>
+      <button class="btn btn--ghost" type="button" data-fd="add-close">Cancel</button>
+    </div>
+  </form>
+  <div class="fd-bar">
+    <div class="fd-topicbar" role="group" aria-label="Filter by topic">
+      <button type="button" class="chip chip--filter" data-fd="topic" data-v="" aria-pressed="${!st.topic && !st.status}">All</button>
+      ${topicCounts(state, topics).map(([t, n]) => html`<button type="button" class="chip chip--filter" data-fd="topic" data-v="${t}" aria-pressed="${st.topic === t && !st.status}">${t}<span class="fd-n">${n}</span></button>`)}
+      <button type="button" class="chip chip--filter fd-arch" data-fd="archived" aria-pressed="${st.status === 'archived'}">Archived</button>
+    </div>
   </div>
-  <nav class="filters" aria-label="Filter by topic">
-    <a class="${!q.get('topic') && !q.get('status') ? 'on' : ''}" href="#/feed">All</a>
-    ${settings.priorities.map(p => html`${p.weight > 0 ? html`<a class="${q.get('topic') === p.topic ? 'on' : ''}" href="#/feed?topic=${encodeURIComponent(p.topic)}">${p.topic}</a>` : ''}`)}
-    <a class="${q.get('status') === 'archived' ? 'on' : ''}" href="#/feed?status=archived">Archived</a>
-  </nav>
-  <section class="card ledger">
-    ${stories.length ? stories.map((s, idx) => html`
-      <div class="story" data-href="#/story/${s.id}">
-        <div class="score" ${idx === 0 || (s.viewed_score != null && s.viewed_score < settings.publish_threshold && s.score >= settings.publish_threshold) ? 'data-stamp' : ''}>${s.viewed_score != null && Math.round(s.viewed_score) !== Math.round(s.score) ? html`<s class="was"><span class="sr-only">previously </span>${Math.round(s.viewed_score)}</s>` : ''}${scoreNum(s.score, { flap: true, from: s.viewed_score != null && Math.round(s.viewed_score) !== Math.round(s.score) ? s.viewed_score : null })}${idx === 0 ? html`<small aria-hidden="true">Score</small>` : ''}</div>
-        <div>
-          <div class="story-title">${titleWithFlag(s.title, s.is_demo)}</div>
-          <div class="row" style="margin-top:7px;gap:6px 14px">
-            ${topicsLine(s.topics)}
-            <span class="when">${s.article_count} article${s.article_count > 1 ? 's' : ''} · ${s.domain_count} source${s.domain_count > 1 ? 's' : ''} · ${timeAgo(s.updated_at)}</span>
-            ${s.new_since_view ? html`<span class="new-pill">${s.new_since_view} new since you looked</span>` : ''}
-            ${(s.companies || []).length ? html`<span class="chip blue">${s.companies.join(', ')}</span>` : ''}
-            ${s.collections ? html`<span class="chip green">Saved: ${s.collections}</span>` : ''}
-          </div>
-          <div class="why-ranked"><b>Why it ranked:</b> ${(s.topics || []).slice(0, 2).join(', ')}${/watchlist/i.test(s.explanation || '') ? ' · on your watchlist' : ''}${s.domain_count > 1 ? ` · ${s.domain_count} independent sources` : ''}</div>
-          ${meter(s.breakdown)}
-          ${engagementNote(s.breakdown?.engagement)}
-        </div>
-      </div>`) : html`<div class="empty">No stories yet. Add sources, run the daily workflow, or load demo data from Today.</div>`}
-  </section>`);
+  <div class="fd-viewbar">
+    <p class="fd-showing">${showing(st, stories)}</p>
+    <div class="fd-controls">
+      <label class="fd-ctl"><span>Min score</span>
+        <select class="select" data-fd="min" aria-label="Minimum score">
+          <option value="">Any</option>
+          ${[T, 70, 40, 25].filter((v, i, a) => a.indexOf(v) === i).sort((a, b) => b - a).map(v => html`<option value="${v}"${String(v) === st.min ? raw(' selected') : ''}>${v === T ? `${v}+ · your bar` : `${v}+`}</option>`)}
+        </select>
+      </label>
+      <div class="fd-seg" role="radiogroup" aria-label="Date range">${DAYS.map(([k, l]) => html`<button type="button" role="radio" class="fd-seg-btn" data-fd="days" data-v="${k}" aria-checked="${st.days === k}">${l}</button>`)}</div>
+      <div class="fd-seg" role="radiogroup" aria-label="Sort">${SORTS.map(([k, l]) => html`<button type="button" role="radio" class="fd-seg-btn" data-fd="sort" data-v="${k}" aria-checked="${st.sort === k}">${l}</button>`)}</div>
+    </div>
+  </div>
+  <div class="fd-body" data-fd-body>${stories.length ? listHtml(st, stories, T) : html`<div class="empty"><h3>${head.h}</h3><p>${head.l}</p>${st.status === 'archived' ? html`<div class="cluster"><button type="button" class="btn btn--secondary" data-fd="archived">Back to the feed</button></div>` : html`<div class="cluster"><button type="button" class="btn btn--primary" data-fd="add">${icon('plus')}Add story URL</button>${st.days !== 'all' ? html`<button type="button" class="btn btn--secondary" data-fd="days" data-v="all">Show all time</button>` : ''}</div>`}</div>`}</div>`);
+}
 
-  on(el, 'click', '[data-href]', (e, t) => { location.hash = t.dataset.href; });
-  on(el, 'click', '[data-act="add-url"]', (e) => { e.preventDefault(); const f = el.querySelector('#intake'); f.classList.toggle('open'); f.querySelector('input')?.focus(); });
-  el.querySelector('#intake').addEventListener('submit', async (e) => {
+async function update(el, state, patch) {
+  const prev = state.st;
+  const st = { ...prev, ...patch };
+  state.st = st;
+  history.replaceState(history.state, '', hashFor(st));
+  const refetch = st.days !== prev.days || st.topic !== prev.topic || st.status !== prev.status;
+  if (refetch) {
+    el.querySelector('[data-fd-body]')?.setAttribute('aria-busy', 'true');
+    try {
+      [state.stories, state.all] = await Promise.all([api.get(storiesUrl(st)), st.topic ? api.get(storiesUrl({ ...st, topic: '' })) : null]);
+    } catch (e) { toast(e.message, 'err'); return; }
+    state.status = state.stories.length ? null : await api.get('/status').catch(() => null);
+    if (state.st !== st) return;
+  }
+  const focusKey = document.activeElement?.closest?.('[data-fd]') ? `${document.activeElement.dataset.fd}|${document.activeElement.dataset.v || ''}` : null;
+  paint(el, state);
+  if (focusKey) {
+    const [k, v] = focusKey.split('|');
+    el.querySelector(`[data-fd="${k}"]${k === 'min' ? '' : `[data-v="${CSS.escape(v)}"]`}`)?.focus({ preventScroll: true });
+  }
+  const rows = el.querySelectorAll('[data-fd-list] > *');
+  enterItems([...rows].slice(0, 12), { stagger: 30, y: 6, duration: 480 });
+  if (!reduced()) el.querySelector('.page-head h1')?.animate([{ opacity: 0.4 }, { opacity: 1 }], { duration: 300, easing: 'ease-out' });
+}
+
+function wire(el, state) {
+  on(el, 'click', '[data-fd]', async (e, b) => {
+    const k = b.dataset.fd;
+    const rowEl = b.closest('[data-row]');
+    const id = rowEl?.dataset.id;
+    if (k === 'topic') return update(el, state, { topic: b.dataset.v, status: '' });
+    if (k === 'archived') return update(el, state, { status: state.st.status ? '' : 'archived', topic: '' });
+    if (k === 'days') return update(el, state, { days: b.dataset.v });
+    if (k === 'sort') return update(el, state, { sort: b.dataset.v });
+    if (k === 'add' || k === 'add-close') {
+      const f = el.querySelector('[data-intake]');
+      const open = k === 'add' && !f.classList.contains('open');
+      f.classList.toggle('open', open);
+      el.querySelectorAll('[data-fd="add"]').forEach(x => x.setAttribute('aria-expanded', String(open)));
+      if (open) { f.querySelector('input')?.focus(); if (!reduced()) f.animate([{ opacity: 0, transform: 'translateY(-6px)' }, { opacity: 1, transform: 'none' }], { duration: 360, easing: 'cubic-bezier(.25,.1,.05,1)' }); }
+      else el.querySelector('.page-head [data-fd="add"]')?.focus();
+      return;
+    }
+    if (!id) return;
+    if (k === 'draft') return act(b, async () => {
+      const r = await api.post(`/stories/${id}/drafts`, { channel: 'linkedin', format: 'long' });
+      toast('Draft created — opening Studio', 'ok');
+      location.hash = `#/draft/${r.draft_id}`;
+    });
+    if (k === 'save') {
+      if (b.getAttribute('aria-pressed') === 'true') { toast('Already saved — manage collections in the dossier.', ''); return; }
+      return act(b, async () => {
+        const saved = await api.post(`/stories/${id}/save`, { collection: DEFAULT_COLLECTION });
+        b.setAttribute('aria-pressed', 'true');
+        const s = state.stories.find(x => String(x.id) === id); if (s) s.collections = (saved || []).map(x => x.collection).join(',');
+        const mine = (saved || []).find(x => x.collection === DEFAULT_COLLECTION);
+        toast(`Saved to ${DEFAULT_COLLECTION}`, 'ok', mine ? { undo: { revert: async () => { await api.del(`/saved/${mine.id}`); b.setAttribute('aria-pressed', 'false'); if (s) s.collections = null; } } } : {});
+      });
+    }
+    if (k === 'dismiss' || k === 'restore') {
+      const to = k === 'dismiss' ? 'archived' : 'seen';
+      strikeOut(rowEl, {
+        message: k === 'dismiss' ? 'Dismissed. It’s under Archived.' : 'Restored to the feed.',
+        commit: async () => { await api.patch(`/stories/${id}`, { status: to }); state.stories = state.stories.filter(x => String(x.id) !== id); }
+      });
+    }
+  });
+  on(el, 'change', 'select[data-fd="min"]', (e, s) => update(el, state, { min: s.value }));
+  // whole row opens the dossier (the title link is the real control; clicking it records the flight source)
+  on(el, 'click', '[data-row]', (e, r) => {
+    if (e.target.closest('a, button, input, select, label')) return;
+    if (getSelection()?.toString()) return;
+    r.querySelector('a.fd-title')?.click();
+  });
+  el.addEventListener('pointerover', (e) => { const r = e.target.closest?.('[data-row]'); if (r && r !== el._hov) { el._hov = r; dossier.prefetch(r.dataset.id); placeActs(el, r, state); } }, { passive: true });
+  el.addEventListener('focusin', (e) => { const r = e.target.closest?.('[data-row]'); if (r && !e.target.closest('[data-acts]')) placeActs(el, r, state); });
+  el.querySelector('[data-intake]').addEventListener('submit', async (e) => {
     e.preventDefault();
     const f = new FormData(e.target);
-    await act(e.target.querySelector('button'), async () => {
+    await act(e.target.querySelector('button[type=submit]'), async () => {
       const r = await api.post('/intake/url', { url: f.get('url'), evidence_kind: f.get('evidence_kind') });
       toast(r.created ? 'Story added' : 'Already collected — opening it', 'ok');
       location.hash = `#/story/${r.story_id}`;
     }, 'Fetching…');
   });
+  // the dossier's Dismiss / Restore changes a row's status: drop it from this list
+  const onStatus = (e) => {
+    if (!el.isConnected) { document.removeEventListener('byline:story-status', onStatus); return; }
+    const { id, status } = e.detail || {};
+    const inList = (state.st.status === 'archived') === (status === 'archived');
+    if (!inList) { state.stories = state.stories.filter(x => x.id !== id); el.querySelector(`[data-row][data-id="${id}"]`)?.remove(); }
+    else api.get(storiesUrl(state.st), { fresh: true }).then(list => { state.stories = list; if (el.isConnected) paint(el, state); }).catch(() => {});
+  };
+  document.addEventListener('byline:story-status', onStatus);
+  // a hash change that lands on a different Feed query while this page is current (the router skips it)
+  const onHash = () => {
+    if (!el.isConnected) { removeEventListener('hashchange', onHash); return; }
+    if (!location.hash.startsWith('#/feed')) return;
+    const next = params();
+    if (JSON.stringify(next) !== JSON.stringify(state.st)) update(el, state, next);
+  };
+  addEventListener('hashchange', onHash);
 }
-
-async function renderStory(el, view, id) {
-  const d = await api.get(`/stories/${id}`);
-  const s = d.story;
-  const lens = d.lens || {};
-  const kinds = ['announcement', 'research', 'reporting', 'commentary', 'community', 'application'];
-  const byKind = kinds.map(k => [k, d.claims.filter(c => c.evidence_kind === k)]).filter(([, c]) => c.length);
-  const followUps = d.articles.filter(a => a.id !== d.origin?.id);
-
-  el.innerHTML = String(html`
-  <div class="page-head">
-    <div style="max-width:880px">
-      <div class="kicker"><a href="#/feed">← Feed</a>&thinsp;·&thinsp;Story #${s.id} ${demoFlag(s.is_demo)}</div>
-      <h1 class="${s.title.length > 70 ? 'long' : ''}">${s.title}</h1>
-      <p class="lede">${s.summary || ''}</p>
-      <div class="row" style="margin-top:10px">
-        <span class="score inline single" data-stamp style="--v:${Math.round(s.score)}">${s.prev_score != null && Math.round(s.prev_score) !== Math.round(s.score) ? html`<s class="was"><span class="sr-only">previously </span>${Math.round(s.prev_score)}</s><span class="caret-mark" aria-hidden="true">‸</span>` : ''}${scoreNum(s.score, { from: s.prev_score != null && Math.round(s.prev_score) !== Math.round(s.score) ? s.prev_score : null })}<small aria-hidden="true">Score</small><span class="galley-scale" aria-hidden="true" style="--t:${window.__byline?.threshold ?? 55}%"><b class="th"></b><i class="caret"></i></span></span>
-        ${topicsLine(s.topics, 6)}
-        ${(s.companies || []).map(c => html`<span class="chip blue">${c}</span>`)}
-        ${s.status === 'archived' ? html`<span class="chip">archived</span>` : ''}
-      </div>
-      <div class="why-ranked"><b>Why it ranked:</b> ${[(s.topics || []).slice(0, 3).join(', '), `${d.articles.length} article${d.articles.length === 1 ? '' : 's'}`].filter(Boolean).join(' · ')}${s.explanation ? html`<details><summary>Scoring detail</summary>${s.explanation}</details>` : ''}</div>
-      ${meter(s.breakdown)}
-      <div style="margin-top:8px">${engagementNote(s.breakdown?.engagement)}</div>
-    </div>
-  </div>
-
-  <div class="split">
-    <div class="stack reveal">
-      <section class="card">
-        <h3>Evidence cards</h3>
-        <p class="muted small" style="margin-top:-4px">Each claim is attached to the source it came from, labeled by the kind of evidence it rests on.</p>
-        ${byKind.length ? byKind.map(([k, claims]) => html`
-          <div style="margin-top:12px">${evChip(k)}
-            ${claims.map(c => { const a = d.articles.find(x => x.id === c.article_id); return html`
-              <div class="evidence ${k}"><div class="claim">“${c.text}”</div>
-                ${a ? html`<div class="mono faint" style="margin-top:4px"><a href="${a.url}" target="_blank" rel="noopener noreferrer">${a.domain}</a> · ${fmtDate(a.published_at || a.fetched_at)}</div>` : ''}</div>`; })}
-          </div>`) : html`<p class="muted small">No extractable claims — read the sources directly.</p>`}
-      </section>
-
-      <section class="card">
-        <h3>Coverage</h3>
-        ${d.origin ? html`<div class="label" style="margin-bottom:6px">ORIGINATING SOURCE</div>
-          <div class="source-row">${evChip(d.origin.evidence_kind)}<a href="${d.origin.url}" target="_blank" rel="noopener noreferrer">${d.origin.title}</a><span class="mono faint">${d.origin.domain}</span></div>` : ''}
-        ${followUps.length ? html`<div class="label" style="margin:14px 0 6px">FOLLOW-UP COVERAGE</div>
-          ${followUps.map(a => html`<div class="source-row">${evChip(a.evidence_kind)}<span><a href="${a.url}" target="_blank" rel="noopener noreferrer">${a.title}</a> ${a.is_new ? html`<span class="new-pill">NEW</span>` : ''}
-            <div class="small muted">${a.summary}</div></span><span class="mono faint">${a.domain}<br>${timeAgo(a.published_at || a.fetched_at)}</span></div>`)}` : html`<p class="muted small" style="margin-top:12px">No independent follow-up coverage yet.</p>`}
-      </section>
-
-      <section class="card">
-        <div class="row between"><h3>Angles</h3><button class="sm" data-act="angles">Suggest angles</button></div>
-        <div id="angles" class="muted small">Get two or three distinct ways to cover this story.</div>
-      </section>
-    </div>
-
-    <div class="stack reveal">
-      <section class="card accent">
-        <h3>Make something from it</h3>
-        <div class="grid g2" style="gap:8px">
-          <button class="primary" data-act="draft" data-channel="linkedin" data-format="long">LinkedIn · analysis</button>
-          <button data-act="draft" data-channel="linkedin" data-format="article">LinkedIn · article</button>
-          <button data-act="draft" data-channel="instagram" data-format="carousel">IG carousel</button>
-          <button data-act="draft" data-channel="instagram" data-format="reel">IG Reel</button>
-          <button data-act="draft" data-channel="linkedin" data-format="short">LinkedIn · short</button>
-          <button data-act="draft" data-channel="video" data-format="explainer">Video explainer</button>
-          <button data-act="project">Portfolio project</button>
-        </div>
-        ${d.drafts.length ? html`<div class="hr"></div><div class="label">EXISTING PIECES</div>${d.drafts.map(x => html`<div class="row between small" style="padding:4px 0"><a href="#/draft/${x.id}">${channelLabel(x.channel, x.format)}</a>${status(x.status)}</div>`)}` : ''}
-        ${d.projects.length ? d.projects.map(p => html`<div class="row between small" style="padding:4px 0"><a href="#/career">Project: ${p.title}</a><span class="chip">${p.status}</span></div>`) : ''}
-      </section>
-
-      <section class="card">
-        <div class="row between"><h3>Career lens</h3><button class="sm ghost" data-act="lens">Refresh</button></div>
-        <dl class="small" style="margin:0">
-          <dt class="label">WHO COULD USE IT</dt><dd style="margin:2px 0 10px">${lens.who}</dd>
-          <dt class="label">DECISION IT MIGHT CHANGE</dt><dd style="margin:2px 0 10px">${lens.decision}</dd>
-          <dt class="label">WHAT TO LEARN</dt><dd style="margin:2px 0 10px">${lens.learn}</dd>
-          <dt class="label">WHAT YOU COULD TEST</dt><dd style="margin:2px 0 0"><ul style="margin:4px 0;padding-left:18px">${(Array.isArray(lens.test) ? lens.test : [lens.test]).filter(Boolean).map(t => html`<li>${t}</li>`)}</ul></dd>
-        </dl>
-        <div class="faint mono" style="margin-top:8px">via ${lens.provider || 'provider'}</div>
-      </section>
-
-      <section class="card">
-        <h3>Employer connections</h3>
-        ${d.employer_connections.length ? d.employer_connections.slice(0, 5).map(c => html`
-          <div style="padding:8px 0;border-top:1px solid var(--line)">
-            <div class="row between"><strong>${c.employer}</strong><span class="chip ${c.mention_ok ? 'green' : ''}">${c.mention_ok ? 'mention supported' : 'topical only'}</span></div>
-            <div class="small" style="margin-top:4px">${c.why}</div>
-            <div class="small faint" style="margin-top:3px">${c.mention_note} ${c.source ? html`<a href="${c.source.url}" target="_blank" rel="noopener noreferrer">source</a>` : ''}</div>
-          </div>`) : html`<p class="muted small">No grounded connection to your target employers.</p>`}
-      </section>
-
-      <section class="card">
-        <h3>Save & signal</h3>
-        <div class="row">${COLLECTIONS.map(c => html`<button class="sm ${d.saved.some(x => x.collection === c) ? 'primary' : ''}" data-act="save" data-c="${c}">${d.saved.some(x => x.collection === c) ? '✓ ' : ''}${c}</button>`)}</div>
-        <div class="hr"></div>
-        <div class="row">
-          <button class="sm" data-act="fb" data-k="useful">Useful</button>
-          <button class="sm" data-act="fb" data-k="repetitive">Repetitive</button>
-          <button class="sm" data-act="fb" data-k="low_quality">Low quality</button>
-          <button class="sm" data-act="fb" data-k="off_topic">Off-topic</button>
-        </div>
-        <div id="fb-result" class="small muted" style="margin-top:8px">${d.feedback.length ? `Your feedback: ${d.feedback.map(f => f.kind.replace('_', ' ')).join(', ')}` : 'Feedback adjusts how similar stories rank. See Runs → Feedback to review or reset.'}</div>
-        <div class="hr"></div>
-        <button class="sm ghost" data-act="archive">${s.status === 'archived' ? 'Unarchive' : 'Archive story'}</button>
-      </section>
-    </div>
-  </div>`);
-
-  on(el, 'click', '[data-act]', async (e, btn) => {
-    const a = btn.dataset.act;
-    if (a === 'draft') await act(btn, async () => {
-      const r = await api.post(`/stories/${id}/drafts`, { channel: btn.dataset.channel, format: btn.dataset.format, angle: btn.dataset.angle });
-      location.hash = `#/draft/${r.draft_id}`;
-    }, 'Drafting…');
-    if (a === 'project') await act(btn, async () => { await api.post(`/stories/${id}/project`); toast('Project scoped — edit it in Career → Projects', 'ok'); renderStory(fresh(view), view, id); });
-    if (a === 'lens') await act(btn, async () => { await api.post(`/stories/${id}/lens`); renderStory(fresh(view), view, id); });
-    if (a === 'save') await act(btn, async () => {
-      const existing = d.saved.find(x => x.collection === btn.dataset.c);
-      if (existing) await api.del(`/saved/${existing.id}`); else await api.post(`/stories/${id}/save`, { collection: btn.dataset.c });
-      renderStory(fresh(view), view, id);
-    });
-    if (a === 'fb') await act(btn, async () => {
-      const r = await api.post(`/stories/${id}/feedback`, { kind: btn.dataset.k });
-      const adj = Object.entries(r.preferences.topic).map(([t, v]) => `${t} ${v > 0 ? '+' : ''}${Math.round(v * 100)}%`).join(' · ');
-      el.querySelector('#fb-result').textContent = `Recorded. Topic adjustments now: ${adj || 'none'}.`;
-      toast('Feedback recorded', 'ok');
-    });
-    if (a === 'archive') await act(btn, async () => { await api.patch(`/stories/${id}`, { status: s.status === 'archived' ? 'seen' : 'archived' }); renderStory(fresh(view), view, id); });
-    if (a === 'angles') await act(btn, async () => {
-      const angles = await api.get(`/stories/${id}/angles`);
-      el.querySelector('#angles').innerHTML = String(html`${angles.map(g => html`
-        <div style="padding:10px 0;border-top:1px solid var(--line)">
-          <div class="row between"><strong style="color:var(--text)">${g.title}</strong>
-            <button class="sm" data-act="draft" data-channel="linkedin" data-format="long" data-angle="${g.key}">Draft with this angle</button></div>
-          <div style="margin-top:4px">${g.covers}</div></div>`)}`);
-    });
-  });
-}
-
-function fresh(view) { const el = document.createElement('div'); view.replaceChildren(el); return el; }

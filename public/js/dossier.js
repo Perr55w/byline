@@ -108,6 +108,8 @@ export async function open(id, srcEl = null, opts = {}) {
   const fly = !reduced() && !phone() && visible(srcRect);
   const srcShared = {};
   if (fly) for (const n of ['title', 'ring', 'topic']) { const e = guessShared(src, n); if (e) { const r = e.getBoundingClientRect(); if (visible(r)) srcShared[n] = { el: e, rect: r, fs: parseFloat(getComputedStyle(e).fontSize) || 16 }; } }
+  const onPhone = phone();
+  const P = finalRect(); // tokens only, read while the style is still clean
 
   // 2) build + render the content
   const root = build(id);
@@ -121,13 +123,17 @@ export async function open(id, srcEl = null, opts = {}) {
   wire(root);
 
   // 3) flight
-  const P = finalRect();
   const panel = S.panel, scrim = root.querySelector('.dossier-scrim');
   const sections = [...S.body.querySelectorAll('[data-dossier-section]')];
   const anims = [];
+  // the one read of the inserted panel: every shared destination rect and font size, before any animation is created
+  const dsts = fly ? Object.entries(srcShared).map(([n, s]) => { const dst = sharedIn(S.body, n); if (!dst) return null; return { n, s, dst, d: dst.getBoundingClientRect(), fs: n === 'title' ? parseFloat(getComputedStyle(dst).fontSize) || s.fs : 0 }; }).filter(Boolean) : [];
+  // focus while the layout is still clean from that read (focusing after the animations are created forces another)
+  const h1 = S.body.querySelector('h1');
+  (h1 || panel).focus({ preventScroll: true });
   if (reduced()) {
     root.classList.add('frosted');
-  } else if (phone()) {
+  } else if (onPhone) {
     anims.push(scrim.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 360, easing: EASE.fade, fill: 'both' }));
     anims.push(panel.animate([{ transform: 'translateY(100%)' }, { transform: 'none' }], { duration: 520, easing: EASE.settle }));
   } else if (fly) {
@@ -136,11 +142,8 @@ export async function open(id, srcEl = null, opts = {}) {
     anims.push(panel.animate([{ clipPath: rTo(srcRect) }, { clipPath: 'inset(0px 0px 0px 0px round 16px)' }], { duration: DUR.morphOpen, easing: EASE.move }));
     anims.push(scrim.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 400, easing: EASE.fade, fill: 'both' }));
     // shared elements: one read of their destinations, then translate + uniform scale on the same curve
-    for (const [n, s] of Object.entries(srcShared)) {
-      const dst = sharedIn(S.body, n);
-      if (!dst) continue;
-      const d = dst.getBoundingClientRect();
-      const scale = n === 'title' ? s.fs / (parseFloat(getComputedStyle(dst).fontSize) || s.fs) : (s.rect.width / (d.width || 1));
+    for (const { n, s, dst, d, fs } of dsts) {
+      const scale = n === 'title' ? s.fs / fs : (s.rect.width / (d.width || 1));
       const fromChip = n === 'ring' && s.el.classList.contains('score-chip');
       const kf = [{ transform: `translate(${(s.rect.left - d.left).toFixed(1)}px, ${(s.rect.top - d.top).toFixed(1)}px) scale(${scale.toFixed(4)})`, transformOrigin: 'top left', opacity: fromChip ? 0 : 1 },
         { transform: 'none', transformOrigin: 'top left', opacity: 1 }];
@@ -159,8 +162,6 @@ export async function open(id, srcEl = null, opts = {}) {
     if (sections.length > 6) sections.slice(6).forEach(sec => anims.push(sec.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 500, delay: (fly ? 300 : 160) + 6 * 50, easing: EASE.fade, fill: 'backwards' })));
   }
   S.anims = anims;
-  const h1 = S.body.querySelector('h1');
-  (h1 || panel).focus({ preventScroll: true });
 
   const landed = Promise.all(anims.map(a => a.finished.catch(() => {})));
   landed.then(() => {
@@ -222,18 +223,18 @@ export function close({ instant = false } = {}) {
     list.forEach(a => { try { a.reverse(); } catch (e) { /* finished */ } });
     return Promise.all(list.map(a => a.finished.catch(() => {}))).then(() => { if (S.seq === seqAtClose) teardown(); });
   }
+  // reads first (visibility:hidden keeps geometry, so the hidden source can be measured as is), then writes
+  const src = S.src && S.src.isConnected ? S.src : null;
+  const sr = src ? src.getBoundingClientRect() : null;
+  const onPhone = phone();
+  const P = onPhone ? null : finalRect();
   r.classList.remove('frosted');
   const anims = [];
   anims.push(S.body.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 140, easing: EASE.exit, fill: 'forwards' }));
-  const src = S.src && S.src.isConnected ? S.src : null;
-  if (src) src.style.visibility = '';
-  const sr = src ? src.getBoundingClientRect() : null;
-  if (src) src.style.visibility = 'hidden';
-  if (phone()) {
+  if (onPhone) {
     anims.push(panel.animate([{ transform: 'none' }, { transform: 'translateY(100%)' }], { duration: 320, easing: EASE.exit, fill: 'forwards' }));
     anims.push(scrim.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 320, easing: EASE.fade, fill: 'forwards' }));
   } else if (visible(sr)) {
-    const P = finalRect();
     const to = `inset(${(sr.top - P.top).toFixed(1)}px ${(P.right - sr.right).toFixed(1)}px ${(P.bottom - sr.bottom).toFixed(1)}px ${(sr.left - P.left).toFixed(1)}px round 12px)`;
     anims.push(panel.animate([{ clipPath: 'inset(0px 0px 0px 0px round 16px)' }, { clipPath: to }], { duration: DUR.morphClose, easing: EASE.move, fill: 'forwards' }));
     anims.push(scrim.animate([{ opacity: 1 }, { opacity: 0 }], { duration: DUR.morphClose, easing: EASE.fade, fill: 'forwards' }));
