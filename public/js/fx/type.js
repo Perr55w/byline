@@ -77,21 +77,22 @@ export async function castHeading(h1, { hero = false, delay = 0 } = {}) {
   const words = [...h1.querySelectorAll('.fx-w')];
   const lines = measureLines(h1, words);
 
-  const ruleMs = hero ? 360 : 300, wordMs = hero ? 600 : 520, stagger = hero ? 65 : 55, lineGap = 60;
+  const ruleMs = hero ? 360 : 300, wordMs = hero ? 700 : 640, stagger = hero ? 95 : 90, lineGap = 60;
+  const fs = parseFloat(getComputedStyle(h1).fontSize) || 48;
   const anims = [];
   const rules = lines.map((l, i) => {
     const r = document.createElement('i'); r.className = 'fx-rule'; r.setAttribute('aria-hidden', 'true');
-    r.style.cssText = `left:${l.left}px;width:${Math.max(0, l.right - l.left)}px;top:${Math.round(l.base)}px`;
+    r.style.cssText = `left:${l.left}px;width:${Math.max(0, l.right - l.left)}px;top:${Math.round(l.base + fs * 0.24)}px`;
     h1.prepend(r); // under the words in paint order
     anims.push(r.animate([{ transform: 'scaleX(0)' }, { transform: 'scaleX(1)' }], { duration: ruleMs, delay: delay + i * lineGap, easing: EASE.rule(), fill: 'backwards' }));
     return r;
   });
-  const start = delay + ruleMs;
+  const start = delay + Math.round(ruleMs * 0.35); // words start while the rule is still drawing
   let k = 0, last;
   for (const l of lines) for (const w of l.words) {
     last = w.firstElementChild.animate(
       [{ transform: 'translateY(calc(105% + .2em))' }, { transform: 'none' }],
-      { duration: wordMs, delay: start + (k++) * stagger, easing: 'cubic-bezier(.16, 1, .3, 1)', fill: 'backwards' });
+      { duration: wordMs, delay: start + (k++) * stagger, easing: 'cubic-bezier(.22, .9, .32, 1)', fill: 'backwards' });
     anims.push(last);
   }
   // the rule lifts as the last slug seats, so the landed heading is clean
@@ -123,10 +124,11 @@ export async function registerPlates(el) {
     p.querySelectorAll('[id]').forEach(x => x.removeAttribute('id'));
     el.append(p);
     return p.animate([
-      { transform: `translate(${dx}px, ${dy}px)`, opacity: 0.75, easing: EASE.stamp() },
-      { transform: 'none', opacity: 0.75, offset: 0.667, easing: 'ease-out' },
+      { transform: `translate(${dx * 1.5}px, ${dy * 1.5}px)`, opacity: 0.8 },
+      { transform: `translate(${dx * 1.5}px, ${dy * 1.5}px)`, opacity: 0.8, offset: 0.25, easing: EASE.stamp() },
+      { transform: 'none', opacity: 0.8, offset: 0.7, easing: 'ease-out' },
       { transform: 'none', opacity: 0 },
-    ], { duration: 360, fill: 'both' });
+    ], { duration: 520, fill: 'both' });
   };
   const anims = [make('fx-red', -2, 1), make('fx-blue', 2, -1)];
   el._fxPlates = anims;

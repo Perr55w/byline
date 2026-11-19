@@ -295,7 +295,7 @@ export function initLiveScreen(mast = document.querySelector('header.masthead'))
 }
 
 // ---------------------------------------------------------------- #8 Newsprint stock (Noise.paintTile, fps 0)
-const TILE = 256;
+const TILE = 384;
 const grainCache = new Map(); // theme -> blob URL
 let grainObs = null;
 
@@ -311,9 +311,9 @@ const generator = (seed) => {
 
 const STOCK = {
   // Night: dark umber fibres + dust on the lamp-lit desk; a few pale flecks keep it paper, not soot.
-  dark: { tone: [14, 9, 6], grain: 0.10, fibres: 240, fibreA: [0.16, 0.32], dust: 110, dustA: [0.25, 0.5], fleck: [255, 236, 205], flecks: 40, fleckA: 0.05, seed: 0x5eed01 },
+  dark: { tone: [14, 9, 6], grain: 0.08, fibres: 90, fibreA: [0.07, 0.15], dust: 90, dustA: [0.1, 0.18], fleck: [255, 236, 205], flecks: 40, fleckA: 0.05, seed: 0x5eed01 },
   // Proof: grey-brown fibres at ~.06
-  light: { tone: [74, 62, 48], grain: 0.06, fibres: 160, fibreA: [0.04, 0.08], dust: 26, dustA: [0.06, 0.14], fleck: null, flecks: 0, fleckA: 0, seed: 0x5eed02 },
+  light: { tone: [74, 62, 48], grain: 0.06, fibres: 50, fibreA: [0.03, 0.06], dust: 26, dustA: [0.06, 0.14], fleck: null, flecks: 0, fleckA: 0, seed: 0x5eed02 },
 };
 
 function paintTile(theme) {
@@ -335,7 +335,7 @@ function paintTile(theme) {
   const wrap = (fn) => { for (const ox of [-TILE, 0, TILE]) for (const oy of [-TILE, 0, TILE]) { ctx.save(); ctx.translate(ox, oy); fn(); ctx.restore(); } };
   ctx.lineCap = 'round';
   for (let i = 0; i < p.fibres; i++) {
-    const x = rnd() * TILE, y = rnd() * TILE, len = 4 + rnd() * 18, ang = rnd() * Math.PI * 2, bend = (rnd() - 0.5) * len * 0.8;
+    const x = rnd() * TILE, y = rnd() * TILE, len = 3 + rnd() * 9, ang = rnd() * Math.PI * 2, bend = (rnd() - 0.5) * len * 0.35;
     const ex = x + Math.cos(ang) * len, ey = y + Math.sin(ang) * len;
     const cx = (x + ex) / 2 - Math.sin(ang) * bend, cy = (y + ey) / 2 + Math.cos(ang) * bend;
     const a = p.fibreA[0] + rnd() * (p.fibreA[1] - p.fibreA[0]);

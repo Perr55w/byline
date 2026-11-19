@@ -389,3 +389,13 @@ main :is(.story, .hit, tbody tr, .source-row):nth-child(n+13) { content-visibili
 .legend .lg-outreach::before { background: none; border-left: 3px dashed var(--ink-2); width: 0; }
 .legend .lg-published::before { background: none; border-left: 3px double var(--ink); width: 0; }
 :root[data-theme="dark"] { --ev-announcement: #DCA55E; }
+/* nameplate never clips (ink pressure widens letters) */
+.nameplate, .nameplate[data-fx-ink] { overflow: visible; }
+/* Night: the sidebar draft plate rests as an ink-toned print, full colour on hover/focus */
+:root[data-theme="dark"] .card.accent .plate img { filter: grayscale(1) sepia(.3) brightness(.62) contrast(1.15); transition: filter 320ms var(--ease-press); }
+:root[data-theme="dark"] .card.accent .plate:hover img, :root[data-theme="dark"] .card.accent a:focus-visible .plate img, :root[data-theme="dark"] .card.accent .plate:focus-within img { filter: none; }
+:root[data-theme="dark"] .card.accent .plate { box-shadow: inset 0 0 0 1px var(--rule-strong); }
+@media (max-width: 760px) {
+  :root[data-theme="dark"] .shell::before { -webkit-mask-image: radial-gradient(80% 50% at 30% 0%, #000 0%, rgba(0,0,0,.5) 45%, transparent 80%); mask-image: radial-gradient(80% 50% at 30% 0%, #000 0%, rgba(0,0,0,.5) 45%, transparent 80%); }
+  :root[data-theme="dark"] { --atmos: radial-gradient(90% 45% at 30% 0%, rgba(255, 196, 120, .14), transparent 70%), radial-gradient(140% 90% at 50% 10%, transparent 50%, rgba(10, 6, 3, .35)), var(--grain); }
+}

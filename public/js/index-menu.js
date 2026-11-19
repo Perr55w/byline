@@ -130,6 +130,12 @@ export function openIndex(prefix = '') {
     panel = root = wrap.querySelector('.ix');
   }
   const input = root.querySelector('.ix-input');
+  // cycling hint (stops on the first keystroke; never under reduced motion)
+  if (!matchMedia('(prefers-reduced-motion: reduce)').matches && !input.value) {
+    const hints = ['Go to Feed…', 'Find a story…', '› Run today’s workflow', '@ a person…', 'Find a tab, story, draft or person…'];
+    let hi = 0; const tick = setInterval(() => { if (!input.isConnected || input.value) { clearInterval(tick); return; } input.placeholder = hints[hi++ % hints.length]; }, 2400);
+    input.addEventListener('input', () => { clearInterval(tick); input.placeholder = 'Find a tab, story, draft or person…'; }, { once: true });
+  }
   const list = root.querySelector('.ix-list');
   const groupsEl = root.querySelector('.ix-groups');
   const bar = root.querySelector('.ix-bar');
