@@ -165,3 +165,9 @@ public/                   frontend (views in public/js/views)
 test/acceptance.test.js   end-to-end acceptance checks
 docs/SPEC.md              condensed product spec
 ```
+
+## Credits
+
+- Fonts: Newsreader, Schibsted Grotesk, Martian Mono (SIL Open Font License), self-hosted in `public/fonts`.
+- Voice: Kokoro-82M "Heart" (Apache 2.0) via kokoro-js, run locally.
+- Visual effects in `public/js/fx/` are adapted from [React Bits](https://github.com/DavidHDev/react-bits) by David Haz, licensed MIT + Commons Clause (free to use in this app; the effects themselves may not be resold).

@@ -220,6 +220,10 @@ export async function render(view) {
         <p class="muted small" style="margin-top:0">Fictional sample sources, stories and drafts — clearly labeled DEMO — for trying the full flow without credentials. ${st.counts?.demo_articles ? html`<span class="demo-flag">LOADED</span> ${st.counts.demo_articles} demo articles present.` : 'Not loaded.'}</p>
         <div class="row"><button data-act="demo-load">Load demo data</button><button class="danger" data-act="demo-clear" ${st.counts?.demo_articles ? '' : 'disabled'}>Remove demo data</button></div>
       </section>
+      <section class="card flat" style="grid-column:1 / -1">
+        <h3>About</h3>
+        <p class="muted small" style="margin-top:0">Byline · Proof Desk, third edition. Type: Newsreader, Schibsted Grotesk, Martian Mono (SIL OFL). Voice: Kokoro-82M “Heart” (Apache 2.0), runs locally. Effects adapted from <a href="https://reactbits.dev" target="_blank" rel="noopener">React Bits</a> by David Haz (MIT + Commons Clause).</p>
+      </section>
     </div>`);
     paintSecurity();
   };

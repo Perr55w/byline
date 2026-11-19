@@ -51,7 +51,9 @@ export async function refreshStatus({ flap = false } = {}) {
       ${s.counts.demo_articles ? html`<span class="demo-flag">Demo data</span>` : ''}`);
     const d = new Date(`${s.today}T12:00:00`);
     const doy = Math.round((d - new Date(d.getFullYear(), 0, 0)) / 864e5);
-    const text = `Vol. 1 · No. ${doy} · ${d.toLocaleDateString('en-US', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' }).replace(/,/g, '')}`;
+    const text = matchMedia('(max-width: 760px)').matches
+      ? `No. ${doy} · ${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`
+      : `Vol. 1 · No. ${doy} · ${d.toLocaleDateString('en-US', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' }).replace(/,/g, '')}`;
     const dl = document.getElementById('dateline');
     if (flap) flapIssue(dl, text); else if (dl.textContent !== text) typeDateline(dl, text);
     const badge = document.querySelector('[data-nav="studio"] .badge');
@@ -77,7 +79,7 @@ function paintSwitch() {
   const night = themeNow() === 'dark';
   b.setAttribute('aria-checked', String(night));
   b.setAttribute('aria-label', night ? 'Night desk on — switch to Proof desk' : 'Proof desk on — switch to Night desk');
-  b.dataset.short = night ? '☾ Night' : '☼ Proof';
+  b.dataset.short = night ? '☾' : '☼';
   document.querySelector('meta[name="theme-color"]')?.setAttribute('content', night ? '#19120E' : '#1C1A16');
 }
 function applyTheme(next) {
@@ -185,7 +187,8 @@ async function route() {
     if (window.scrollY) window.scrollTo({ top: 0, behavior: 'instant' });
   };
   const after = () => {
-    decorate(page);
+    // keep the main thread clear while the hero heading is being set
+    if (main.classList.contains('hero')) setTimeout(() => decorate(page), 450); else decorate(page);
     clearTimeout(route.settle);
     route.settle = setTimeout(() => main.classList.remove('press', 'hero'), 1700);
     document.getElementById('route-live').textContent = `${NAV_FLAT.find(n => n.route === (ALIAS[key] || key))?.label || ''} loaded`;
