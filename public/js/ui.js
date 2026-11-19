@@ -581,3 +581,20 @@ export function lattice(container, { label = 'Working' } = {}) {
   const ctl = { el, done: (t = 'Done') => settle('done', t), error: (t = 'Failed') => settle('error', t), stop: () => el.remove() };
   return ctl;
 }
+
+// Per-view stylesheet loader: views call `await useStyle('/css/v4/<tab>.css')` before rendering,
+// so the page never paints unstyled. Each href is linked once; the promise is cached.
+const styleLoads = new Map();
+export function useStyle(href) {
+  if (styleLoads.has(href)) return styleLoads.get(href);
+  const p = new Promise((resolve) => {
+    const existing = document.querySelector(`link[rel="stylesheet"][href="${href}"]`);
+    if (existing) return resolve();
+    const link = document.createElement('link');
+    link.rel = 'stylesheet'; link.href = href;
+    link.onload = () => resolve(); link.onerror = () => resolve();
+    document.head.append(link);
+  });
+  styleLoads.set(href, p);
+  return p;
+}
