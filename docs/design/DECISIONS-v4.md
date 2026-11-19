@@ -132,3 +132,55 @@ Each tab follows SPEC §5, and these reports refine it:
 - The voice briefing: `player.js`, `player.css`, the Today slot and the TTS settings section.
 - Newspaper-era effects: `fx/type.js` cast/flap/ink, the `fx/surface.js` halftone/newsprint/live screen, the stamps and spatter in `fx/micro.js`, the dither theme wipe, and the old CSS files.
 - Glass hover tilt and the "Next edition" footer.
+
+## Engineering (E, binding; overrides B and D where they conflict)
+
+**Background engine** (`public/js/bg.js`)
+- Use **B's look** (the ruled field of typeset dashes, satin waves, heat, ripples, sheen) on **E's engine**:
+  - WebGL2 first, with `failIfMajorPerformanceCaveat:true`.
+  - The shader draws the dash rows with a `fract`-based row and dash mask, three sines, a 64×40 R8 heat texture and a pointer-sheen uniform.
+  - No noise/fbm and no derivative lighting.
+  - Canvas2D fallback: B's bucketed implementation, maximum 20 fps; a static frame on phone.
+- **Backing store.** Scale by min(DPR, 1.5), with at most 2.4 MP on desktop and 0.6 MP on phone.
+- **Frame pacing.** Measure the refresh rate, draw every Nth frame (about 30 fps; about 20 when dim), and advance time by drawn frames × a fixed step.
+  - Idle freeze after 20 s of no input: one settled frame, then zero rAF calls.
+  - When input resumes, ease the speed back in over 600 ms.
+  - Pause when the page is hidden.
+  - Expose `window.__byline.bg.stats()` and `hold(ms)`, and support the `?bgidle=` query parameter.
+- **Pointer light** has two parts:
+  - The glow is a fixed `#bg-light` div moved with `translate3d`, so it runs at 60 fps on the compositor.
+  - The subtle sheen is a shader uniform drawn at canvas rate.
+  - The tile-hover pool eases `#bg-light` to the tile centre.
+  - None of it appears on touch devices.
+- **Per-view intensity.** `html[data-bg="full|dim|still"]`. Dim is canvas `opacity: .35` with a 600 ms transition. The engine only changes its draw rate; it does not tween per frame.
+
+**Glass budget**
+- **Two live `backdrop-filter` surfaces at most:** the status pill plus one transient surface (dossier, ⌘K, phone sheet or phone bottom bar). Three are allowed only for a modal over the dossier.
+- **The rail is not backdrop-filtered.** It uses a translucent fill. The shader receives the rail rect as a uniform and draws the field softened (area-mean) inside it, which gives the frosted look for free.
+- **Blur and saturation limits.** Blur ≤ 20 px and saturation ≤ 175%. Never animate blur.
+- **Dossier frost** fades in on a child layer after the flight. The panel fill is 0.94 during the flight.
+- **No other effects on tiles:**
+  - no tilt
+  - no `mix-blend-mode`
+  - no `box-shadow` transitions; the hover shadow is a pre-rendered `::before` that fades its opacity.
+- **will-change** is permanent on 4 elements or fewer. Otherwise JS sets it per animation.
+- **Containment.** `contain: layout paint` on tiles, the panel and the pill. `content-visibility: auto` on long lists.
+
+**Router**
+- One forced layout per transition at most. Rail positions are cached.
+- The tab switch is E §3 steps 1–6. Remove `startViewTransition` entirely.
+- **The dossier is an overlay** (`dossier.open(id, srcEl)`), not a page swap.
+  - A deep link renders Feed underneath it.
+  - Prefetch on tile hover.
+  - Use E's FLIP order.
+  - Below-fold sections render after the flight.
+- **`--rail-w`** is registered with `@property`, and both the shell grid and the dossier `left` read it. Canvases resize at `transitionend`.
+
+**Map engine: E §4.**
+- Server-side seeded force layout with an ETag cache, plus a localStorage client cache.
+- Canvas2D on-demand draw.
+- Hit-test grid, inertial zoom and pan, label culling, and a hidden DOM list for keyboard and screen-reader access.
+
+**Performance gates: E §5 (gates 1–11)** are the acceptance tests for every builder. C's motion harness (C amendment 6) also runs. Put them together in `test/e2e/` as a Playwright script, run with `node test/e2e/run.mjs`, separately from `npm test`.
+
+**Count-up.** Use `tabular-nums` in a fixed box and change only `textContent`. The ring uses `stroke-dashoffset`.
