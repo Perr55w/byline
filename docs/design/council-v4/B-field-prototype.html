@@ -1,0 +1,44 @@
+<!doctype html><html data-theme="proof"><head><style>
+:root{--bg:#F5F6F8;--fd-ink:58,66,84;--fd-hot:31,94,255;--fd-a0:.07;--fd-a1:.20;--fd-hot-a:.34;--fd-glow:.055;--tile:rgba(255,255,255,.92);--line:rgba(14,18,28,.085);--t1:#0C0D10;--t2:#4A4E57}
+:root[data-theme=night]{--bg:#121316;--fd-ink:150,158,174;--fd-hot:77,134,255;--fd-a0:.06;--fd-a1:.17;--fd-hot-a:.42;--fd-glow:.075;--tile:rgba(26,27,31,.90);--line:rgba(255,255,255,.075);--t1:#EDEEF0;--t2:#A6AAB2}
+html,body{margin:0;height:100%;background:var(--bg);font-family:sans-serif}
+canvas{position:fixed;inset:0;width:100vw;height:100vh}
+.tile{position:absolute;left:300px;top:220px;width:600px;height:360px;background:var(--tile);border:1px solid var(--line);border-radius:14px;padding:28px;box-sizing:border-box;color:var(--t1);font:600 34px Georgia}
+.tile p{font:400 16px sans-serif;color:var(--t2)}
+</style></head><body><canvas id="f"></canvas><div class="tile">Agent orchestration is running hot.<p>5 of 19 scanned stories cleared your threshold of 60.</p></div>
+<script>
+const cv=document.getElementById('f'),ctx=cv.getContext('2d');
+let W,H,dpr,D; const ROW=18,COL=8;
+const topics=[{x:.62,y:.38,h:1},{x:.3,y:.7,h:.56},{x:.82,y:.75,h:.51}];
+const ptr={x:900,y:300,tx:900,ty:300,s:1};
+function layout(){dpr=Math.min(1.5,devicePixelRatio||1);W=innerWidth;H=innerHeight;cv.width=W*dpr;cv.height=H*dpr;ctx.setTransform(dpr,0,0,dpr,0,0);
+ const cols=Math.ceil(W/COL)+1,rows=Math.ceil(H/ROW)+1;D={cols,rows,x:new Float32Array(cols*rows),y:new Float32Array(cols*rows),heat:new Float32Array(cols*rows),d:[]};
+ const tp=topics.map(t=>({x:232+t.x*(W-232),y:t.y*H,h:t.h,s:220*(.6+t.h)}));D.tp=tp;
+ for(const t of tp)D.d.push(new Float32Array(cols*rows));
+ for(let r=0;r<rows;r++)for(let c=0;c<cols;c++){const i=r*cols+c,x=c*COL+(r%2?COL/2:0),y=r*ROW;D.x[i]=x;D.y[i]=y;let h=0;tp.forEach((t,k)=>{const dx=x-t.x,dy=y-t.y,d=Math.hypot(dx,dy);D.d[k][i]=d;h+=t.h*Math.exp(-d*d/(2*t.s*t.s));});D.heat[i]=Math.min(1,h);}
+}
+const NB=32;const bk=Array.from({length:NB*2},()=>[]);let prevW=null;
+function draw(ms){const t=ms/1000,cs=getComputedStyle(document.documentElement),g=v=>cs.getPropertyValue(v).trim();
+ const ink=g('--fd-ink'),hot=g('--fd-hot'),a0=+g('--fd-a0'),a1=+g('--fd-a1'),ha=+g('--fd-hot-a'),ga=+g('--fd-glow');
+ ctx.clearRect(0,0,W,H);
+ const R=340,gr=ctx.createRadialGradient(ptr.x,ptr.y,0,ptr.x,ptr.y,R);gr.addColorStop(0,`rgba(${hot},${ga*ptr.s})`);gr.addColorStop(1,`rgba(${hot},0)`);ctx.fillStyle=gr;ctx.fillRect(ptr.x-R,ptr.y-R,2*R,2*R);
+ for(const b of bk)b.length=0;
+ const TAU=6.2832,k1=TAU/900,k2=TAU/520,k3=TAU/1400,c1=Math.cos(.35),s1=Math.sin(.35),c2=Math.cos(-.6),s2=Math.sin(-.6),c3=Math.cos(1.66),s3=Math.sin(1.66);
+ const p1=k1*18*t,p2=k2*11*t,p3=k3*7*t,lam=TAU/180,rv=lam*14*t,sig2=2*220*220;
+ const {cols,rows}=D; if(!prevW||prevW.length!==cols)prevW=new Float32Array(cols); const cur=new Float32Array(cols);
+ for(let r=0;r<rows;r++){for(let c=0;c<cols;c++){const i=r*cols+c,x=D.x[i],y=D.y[i];
+  let w=.55*Math.sin(k1*(x*c1+y*s1)-p1)+.3*Math.sin(k2*(x*c2+y*s2)-p2)+.15*Math.sin(k3*(x*c3+y*s3)+p3);
+  for(let k=0;k<D.tp.length;k++){const T=D.tp[k],d=D.d[k][i];w+=.5*T.h*Math.cos(lam*d-rv)*Math.exp(-d*d/(2*T.s*T.s));}
+  w=Math.max(-1,Math.min(1,w/1.2));cur[c]=w;
+  const dx=x-ptr.x,dy=y-ptr.y,L=ptr.s*Math.exp(-(dx*dx+dy*dy)/sig2);
+  const sheen=L*Math.max(0,Math.min(1,(w-prevW[c])*5));
+  const he=D.heat[i];const u=.5+.5*w;
+  let a=a0+(a1-a0)*u*u+he*.10+L*.16+sheen*.22; let hotness=he*.85+L*.5;
+  const grp=hotness>.45?1:0; if(grp)a=Math.min(1,a*ha/a1*1.0+.02);
+  const bi=Math.max(0,Math.min(NB-1,Math.round(a*NB/0.6)));
+  bk[grp*NB+bi].push(x,y+2.4*w,1+.7*L+.4*he);
+ }prevW.set(cur);}
+ for(let gI=0;gI<2;gI++)for(let b=0;b<NB;b++){const arr=bk[gI*NB+b];if(!arr.length)continue;ctx.fillStyle=`rgba(${gI?hot:ink},${(b*0.6/NB).toFixed(3)})`;ctx.beginPath();for(let j=0;j<arr.length;j+=3){const s=arr[j+2];ctx.rect(arr[j]-1.6*s,arr[j+1]-.5,3.2*s,1);}ctx.fill();}
+}
+layout();window.F={draw,layout};
+</script></body></html>
