@@ -106,12 +106,7 @@ export async function render(view) {
 
   hydratePlates(el);
   const slot = el.querySelector('#wire-player');
-  if (slot && b) import('../player.js').then(m => { if (slot.isConnected && m.mountPlayer) { slot.innerHTML = ''; view.__player?.destroy?.(); view.__player = m.mountPlayer(slot, { date: b.run_date, stories: items });
-      // the transcript repeats the stories below: keep it folded until asked for (or while playing)
-      const tr = slot.querySelector('.wp-transcript');
-      if (tr) { const d = document.createElement('details'); d.className = 'read-along'; d.innerHTML = '<summary>Read along</summary>'; tr.replaceWith(d); d.append(tr);
-        slot.querySelector('.wp')?.addEventListener('click', (ev) => { if (ev.target.closest('.wp-play') && !d.open) d.open = true; }); }
-    } }).catch(() => { /* keep the browser-voice button */ });
+  void slot; // v4: the voice player UI is removed (player.js deleted); the Today rebuild drops this slot
 
   on(el, 'click', '[data-act]', async (e, btn) => {
     const a = btn.dataset.act;

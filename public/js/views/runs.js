@@ -128,7 +128,7 @@ export async function render(view, { params = [] } = {}) {
   </div>`);
 
   // proof marks on stage rows: dashed ring while running, red-pencil check + "stet" when done, struck cross on failure
-  import('../fx/micro.js').then(({ statusMark }) => el.querySelectorAll('.stage-mark[data-mark]').forEach((m, i) => statusMark(m, m.dataset.mark, { delay: 260 + i * 90 })));
+  import('../ui.js').then(({ statusMark }) => el.querySelectorAll('.stage-mark[data-mark]').forEach((m, i) => statusMark(m, m.dataset.mark, { delay: 260 + i * 90 })));
 
   on(el, 'click', '[data-run]', (e, tr) => go(tr.dataset.run));
   on(el, 'submit', '[data-form="run"]', async (e, f) => {

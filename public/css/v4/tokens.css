@@ -1,0 +1,327 @@
+/* =====================================================================
+   Byline v4 — design tokens. The ONLY file allowed literal colours.
+   (Exception, DECISIONS: the inline `--q` computed by quality.js.)
+
+   Sources: colour + quality ramp + glass + field = council B §1/§2/§4 (verbatim);
+   surfaces/radii = D §2 with the DECISIONS caps; type = F §1; motion = C §4.
+   Themes: Proof (default, light) = :root / [data-theme=proof];
+           Night (graphite)        = [data-theme=night].
+   ===================================================================== */
+
+/* ---------- fonts (self-hosted, OFL; see /fonts/LICENSE.md) ---------- */
+@font-face { font-family: 'Newsreader'; src: url('/fonts/newsreader.woff2') format('woff2'); font-weight: 200 800; font-style: normal; font-display: swap; }
+@font-face { font-family: 'Newsreader'; src: url('/fonts/newsreader-italic.woff2') format('woff2'); font-weight: 200 800; font-style: italic; font-display: swap; }
+@font-face { font-family: 'Geist'; src: url('/fonts/geist.woff2') format('woff2'); font-weight: 100 900; font-style: normal; font-display: swap; }
+@font-face { font-family: 'Geist Mono'; src: url('/fonts/geist-mono.woff2') format('woff2'); font-weight: 100 900; font-style: normal; font-display: swap; }
+/* metric-matched fallbacks so the swap doesn't shift layout (E §6.2) */
+@font-face { font-family: 'Newsreader Fallback'; src: local('Georgia'), local('Times New Roman'); size-adjust: 95%; ascent-override: 77%; descent-override: 28%; line-gap-override: 0%; }
+@font-face { font-family: 'Geist Fallback'; src: local('Arial'), local('Helvetica'), local('Liberation Sans'); size-adjust: 107%; ascent-override: 86%; descent-override: 21%; line-gap-override: 0%; }
+@font-face { font-family: 'Geist Mono Fallback'; src: local('Menlo'), local('Consolas'), local('Liberation Mono'); size-adjust: 100%; ascent-override: 92%; descent-override: 22%; line-gap-override: 0%; }
+
+/* ---------- registered properties (animatable custom properties) ---------- */
+@property --rail-w { syntax: '<length>'; inherits: true; initial-value: 232px; }
+@property --grp-h { syntax: '<length>'; inherits: true; initial-value: 24px; }
+@property --hl-i { syntax: '<number>'; inherits: false; initial-value: 0; }
+@property --hl-g { syntax: '<number>'; inherits: false; initial-value: 0; }
+@property --ring-p { syntax: '<number>'; inherits: true; initial-value: 0; }
+
+:root, [data-theme=proof] {
+  color-scheme: light;
+
+  /* ---- surfaces (B §1) ---- */
+  --bg: #F5F6F8;
+  --surface: rgba(255,255,255,.92);
+  --surface-solid: #FFFFFF;
+  --surface-glass: rgba(255,255,255,.64);
+  --surface-glass-strong: rgba(255,255,255,.82);
+  --surface-flight: rgba(255,255,255,.94);          /* dossier fill during the FLIP (E) */
+  --surface-nested: rgba(255,255,255,.7);           /* sections inside glass: no glass on glass */
+  --raised: #FFFFFF;
+  --inset: #EEF0F3;
+  --scrim: rgba(245,246,248,.5);
+  --scrim-sheet: rgba(10,12,16,.28);
+  --sk: rgba(12,16,24,.055);                        /* skeleton bars */
+  --track: rgba(12,16,24,.06);                      /* neutral segmented/track fill */
+  --tint-1: rgba(12,16,24,.04);                     /* ink wash: ghost hover, neutral chip */
+  --tint-2: rgba(12,16,24,.06);
+
+  /* ---- hairlines ---- */
+  --line: rgba(14,18,28,.08);
+  --line-2: rgba(14,18,28,.14);
+  --line-3: rgba(14,18,28,.22);
+  --line-ctl: #8A8F98;
+
+  /* ---- text ---- */
+  --text-1: #0C0D10;
+  --text-2: #4A4E57;
+  --text-3: #62666F;
+
+  /* ---- accent (blue budget: B amendment 2) ---- */
+  --accent: #1F5EFF;
+  --accent-text: #1A50E0;
+  --accent-fill: #1F5EFF;            /* primary button fill */
+  --accent-fill-hover: #3A71FF;
+  --accent-soft: rgba(31,94,255,.09);
+  --accent-line: rgba(31,94,255,.40);
+  --on-accent: #FFFFFF;
+  --focus-c: #1F5EFF;
+  --focus-halo: rgba(31,94,255,.16);
+  --focus: 0 0 0 2px var(--bg), 0 0 0 4px var(--focus-c), 0 0 0 7px var(--focus-halo);
+  --ctl-ring: 0 0 0 3px rgba(31,94,255,.16);
+
+  /* ---- hover (B §1) ---- */
+  --hover-wash: rgba(31,94,255,.035);
+  --hover-spot: rgba(31,94,255,.075);
+  --hover-line: rgba(31,94,255,.26);
+  --hover-row: rgba(31,94,255,.05);
+  --hover-nav: rgba(31,94,255,.05);
+
+  /* ---- status (never blue; always with a text label) ---- */
+  --ok: #0E9F6E;
+  --warn: #B7791F;
+  --err: #D93636;
+  --ok-soft: rgba(14,159,110,.12);
+  --warn-soft: rgba(183,121,31,.13);
+  --err-soft: rgba(217,54,54,.11);
+
+  /* ---- quality ramp (B §2): stops by delta = score − threshold ---- */
+  --q-0: #8A8F98;  /* ≤ −30 */
+  --q-1: #808799;  /* −15  */
+  --q-2: #727E94;  /* −1   */
+  --q-3: #2E6AF6;  /* 0: clears */
+  --q-4: #1F5EFF;  /* +8   */
+  --q-5: #0A3FD6;  /* ≥ +15 */
+  --q-on5: #FFFFFF;
+  --q-glow: 0 0 0 3px rgba(10,63,214,.12), 0 0 14px rgba(31,94,255,.35);
+
+  /* ---- shadows ---- */
+  --shadow-1: 0 1px 2px rgba(16,24,40,.04), 0 8px 24px -16px rgba(16,24,40,.12);
+  --shadow-2: 0 1px 2px rgba(14,18,28,.05), 0 12px 32px -14px rgba(16,32,72,.18);
+  --shadow-hover: 0 18px 40px -24px rgba(31,64,160,.28);
+  --shadow-shell: inset 0 1px 0 rgba(255,255,255,.9), 0 1px 2px rgba(16,24,40,.04), 0 24px 60px -28px rgba(16,32,72,.22);
+  --shadow-hl: 0 1px 2px rgba(16,24,40,.06), 0 4px 12px -6px rgba(10,40,120,.18);
+  --hl-fill: rgba(255,255,255,.92);
+
+  /* ---- glass (B §4, capped by E: blur ≤ 20, sat ≤ 175) ---- */
+  --glass-blur: 20px;
+  --glass-sat: 170%;
+  --glass-border: rgba(14,18,28,.08);
+  --glass-inner: inset 0 1px 0 rgba(255,255,255,.9), inset 0 0 0 1px rgba(255,255,255,.45);
+  --glass-shadow: 0 1px 1px rgba(16,24,40,.03), 0 8px 24px -10px rgba(16,24,40,.10), 0 30px 60px -30px rgba(16,32,72,.14);
+  --rail-fill: rgba(255,255,255,.64);               /* rail: translucent, NO backdrop-filter (E) */
+
+  /* ---- background field (B §3) — rgb triplets ---- */
+  --fd-bg: 245,246,248;
+  --fd-ink: 58,66,84;
+  --fd-hot: 31,94,255;
+  --fd-amin: .06;
+  --fd-amax: .18;
+  --fd-hot-a: .30;
+  --fd-glow: .05;
+  --fd-pool: .07;
+}
+
+[data-theme=night] {
+  color-scheme: dark;
+  --bg: #121316;
+  --surface: rgba(26,27,31,.90);
+  --surface-solid: #1A1B1F;
+  --surface-glass: rgba(30,31,35,.60);
+  --surface-glass-strong: rgba(30,31,35,.82);
+  --surface-flight: rgba(30,31,35,.94);
+  --surface-nested: rgba(255,255,255,.035);
+  --raised: #232429;
+  --inset: #15161A;
+  --scrim: rgba(8,9,11,.5);
+  --scrim-sheet: rgba(0,0,0,.5);
+  --sk: rgba(255,255,255,.055);
+  --track: rgba(255,255,255,.06);
+  --tint-1: rgba(255,255,255,.04);
+  --tint-2: rgba(255,255,255,.07);
+
+  --line: rgba(255,255,255,.07);
+  --line-2: rgba(255,255,255,.13);
+  --line-3: rgba(255,255,255,.20);
+  --line-ctl: #6B6F78;
+
+  --text-1: #EDEEF0;
+  --text-2: #A6AAB2;
+  --text-3: #8C9099;
+
+  --accent: #4D86FF;
+  --accent-text: #8AB0FF;
+  --accent-fill: #2F6BF0;
+  --accent-fill-hover: #3D77F5;
+  --accent-soft: rgba(77,134,255,.16);
+  --accent-line: rgba(127,166,255,.45);
+  --on-accent: #FFFFFF;
+  --focus-c: #7FA6FF;
+  --focus-halo: rgba(127,166,255,.25);
+  --ctl-ring: 0 0 0 3px rgba(77,134,255,.28);
+
+  --hover-wash: rgba(77,134,255,.05);
+  --hover-spot: rgba(77,134,255,.11);
+  --hover-line: rgba(127,166,255,.30);
+  --hover-row: rgba(77,134,255,.07);
+  --hover-nav: rgba(255,255,255,.04);
+
+  --ok: #3CCB8F;
+  --warn: #E3A542;
+  --err: #F26B6B;
+  --ok-soft: rgba(60,203,143,.14);
+  --warn-soft: rgba(227,165,66,.15);
+  --err-soft: rgba(242,107,107,.14);
+
+  --q-0: #65696F; --q-1: #6A7183; --q-2: #717F98; --q-3: #4580F7; --q-4: #5A93FF; --q-5: #86B0FF;
+  --q-on5: #0A0F1E;
+  --q-glow: 0 0 0 3px rgba(134,176,255,.14), 0 0 16px rgba(90,147,255,.45);
+
+  --shadow-1: inset 0 1px 0 rgba(255,255,255,.04), 0 10px 28px -18px rgba(0,0,0,.6);
+  --shadow-2: inset 0 1px 0 rgba(255,255,255,.05), 0 14px 36px -16px rgba(0,0,0,.65);
+  --shadow-hover: 0 22px 48px -22px rgba(0,0,0,.75), 0 0 0 1px rgba(77,134,255,.18);
+  --shadow-shell: inset 0 1px 0 rgba(255,255,255,.06), 0 24px 60px -28px rgba(0,0,0,.7);
+  --shadow-hl: inset 0 1px 0 rgba(255,255,255,.08);
+  --hl-fill: rgba(255,255,255,.07);
+
+  --glass-sat: 140%;
+  --glass-border: rgba(255,255,255,.08);
+  --glass-inner: inset 0 1px 0 rgba(255,255,255,.07);
+  --glass-shadow: 0 1px 1px rgba(0,0,0,.3), 0 10px 28px -12px rgba(0,0,0,.5), 0 36px 80px -36px rgba(0,0,0,.65);
+  --rail-fill: rgba(30,31,35,.60);
+
+  --fd-bg: 18,19,22;
+  --fd-ink: 150,158,174;
+  --fd-hot: 92,142,255;
+  --fd-amin: .05;
+  --fd-amax: .15;
+  --fd-hot-a: .40;
+  --fd-glow: .07;
+  --fd-pool: .09;
+}
+::selection { background: rgba(31,94,255,.18); }
+[data-theme=night] ::selection { background: rgba(77,134,255,.32); }
+
+:root {
+  /* ---------- type (F §1): families ---------- */
+  --font-serif: 'Newsreader', 'Newsreader Fallback', Georgia, serif;
+  --font-sans: 'Geist', 'Geist Fallback', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'Geist Mono', 'Geist Mono Fallback', ui-monospace, Menlo, Consolas, monospace;
+  --font-sys: -apple-system, BlinkMacSystemFont, 'Segoe UI Symbol', system-ui, sans-serif; /* ⌘ glyph */
+
+  /* ---------- type scale (F §1): size / line-height / weight / opsz / tracking ---------- */
+  --fs-display: clamp(44px, 3.4vw + 18px, 68px); --lh-display: 1;    --wt-display: 380; --op-display: 72; --tr-display: -0.022em;
+  --fs-h1: 48px;   --lh-h1: 50px;   --wt-h1: 400; --op-h1: 72; --tr-h1: -0.02em;
+  --fs-h2: 26px;   --lh-h2: 31px;   --wt-h2: 440; --op-h2: 28; --tr-h2: -0.012em;
+  --fs-title-lg: 32px; --lh-title-lg: 36px; --wt-title-lg: 430; --op-title-lg: 40; --tr-title-lg: -0.014em;
+  --fs-title: 20px; --lh-title: 25px; --wt-title: 460; --op-title: 20; --tr-title: -0.004em;
+  --fs-lede: 18px; --lh-lede: 27px;
+  --fs-reading: 17px; --lh-reading: 25px;
+  --fs-body: 15px; --lh-body: 23px;
+  --fs-meta: 13px; --lh-meta: 18px;
+  --fs-label: 11px; --lh-label: 14px; --tr-label: .08em;
+  --fs-mono: 13px; --lh-mono: 18px;
+  --fs-score-xl: 56px;
+  --fs-score-chip: 15px;
+  --fs-control: 14px;
+  --fs-pill: 12.5px;
+
+  /* ---------- geometry (D §1–3 + DECISIONS caps) ---------- */
+  --r-shell: 16px;   /* rail, dossier */
+  --r-tile: 12px;
+  --r-ctl: 8px;
+  --r-tag: 5px;
+  --r-chip: 999px;
+  --r-sheet: 16px;
+  --shell-inset: 12px;
+  --rail-expanded: 232px;
+  --rail-collapsed: 64px;
+  --gutter: 40px;
+  --content-max: 1240px;
+  --gap: 16px;
+  --topbar-h: 56px;
+  --phone-top-h: 52px;
+  --phone-bar-h: 64px;
+  --slot-h: 32px;
+  --slot-gap: 4px;
+
+  /* ---------- motion (C §4) ---------- */
+  --ease-settle: cubic-bezier(.25,.1,.05,1);
+  --ease-fade: cubic-bezier(.33,0,.2,1);
+  --ease-exit: cubic-bezier(.4,0,1,1);
+  --ease-move: cubic-bezier(.45,0,.15,1);
+  --ease-ambient: cubic-bezier(.37,0,.63,1);
+  --ease-press: cubic-bezier(.2,0,0,1);
+  --dur-press: 120ms;
+  --dur-release: 240ms;
+  --dur-micro: 160ms;
+  --dur-hover-in: 240ms;
+  --dur-hover-out: 360ms;
+  --dur-exit: 200ms;
+  --dur-fade: 450ms;
+  --dur-settle: 900ms;
+  --dur-heading: 1000ms;
+  --dur-heading-tab: 600ms;
+  --dur-layout: 420ms;
+  --dur-morph-open: 600ms;
+  --dur-morph-close: 440ms;
+  --dur-count: 1400ms;
+  --dur-count-2: 1100ms;
+  --dur-theme: 600ms;
+  --dur-ambient: 1600ms;
+  --dur-skeleton-breath: 1800ms;
+  --stagger-line: 120ms;
+  --stagger-line-tab: 60ms;
+  --stagger-tile: 90ms;
+  --stagger-item: 40ms;
+  --stagger-cap: 8;
+
+  --rail-w: var(--rail-expanded);
+  --grp-h: 24px;
+}
+html.rail-collapsed { --rail-w: var(--rail-collapsed); --grp-h: 4px; }
+@media (max-width: 1359px) { :root { --gutter: 32px; } }
+@media (max-width: 1279px) { :root { --fs-display: 52px; --fs-h1: 40px; --lh-h1: 44px; } }
+@media (max-width: 760px) {
+  :root {
+    --gutter: 16px; --rail-w: 0px;
+    --fs-display: 40px; --lh-display: 1.05;
+    --fs-h1: 34px; --lh-h1: 37px;
+    --fs-h2: 22px; --lh-h2: 27px;
+    --fs-title-lg: 26px; --lh-title-lg: 30px;
+    --fs-title: 19px; --lh-title: 24px;
+    --fs-lede: 16px; --lh-lede: 24px;
+    --fs-body: 16px; --lh-body: 24px;
+    --fs-score-xl: 44px;
+    --fs-control: 15px;
+    --glass-blur: 16px;
+  }
+  html.rail-collapsed { --rail-w: 0px; }
+}
+
+/* Under reduced motion every duration is 0 (C §4) — final states immediately. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-press: 0ms; --dur-release: 0ms; --dur-micro: 0ms; --dur-hover-in: 0ms; --dur-hover-out: 0ms;
+    --dur-exit: 0ms; --dur-fade: 0ms; --dur-settle: 0ms; --dur-heading: 0ms; --dur-heading-tab: 0ms;
+    --dur-layout: 0ms; --dur-morph-open: 0ms; --dur-morph-close: 0ms; --dur-count: 0ms; --dur-count-2: 0ms;
+    --dur-theme: 0ms; --dur-ambient: 0ms; --stagger-line: 0ms; --stagger-line-tab: 0ms; --stagger-tile: 0ms; --stagger-item: 0ms;
+  }
+}
+
+/* ---------- type utilities (F §1). Use these, not ad-hoc font rules. ---------- */
+.t-display { font: var(--wt-display) var(--fs-display)/var(--lh-display) var(--font-serif); font-variation-settings: 'opsz' var(--op-display); letter-spacing: var(--tr-display); }
+.t-h1 { font: var(--wt-h1) var(--fs-h1)/var(--lh-h1) var(--font-serif); font-variation-settings: 'opsz' var(--op-h1); letter-spacing: var(--tr-h1); }
+.t-h2 { font: var(--wt-h2) var(--fs-h2)/var(--lh-h2) var(--font-serif); font-variation-settings: 'opsz' var(--op-h2); letter-spacing: var(--tr-h2); }
+.t-title-lg { font: var(--wt-title-lg) var(--fs-title-lg)/var(--lh-title-lg) var(--font-serif); font-variation-settings: 'opsz' var(--op-title-lg); letter-spacing: var(--tr-title-lg); }
+.t-title { font: var(--wt-title) var(--fs-title)/var(--lh-title) var(--font-serif); font-variation-settings: 'opsz' var(--op-title); letter-spacing: var(--tr-title); }
+.t-lede { font: 400 var(--fs-lede)/var(--lh-lede) var(--font-sans); letter-spacing: -0.006em; max-width: 68ch; }
+.t-reading { font: 400 var(--fs-reading)/var(--lh-reading) var(--font-serif); font-variation-settings: 'opsz' 16; max-width: 70ch; }
+.t-body { font: 400 var(--fs-body)/var(--lh-body) var(--font-sans); }
+.t-meta { font: 450 var(--fs-meta)/var(--lh-meta) var(--font-sans); letter-spacing: .002em; font-variant-numeric: tabular-nums; }
+.t-label { font: 500 var(--fs-label)/var(--lh-label) var(--font-mono); letter-spacing: var(--tr-label); text-transform: uppercase; }
+.t-mono { font: 450 var(--fs-mono)/var(--lh-mono) var(--font-mono); font-variant-numeric: tabular-nums; }
+.t-score-xl { font: 320 var(--fs-score-xl)/1 var(--font-sans); letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
+.t-score-chip { font: 600 var(--fs-score-chip)/20px var(--font-sans); font-variant-numeric: tabular-nums; }
+.t-control { font: 500 var(--fs-control)/20px var(--font-sans); }
+.num, .tnum { font-variant-numeric: tabular-nums; }
+.ink-1 { color: var(--text-1); } .ink-2 { color: var(--text-2); } .ink-3 { color: var(--text-3); } .ink-accent { color: var(--accent-text); }

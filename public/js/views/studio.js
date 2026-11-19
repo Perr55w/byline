@@ -442,7 +442,7 @@ async function editor(el, id) {
     } catch (err) { toast(err.message, 'err'); return false; }
     finally { clearTimeout(slow); document.getElementById('pressbar')?.classList.remove('on'); }
   }
-  import('../fx/micro.js').then(({ holdToPress }) => {
+  import('../ui.js').then(({ holdToPress }) => {
     const wire = () => el.querySelectorAll('[data-act="publish"]:not([data-hold])').forEach(b => holdToPress(b, { ms: 900, hint: `Hold to publish to ${channelLabel(d.channel)}`, onComplete: publishNow }));
     wire();
     new MutationObserver(wire).observe(el, { childList: true, subtree: true });

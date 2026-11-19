@@ -1,14 +1,16 @@
 {
   "name": "Byline — briefing & media studio",
   "short_name": "Byline",
+  "description": "Your AI news briefing, publishing studio and career desk.",
   "start_url": "/#/today",
   "scope": "/",
   "display": "standalone",
-  "background_color": "#0b0912",
-  "theme_color": "#0b0912",
+  "background_color": "#F5F6F8",
+  "theme_color": "#F5F6F8",
   "icons": [
-    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
-    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
-    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+    { "src": "/icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
   ]
 }

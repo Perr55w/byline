@@ -5,6 +5,7 @@ import { MEDIA_DIR, getSettings, setSetting } from './src/db.js';
 import { registerContent } from './src/routes/content.js';
 import { registerDrafts } from './src/routes/drafts.js';
 import { registerCareer } from './src/routes/career.js';
+import { registerMap } from './src/routes/map.js';
 import { startScheduler } from './src/scheduler.js';
 import { seedDefaults } from './src/seed.js';
 import crypto from 'node:crypto';
@@ -29,6 +30,7 @@ const route = (method, pattern, handler) => {
 registerContent(route);
 registerDrafts(route);
 registerCareer(route);
+registerMap(route);
 
 async function readBody(req) {
   const chunks = []; let size = 0;
@@ -55,7 +57,7 @@ function sendFile(res, file, download) {
 // Local use needs no password. Before exposing Byline (Cloudflare Tunnel, LAN, VPS), set BYLINE_PASSWORD.
 const PASSWORD = process.env.BYLINE_PASSWORD || '';
 const SECRET = crypto.createHash('sha256').update(`byline-session:${PASSWORD}`).digest();
-const PUBLIC_PATHS = new Set(['/login', '/login.html', '/api/login', '/manifest.webmanifest', '/sw.js', '/styles.css']);
+const PUBLIC_PATHS = new Set(['/login', '/login.html', '/api/login', '/manifest.webmanifest', '/sw.js', '/css/v4/tokens.css']));
 const attempts = new Map();
 const sign = (v) => crypto.createHmac('sha256', SECRET).update(v).digest('base64url');
 const cookieOf = (req) => Object.fromEntries((req.headers.cookie || '').split(';').map(c => c.trim().split('=')).filter(([k]) => k));
@@ -180,7 +182,8 @@ const server = http.createServer(async (req, res) => {
         if (!m) continue;
         const params = Object.fromEntries(r.keys.map((k, i) => [k, decodeURIComponent(m[i + 1])]));
         const body = guardSettingsBody(url.pathname, ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method) ? await readBody(req) : {});
-        const out = redactSettings(url.pathname, await r.handler({ params, query: Object.fromEntries(url.searchParams), body, req }));
+        const out = redactSettings(url.pathname, await r.handler({ params, query: Object.fromEntries(url.searchParams), body, req, res }));
+        if (res.headersSent) return; // handler wrote its own response (e.g. /api/map with ETag / 304)
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify(out ?? { ok: true }));
       }
