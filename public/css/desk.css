@@ -400,3 +400,5 @@ main :is(.story, .hit, tbody tr, .source-row):nth-child(n+13) { content-visibili
   :root[data-theme="dark"] { --atmos: radial-gradient(90% 45% at 30% 0%, rgba(255, 196, 120, .14), transparent 70%), radial-gradient(140% 90% at 50% 10%, transparent 50%, rgba(10, 6, 3, .35)), var(--grain); }
 }
 .nameplate { min-width: 100px; } @media (max-width: 760px) { .nameplate { min-width: 82px; } }
+.nameplate { padding-right: .12em; }
+:root[data-theme="dark"] .card.accent .plate img { filter: grayscale(1) sepia(.5) brightness(.6) contrast(1.15); }

@@ -19,7 +19,7 @@ export async function render(view) {
     <div>
       <div class="kicker">${fmtDate(t.date + 'T12:00:00', { weekday: 'long', month: 'long', day: 'numeric' })}</div>
       <h1>Today’s briefing</h1>
-      ${items.length ? html`<p class="live-dek"><b>${plural(items.length, 'story')}</b> · <b>${items.filter(i => i.qualifies).length}</b> post-worthy · <b>${t.awaiting.length}</b> draft${t.awaiting.length === 1 ? '' : 's'} awaiting review</p>`
+      ${items.length ? html`<p class="live-dek"><b>${plural(items.length, 'story')}</b>${items.filter(i => i.qualifies).length === items.length ? html`, all post-worthy ·` : html` · <b>${items.filter(i => i.qualifies).length}</b> post-worthy ·`} <b>${t.awaiting.length}</b> draft${t.awaiting.length === 1 ? '' : 's'} awaiting review</p>`
         : html`<p class="lede">What changed, why it matters to your work, what you think — and whether it’s worth posting, testing, or saving.</p>`}
     </div>
     <div class="row">

@@ -129,3 +129,4 @@ html.doc-hidden .type-case .tc-run .tc-sort::after { animation-play-state: pause
   .proof-mark .pm-check, .proof-mark .pm-cross { transition: none !important; }
   .proof-mark[data-state="done"] .pm-stet { animation: none; }
 }
+.hp-fill { user-select: none; -webkit-user-select: none; }
