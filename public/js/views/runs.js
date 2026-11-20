@@ -11,7 +11,8 @@ import { stagedRun } from '../app.js';
 const STAGES = ['collect', 'cluster', 'rank', 'brief', 'draft'];
 const STAGE_LABEL = { collect: 'Collect', cluster: 'Cluster', rank: 'Rank', brief: 'Brief', draft: 'Draft' };
 const FB_LABEL = { useful: 'Useful', repetitive: 'Repetitive', low_quality: 'Low quality', off_topic: 'Off-topic' };
-const usd = (v) => `$${(v || 0).toFixed((v || 0) && v < 1 ? 4 : 2)}`;
+// 2 decimals everywhere (SS2); a real but sub-cent cost reads "<$0.01" instead of a misleading $0.00
+const usd = (v) => { const n = Number(v) || 0; return n > 0 && n < 0.005 ? '<$0.01' : '$' + n.toFixed(2); };
 const signed = (v) => `${v > 0 ? '+' : ''}${Math.round(v * 100)}%`;
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 const dur = (a, b) => {
@@ -158,16 +159,66 @@ function runRow(r, S) {
           <td class="num">${usd(r.cost_usd)}</td>
         </tr>`;
 }
+/**
+ * SS10: consecutive runs with the same outcome (status, sources read, new, failed, error) collapse into one
+ * expandable row: "#11–#16 · 6 runs". Ranked counts may differ inside a group; the member rows keep them.
+ */
+const outcomeKey = (r) => { const f = facts(r); return [r.status, f.empty, f.allFailed, f.sources, f.fresh, f.failed, f.failedStage, r.error || ''].join('|'); };
+function groupRuns(runs) {
+  const out = [];
+  for (const r of runs) {
+    const last = out[out.length - 1], k = outcomeKey(r);
+    if (last && last.key === k) last.runs.push(r); else out.push({ key: k, runs: [r] });
+  }
+  return out;
+}
+/** "18 Nov 6:25–6:28 PM" (one day), or "17 Nov 6:25 PM – 18 Nov 9:02 AM" across days; newest-first list in. */
+function spanLabel(rs, tz) {
+  const a = rs[rs.length - 1].started_at, b = rs[0].started_at;
+  const da = dfmt(a, tz), db = dfmt(b, tz), ta = tfmt(a, tz), tb = tfmt(b, tz);
+  if (da !== db) return `${da} ${ta} – ${db} ${tb}`;
+  if (ta === tb) return `${da} ${ta}`;
+  const sa = ta.slice(-2), sb = tb.slice(-2);
+  return `${da} ${sa === sb ? ta.slice(0, -3) : ta}–${tb}`;
+}
+function groupRow(g, gi, S) {
+  const rs = g.runs, top = rs[0], old = rs[rs.length - 1], tz = S.tz, f0 = facts(top), f = { ...f0, empty: f0.empty || f0.allFailed };
+  const open = S.openGroups.has(gi);
+  const word = f0.allFailed ? `Done · ${f0.sources === 1 ? 'its 1 source' : `all ${f0.sources} sources`} failed` : f0.empty ? 'Done · 0 sources read' : top.status === 'failed' ? `Failed${f0.failedStage ? ` at ${f0.failedStage}` : ''}` : STATUS_WORD[top.status] || top.status;
+  const ranked = rs.map(r => facts(r).ranked).filter(v => v != null);
+  const rLo = Math.min(...ranked), rHi = Math.max(...ranked);
+  const trig = [...new Set(rs.map(r => r.trigger))].join(', ');
+  const cost = rs.reduce((a, r) => a + (Number(r.cost_usd) || 0), 0);
+  return html`<tr class="rn-row rn-grow${open ? ' is-open' : ''}" data-rn-g="${gi}">
+    <td class="rn-c-st"><span class="rn-mark${f.empty ? ' rn-mark--empty' : ''}" data-mark="${top.status}" ${f.empty ? raw(`data-empty title="${word}"`) : ''}></span></td>
+    <td><button type="button" class="rn-gbtn" data-rn-group="${gi}" aria-expanded="${open}">${icon('chevron-right')}<span class="rn-gid">#${old.id}–#${top.id}</span><span class="rn-gn">${rs.length} runs</span></button><span class="${top.error ? 'rn-row-err' : f.empty ? 'rn-row-empty' : 'rn-row-sub'}">${top.error || word}</span></td>
+    <td class="rn-c-tr">${trig}</td>
+    <td><span class="rn-strip" role="img" aria-label="Same stage outcome in all ${rs.length} runs">${STAGES.map((st, i) => html`<span class="rn-mark rn-mark--sm${i === 0 && f.empty ? ' rn-mark--empty' : ''}" data-mark="${f.stages[i]}" ${i === 0 && f.empty ? raw('data-empty') : ''} title="${STAGE_LABEL[st]}"></span>`)}</span></td>
+    <td class="num">${f.sources ?? '—'}</td>
+    <td class="num${f.fresh ? ' rn-pos' : ''}">${f.fresh ?? '—'}</td>
+    <td class="num${f.failed ? ' rn-neg' : ''}">${f.failed ?? '—'}</td>
+    <td class="num">${ranked.length ? (rLo === rHi ? rLo : `${rLo}–${rHi}`) : '—'}</td>
+    <td class="rn-c-time rn-c-span"><span class="rn-span">${spanLabel(rs, tz)}</span><span>${timeAgo(top.started_at)}</span></td>
+    <td class="num">—</td>
+    <td class="num">${usd(cost)}</td>
+  </tr>`;
+}
+/** History rows for one item: a single run, or a group row followed by its (hidden unless open) member rows. */
+function itemRows(g, gi, S) {
+  if (g.runs.length < 2) return String(runRow(g.runs[0], S));
+  const open = S.openGroups.has(gi);
+  return String(groupRow(g, gi, S)) + g.runs.map(r => String(runRow(r, S)).replace('<tr class="rn-row', `<tr${open ? '' : ' hidden'} data-in-g="${gi}" class="rn-row rn-member`)).join('');
+}
 const markAll = (root) => root.querySelectorAll('.rn-mark[data-mark]').forEach(m => { const sm = statusMark(m, m.dataset.mark); if (m.hasAttribute('data-empty')) sm?.setAttribute('aria-label', m.title?.includes('failed') ? 'Done, every source failed' : 'Done, 0 sources read'); });
 
 function historyHtml(S) {
   const tz = S.tz;
   return html`<section class="rn-history" aria-labelledby="rn-hist-h">
-    <div class="section-head"><h2 class="t-h2" id="rn-hist-h">Run history</h2><span class="section-meta">${plural(S.runs.length, 'run')} · newest first</span></div>
+    <div class="section-head"><h2 class="t-h2" id="rn-hist-h">Run history</h2><span class="section-meta">${plural(S.runs.length, 'run')} · newest first${S.groups.length < S.runs.length ? ' · repeats grouped' : ''}</span></div>
     ${S.runs.length ? html`<div class="tile tile--flush tile--static rn-table-tile"><table class="table rn-table">
       <caption class="sr-only">Runs, newest first. Select a row to see its stages.</caption>
       <thead><tr><th class="rn-c-st"><span class="sr-only">Status</span></th><th>Run</th><th>Trigger</th><th>Stages</th><th class="num">Read</th><th class="num">New</th><th class="num">Failed</th><th class="num">Ranked</th><th>Started</th><th class="num">Time</th><th class="num">Cost</th></tr></thead>
-      <tbody data-rn-rows>${S.runs.slice(0, S.rows ?? FIRST_RUNS).map(r => runRow(r, S))}</tbody></table></div>` : html`<div class="empty"><h3>No runs yet.</h3><p>Use Run now, or enable the daily schedule in Settings.</p></div>`}
+      <tbody data-rn-rows>${raw(S.groups.slice(0, S.rows ?? FIRST_RUNS).map((g, gi) => itemRows(g, gi, S)).join(''))}</tbody></table></div>` : html`<div class="empty"><h3>No runs yet.</h3><p>Use Run now, or enable the daily schedule in Settings.</p></div>`}
   </section>`;
 }
 
@@ -204,8 +255,11 @@ export async function render(view, { params = [] } = {}) {
     srcName: Object.fromEntries(sources.map(s => [s.id, s.name])),
     sourceCount: st.counts?.sources ?? sources.length,
     allPaused: !!(st.counts?.sources && st.counts.sources_paused >= st.counts.sources),
-    scheduleOff: st.schedule?.enabled === false
+    scheduleOff: st.schedule?.enabled === false,
+    groups: groupRuns(runs), openGroups: new Set()
   };
+  // the selected run's group starts open, so its highlighted row is visible
+  S.groups.forEach((g, gi) => { if (g.runs.length > 1 && g.runs.some(r => r.id === selId)) S.openGroups.add(gi); });
   const hd = headline(runs, S);
   const el = document.createElement('div');
   el.className = 'rn';
@@ -232,15 +286,16 @@ export async function render(view, { params = [] } = {}) {
   afterEnter(view, el, () => {
     const body = el.querySelector('[data-rn-rows]');
     if (!body) return;
-    const rest = S.runs.slice(body.children.length);
-    // a few rows per idle slice, so no single task builds the whole history (E1 at 4×)
+    let at = S.rows ?? FIRST_RUNS;
+    const rest = S.groups.slice(at);
+    // a few history items per idle slice, so no single task builds the whole history (E1 at 4×)
     const pump = (dl) => {
       if (!body.isConnected) return;
       do {
         const chunk = rest.splice(0, 3);
         if (!chunk.length) break;
         const tmp = document.createElement('tbody');
-        tmp.innerHTML = chunk.map(r => String(runRow(r, S))).join('');
+        tmp.innerHTML = chunk.map((g) => itemRows(g, at++, S)).join('');
         markAll(tmp);
         const rows = [...tmp.children];
         body.append(...rows);
@@ -252,6 +307,14 @@ export async function render(view, { params = [] } = {}) {
 
   const go = (id) => { const h = `#/runs/${id}`; if (location.hash === h) render(view, { params: [String(id)] }); else location.hash = h; };
   on(el, 'click', 'tr[data-run]', (e, tr) => { if (e.target.closest('a')) return; go(tr.dataset.run); });
+  // SS10: expand / collapse a group of repeated runs
+  on(el, 'click', 'tr[data-rn-g]', (e, tr) => {
+    const gi = Number(tr.dataset.rnG), open = !S.openGroups.has(gi);
+    if (open) S.openGroups.add(gi); else S.openGroups.delete(gi);
+    tr.classList.toggle('is-open', open);
+    tr.querySelector('[data-rn-group]').setAttribute('aria-expanded', String(open));
+    el.querySelectorAll(`tr[data-in-g="${gi}"]`).forEach(m => { m.hidden = !open; });
+  });
   on(el, 'submit', '[data-form="run"]', async (e, f) => {
     e.preventDefault();
     const d = Object.fromEntries(new FormData(f));

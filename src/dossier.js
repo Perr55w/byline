@@ -1,6 +1,6 @@
 // Dossier payload for /api/stories/:id, following critic F §3 (information architecture) — pure given its inputs.
 import { originOf, roleOf, kindLabel, sourceCounts, sourceSummary, sourceLine, shortTitle, isBoilerplate, cleanClaim, usableClaim,
-  numberMarks, markedText, groupClaims, orderArticles, findingLine, mapSignals, listJoin, CHALLENGE_TERMS } from './finding.js';
+  numberMarks, markedText, groupClaims, orderArticles, findingLine, mapSignals, listJoin, CHALLENGE_TERMS, keyEligible } from './finding.js';
 import { scoreFrom } from './score.js';
 import { whyRanked, mainTopic } from './facts.js';
 
@@ -76,7 +76,7 @@ export function evidenceGroups(story) {
   const sig = b.signals || {}, quotes = b.signal_quotes || {};
   const LBL = { testable: 'You can try it', challenges: 'It challenges a claim', process: 'It changes a process', numbers: 'Checkable numbers' };
   const rows = ['testable', 'challenges', 'process', 'numbers'].filter(k => sig[k]).map(k => {
-    const quote = quotes[k] || null;
+    const quote = quotes[k] && keyEligible(quotes[k]) ? quotes[k] : null; // R2 S14: filler / self-talk never quoted
     const text = k === 'numbers' && b.numbers_found?.length ? `${LBL[k]}: ${b.numbers_found.slice(0, 5).join(', ')}.` : `${LBL[k]}${quote ? `: ${q(quote)}` : '.'}`;
     return { signal: k, label: LBL[k], quote, terms: k === 'numbers' ? (b.numbers_found || []) : (b.signal_hits?.[k] || []), text };
   });
@@ -133,7 +133,8 @@ export function articlesView(articles, claims) {
       for (const c of claims) if (c.article_id === a.id && ns.includes(norm(cleanClaim(c.text)))) used.add(c.id);   // already shown in "what it says"
       continue;
     }
-    const best = claims.filter(c => c.article_id === a.id).map(c => ({ c, t: cleanClaim(c.text) })).filter(x => usableClaim(x.t, x.c.text))
+    // R2 S14: a self-talk sentence with no number ("we’ve heard helpful feedback") is never the Key claim
+    const best = claims.filter(c => c.article_id === a.id).map(c => ({ c, t: cleanClaim(c.text) })).filter(x => usableClaim(x.t, x.c.text) && keyEligible(x.t))
       .sort((x, y) => numberMarks(y.t).length - numberMarks(x.t).length || y.c.has_number - x.c.has_number || x.c.id - y.c.id)[0];
     if (best) { used.add(best.c.id); says.set(a.id, { text: best.t, marks: numberMarks(best.t), from: 'claim', claim_id: best.c.id }); }
     else says.set(a.id, null);

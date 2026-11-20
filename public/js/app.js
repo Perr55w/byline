@@ -58,18 +58,25 @@ function paintTheme() {
   document.querySelectorAll('[data-theme-toggle]').forEach(b => { b.setAttribute('aria-label', night ? 'Switch to Proof (light)' : 'Switch to Night (dark)'); b.dataset.tip = night ? 'Theme: Night' : 'Theme: Proof'; });
   $('theme-color-live')?.setAttribute('content', night ? '#121316' : '#F5F6F8');
 }
-let xfadeT = 0, midT = 0;
-// S7: surfaces cross-fade over --dur-theme; the ink keeps the old theme's tokens until the midpoint, then swaps in
-// one frame (a cross-faded ink would cross the cross-faded surface: ~1:1 contrast on some frame, whatever the curve).
+let xfadeT = 0, midT = 0, inkT = [];
+// S6 (round 2): surfaces (CSS and the field) cross-fade over --dur-theme on --ease-move. The ink never cross-fades:
+// while the surface passes through its mid-tones every ink is held at the strongest ink (the old theme's until the
+// step, the new theme's after: one step), then the new theme's own inks return at ~470ms.
+// Mid-grey muted ink on a mid-grey surface was < 1.5:1 at ~150ms otherwise.
 function applyTheme(next) {
   if (next === themeNow()) return;
   const prev = themeNow();
-  clearTimeout(xfadeT); clearTimeout(midT);
-  root.classList.remove('theme-mid', 'ink-hold-proof', 'ink-hold-night');
+  clearTimeout(xfadeT); clearTimeout(midT); inkT.forEach(clearTimeout); inkT = [];
+  const INK = ['theme-mid', 'ink-hold-proof', 'ink-hold-night', 'ink-strong-proof', 'ink-strong-night'];
+  root.classList.remove(...INK);
   if (!reducedMotion()) {
-    root.classList.add('theme-xfade', `ink-hold-${prev}`);
-    midT = setTimeout(() => { root.classList.remove('ink-hold-proof', 'ink-hold-night'); root.classList.add('theme-mid'); }, Math.round(DUR.theme / 2));
-    xfadeT = setTimeout(() => root.classList.remove('theme-xfade', 'theme-mid'), DUR.theme + 60);
+    const T = DUR.theme;
+    // the ink step lands earlier going light (a light ink on a brightening surface fails sooner than a dark one on a
+    // darkening surface); each step is one document restyle, done in the same frame as the theme flip itself
+    root.classList.add('theme-xfade', `ink-strong-${prev}`);
+    midT = setTimeout(() => { root.classList.remove(`ink-strong-${prev}`); root.classList.add(`ink-strong-${next}`, 'theme-mid'); }, Math.round(T * (next === 'proof' ? .36 : .42)));
+    inkT.push(setTimeout(() => { root.classList.remove(`ink-strong-${next}`); }, Math.round(T * .78)));
+    xfadeT = setTimeout(() => root.classList.remove('theme-xfade', 'theme-mid'), T + 60);
   }
   root.dataset.theme = next;
   paintTheme();
@@ -91,10 +98,14 @@ paintTheme();
 
 // ---------------------------------------------------------------- rail: highlight, collapse, tooltips
 const rail = $('rail'), hl = $('rail-hl'), railNav = $('rail-nav'), tip = $('rail-tip');
+const PHONE_TABS = new Set(['today', 'feed', 'map', 'studio']);
 function setActive(key) {
   const k = ALIAS[key] || key;
   const n = NAV_INDEX[k];
   document.querySelectorAll('[data-nav]').forEach(a => { if (a.dataset.nav === k) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); });
+  // S1 (D): any route that isn't one of the phone bar's four tabs lights the bar's More item
+  const more = $('phone-more');
+  if (more) { if (PHONE_TABS.has(k)) more.removeAttribute('aria-current'); else more.setAttribute('aria-current', 'page'); }
   if (n) { hl.style.setProperty('--hl-i', n.i); hl.style.setProperty('--hl-g', n.g); hl.classList.remove('is-off'); }
   else hl.classList.add('is-off');
   const crumb = $('crumb');
@@ -277,10 +288,15 @@ export function replaceHash(hash) {
 }
 window.__byline.replaceHash = replaceHash;
 
+// S1 (round 2): page entrances are WAAPI animations created in the swap task, one per enter item. No class toggles
+// or inherited custom properties on .page (those restyled every node of the new page in the swap frame).
+let lastY = 0; // last scrollY seen by the rAF'd scroll handler (no layout-forcing read in timer tasks)
+const enterAnims = new Map(); // element → Animation, for the in-flight entrance only
 function settleInFlight() {
-  view.querySelectorAll('.page.leaving').forEach(p => p.remove());
-  view.querySelectorAll('.page.entering').forEach(p => { p.classList.remove('entering', 'in', 'from-skeleton'); p.querySelectorAll('.enter-item').forEach(e => { e.classList.remove('enter-item'); e.style.removeProperty('--i'); }); });
+  view.querySelectorAll('.page.leaving').forEach(p => { clearTimeout(p.__kill); p.remove(); });
   clearTimeout(settleT);
+  for (const a of enterAnims.values()) { try { a.finish(); } catch (e) { /* gone */ } }
+  enterAnims.clear();
 }
 function enterTargets(page) {
   const head = page.querySelector('.page-head');
@@ -288,80 +304,117 @@ function enterTargets(page) {
   if (!scope) return [];
   const out = [];
   for (const c of scope.children) {
-    if (c === head || c.matches('script, style, .sr-only, template')) continue;
-    if (c.matches('.grid-12, .split, .grid, [data-stagger]') && c.children.length > 1) out.push(...c.children);
+    if (c === head || c.matches('script, style, .sr-only, template, [data-enter-self]')) continue;
+    if (c.matches('.grid-12, .split, .grid, [data-stagger]') && c.children.length > 1) out.push(...[...c.children].filter(x => !x.matches('[data-enter-self]')));
     else out.push(c);
   }
   return out;
 }
+const LEAVE_MS = 220, LEAVE_QUICK_MS = 160;
+// pending / leaving / skeleton pages take no input (CSS can't say so without an inherited property: shell.css)
+for (const t of ['click', 'pointerdown', 'focusin', 'keydown']) view.addEventListener(t, (e) => {
+  if (e.target.closest?.('.page.leaving, .page.is-pending, .page.skeleton-page')) { e.preventDefault(); e.stopPropagation(); }
+}, true);
 function leave(old, { quick = false } = {}) {
   if (!old) return;
   old.__mod?.destroy?.(old);
-  // both pages share #view's one grid cell: the old page leaves in place, no position write, no layout read (S2)
-  old.classList.remove('current', 'entering', 'in');
+  // both pages share #view's one grid cell: the old page leaves in place, no position write, no layout read.
+  // Its .page-head fades on its own 140 ms --ease-exit curve (shell.css), so the old h1 is gone before the new one starts.
+  old.classList.remove('current');
   if (quick) old.classList.add('skeleton-page');
   old.classList.add('leaving');
-  const kill = () => old.remove();
-  old.addEventListener('transitionend', (e) => { if (e.target === old && e.propertyName === 'opacity') kill(); });
-  setTimeout(kill, quick ? 320 : 420);
+  old.__kill = setTimeout(() => old.remove(), (quick ? LEAVE_QUICK_MS : LEAVE_MS) + 40);
 }
 function showSkeleton(key, old) {
   const sk = document.createElement('div');
   sk.className = 'page skeleton-page current';
   sk.innerHTML = skeleton(key);
-  if (!reducedMotion()) leave(old); else old?.remove();
+  if (old && lastY > 0) { old.__mod?.destroy?.(old); old.remove(); window.scrollTo({ top: 0, behavior: 'instant' }); }
+  else if (!reducedMotion()) leave(old); else old?.remove();
   view.append(sk);
   if (!reducedMotion()) sk.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 240, easing: EASE.fade });
   return sk;
 }
-// the new page's head actions / chips wait with the lede instead of showing at full opacity on frame 0 (S2)
+// the new page's head actions / chips wait with the lede instead of showing at full opacity on frame 0
 const HEAD_ENTER = '.page-head .btn, .page-head .actions, .page-head .page-head-actions, .page-head .chips, .chips, [data-enter]';
-const ENTER_BASE = 120; // ≈ when the old page (220ms, --ease-fade) is below .3 opacity
-function swapIn(page, old, { key, hash, fromSkeleton, scrolled = window.scrollY > 0 }) {
+const ENTER_BASE = 120; // ≈ when the old page (220ms, --ease-fade) is below .3 opacity: the cascade starts here
+const HEAD_GAP = 50;    // the new h1 starts at ENTER_BASE + 50 = 170 ms; the old h1 is below .05 by 150 ms
+/** Start the entrance of `page` (already .current). `base`: ms before the cascade starts. */
+function reveal(page, { key, base, fromSkeleton }) {
+  const items = enterTargets(page);
+  const heads = [];
+  for (const el of page.querySelectorAll(HEAD_ENTER)) {
+    if (items.some(it => it.contains(el)) || heads.some(h => h.contains(el))) continue;
+    if (el.closest('.page-head h1, [data-enter-self]')) continue;
+    heads.push(el);
+  }
+  const stag = DUR.staggerItem;
+  const y = fromSkeleton ? 0 : 10;
+  // marker classes only (no CSS rule matches them, so adding them invalidates nothing): a view that wants to run its
+  // own entrance for an item removes the class in its byline:routed handler and the router cancels its animation
+  items.forEach((el, i) => {
+    el.classList.add('enter-item');
+    enterAnims.set(el, el.animate([{ opacity: 0, transform: `translateY(${y}px)` }, { opacity: 1, transform: 'none' }],
+      { duration: 600, delay: base + Math.min(i, 8) * stag, easing: EASE.settle, fill: 'backwards' }));
+  });
+  heads.forEach((el, i) => {
+    el.classList.add('enter-head');
+    enterAnims.set(el, el.animate([{ opacity: 0, transform: fromSkeleton ? 'none' : 'translateY(4px)' }, { opacity: 1, transform: 'none' }],
+      { duration: DUR.fade, delay: base + 160 + Math.min(i, 3) * stag, easing: EASE.settle, fill: 'backwards' }));
+  });
+  const h1 = page.querySelector('.page-head h1') || page.querySelector('h1');
+  if (h1) {
+    const head = h1.closest('.page-head');
+    enterHeading(h1, { variant: firstRoute ? 'load' : 'tab', key, delay: firstRoute ? 0 : base + (base ? HEAD_GAP : 0), lede: head?.querySelector('.lede, .live-dek'), eyebrow: head?.querySelector('.eyebrow, .kicker') });
+  }
+  const done = base + 8 * stag + 700;
+  settleT = setTimeout(() => {
+    for (const [el, a] of enterAnims) if (!el.isConnected || a.playState === 'finished') { enterAnims.delete(el); el.classList.remove('enter-item', 'enter-head'); }
+  }, done);
+  return () => { // after byline:routed: honour views that took an item off the router's entrance
+    for (const [el, a] of enterAnims) if (!el.classList.contains('enter-item') && !el.classList.contains('enter-head')) { a.cancel(); enterAnims.delete(el); }
+  };
+}
+function swapIn(page, old, { key, hash, fromSkeleton }) {
   const motion = !reducedMotion() && !document.hidden;
-  if (old) { if (motion) leave(old, { quick: fromSkeleton }); else { old.__mod?.destroy?.(old); old.remove(); } }
-  page.classList.remove('is-pending');
-  page.classList.add('current');
-  // the pending page is opacity 0 (not visibility:hidden, which re-laid out every text node in the swap frame);
-  // it comes up over 200ms so nothing inside it, animated or not, appears at full opacity on frame 0
-  if (motion) page.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 200, easing: 'linear' });
+  const scrolled = lastY > 0; // no layout-forcing scrollY read here: prepareHeading just split the h1
+  const finishSwap = (base) => {
+    page.classList.remove('is-pending');
+    page.classList.add('current');
+    let after = null;
+    if (motion) {
+      // the pending page is opacity 0 (not visibility:hidden, which re-laid out every text node in the swap frame);
+      // it comes up over 200ms so nothing inside it, animated or not, appears at full opacity on frame 0
+      page.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 200, delay: Math.max(0, base - 60), easing: 'linear', fill: 'backwards' });
+      after = reveal(page, { key, base, fromSkeleton });
+    }
+    firstRoute = false;
+    const label = NAV_INDEX[ALIAS[key] || key]?.label || '';
+    document.title = label ? `${label} · Byline` : 'Byline';
+    $('route-live').textContent = label ? `${label} loaded` : '';
+    requestAnimationFrame(() => setTimeout(() => decorate(page), motion ? 120 : 0));
+    document.dispatchEvent(new CustomEvent('byline:routed', { detail: { key, page } }));
+    after?.();
+  };
   cur.page = page; cur.key = key; cur.hash = hash;
   view.dataset.route = key;
-  if (scrolled) window.scrollTo({ top: 0, behavior: 'instant' });
-  const h1 = page.querySelector('.page-head h1') || page.querySelector('h1');
-  if (motion) {
-    const items = enterTargets(page);
-    const base = old && !fromSkeleton ? ENTER_BASE : 0;
-    page.style.setProperty('--enter-base', `${base}ms`);
-    page.style.setProperty('--enter-head', `${base + 160}ms`);
-    items.forEach((el, i) => { el.classList.add('enter-item'); el.style.setProperty('--i', String(Math.min(i, 8))); });
-    const heads = [];
-    for (const el of page.querySelectorAll(HEAD_ENTER)) {
-      if (el.closest('.enter-item') || heads.some(h => h.contains(el))) continue;
-      if (el.closest('.page-head h1')) continue;
-      heads.push(el);
-    }
-    heads.forEach((el, i) => { el.classList.add('enter-head'); el.style.setProperty('--i', String(Math.min(i, 3))); });
-    items.push(...heads);
-    page.classList.add('entering');
-    if (fromSkeleton) page.classList.add('from-skeleton');
-    requestAnimationFrame(() => requestAnimationFrame(() => { if (page.isConnected) page.classList.add('in'); }));
-    settleT = setTimeout(() => {
-      page.classList.remove('entering', 'in', 'from-skeleton');
-      items.forEach(el => { el.classList.remove('enter-item', 'enter-head'); el.style.removeProperty('--i'); });
-      page.style.removeProperty('--enter-base'); page.style.removeProperty('--enter-head');
-    }, base + 600 + 8 * DUR.staggerItem + 200);
-    if (h1) {
-      const head = h1.closest('.page-head');
-      enterHeading(h1, { variant: firstRoute ? 'load' : 'tab', key, delay: firstRoute ? 0 : base, lede: head?.querySelector('.lede, .live-dek'), eyebrow: head?.querySelector('.eyebrow, .kicker') });
-    }
+  if (old && motion && scrolled) {
+    // S1a: the old page fades where the reader left it; scrollY keeps its value until it is at opacity 0. Then, in one
+    // task, the old page goes, scroll resets and the new page comes in (no frame of the old page at its top).
+    leave(old, { quick: true });
+    clearTimeout(old.__kill);
+    const seq = cur.seq;
+    old.__kill = setTimeout(() => {
+      old.remove();
+      if (seq !== cur.seq || !page.isConnected) return;
+      window.scrollTo({ top: 0, behavior: 'instant' });
+      finishSwap(0);
+    }, LEAVE_QUICK_MS + 10);
+    return;
   }
-  firstRoute = false;
-  const label = NAV_INDEX[ALIAS[key] || key]?.label || '';
-  document.title = label ? `${label} · Byline` : 'Byline';
-  $('route-live').textContent = label ? `${label} loaded` : '';
-  requestAnimationFrame(() => setTimeout(() => decorate(page), motion ? 120 : 0));
-  document.dispatchEvent(new CustomEvent('byline:routed', { detail: { key, page } }));
+  if (old) { if (motion) leave(old, { quick: fromSkeleton }); else { old.__mod?.destroy?.(old); old.remove(); } }
+  if (scrolled) window.scrollTo({ top: 0, behavior: 'instant' });
+  finishSwap(old && !fromSkeleton ? ENTER_BASE : 0);
 }
 
 async function routeTo(key, params, hash) {
@@ -373,7 +426,7 @@ async function routeTo(key, params, hash) {
   heatFromToday.last = null; // a view (Map) may have set its own heat: Today's comes back on the next status paint
   const old = cur.page && cur.page.isConnected ? cur.page : view.querySelector('.page.current');
   const page = document.createElement('div');
-  page.className = 'page is-pending';
+  page.className = 'page is-pending is-building';
   page.dataset.route = key;
   view.append(page);
   let sk = null, skAt = 0;
@@ -389,16 +442,21 @@ async function routeTo(key, params, hash) {
   // E1: let the browser lay the hidden page out in its own frame instead of forcing it inside the render task,
   // then do every read of the transition (old page top, heading metrics) against that clean layout.
   clearTimeout(slow);
+  // R2 S1/E1: the page is built under content-visibility:hidden, so the frame that ends the render task does no style or
+  // layout of it; the next frame does that work alone (no script), and the swap comes one frame later. Splitting the
+  // render script from the new page's first style+layout keeps each frame under the 50 ms LoAF bar at 4×.
   await nextFrame();
   if (seq !== cur.seq) { page.remove(); return; }
-  const scrolled = window.scrollY > 0;
+  page.classList.remove('is-building');
+  await nextFrame();
+  if (seq !== cur.seq) { page.remove(); return; }
   if (!reducedMotion() && !document.hidden) prepareHeading(page.querySelector('.page-head h1') || page.querySelector('h1'));
   if (sk) {
     const wait = 320 - (performance.now() - skAt); // hold the skeleton ≥ 320ms, then crossfade
     if (wait > 0) await sleep(wait);
     if (seq !== cur.seq) { page.remove(); return; }
   }
-  swapIn(page, sk || old, { key, hash, fromSkeleton: !!sk, scrolled: sk ? window.scrollY > 0 : scrolled });
+  swapIn(page, sk || old, { key, hash, fromSkeleton: !!sk });
   refreshStatus();
 }
 
@@ -438,8 +496,14 @@ document.addEventListener('click', (e) => {
   const src = a.closest('[data-dossier-src], .tile, .story, article, tr, li, .brief-item') || a;
   lastSrc = { id: storyId(a), el: src, t: performance.now() };
 }, true);
-const warmStory = (e) => { const a = e.target.closest?.('a[href^="#/story/"]'); if (a) dossier.prefetch(storyId(a)); };
+// S2: also on pointerdown (touch has no hover) and on any [data-dossier-src] row, not just its link
+const warmStory = (e) => {
+  const t = e.target;
+  const a = t.closest?.('a[href^="#/story/"]') || t.closest?.('[data-dossier-src]')?.querySelector('a[href^="#/story/"]');
+  if (a) dossier.prefetch(storyId(a));
+};
 document.addEventListener('pointerover', warmStory, { passive: true });
+document.addEventListener('pointerdown', warmStory, { passive: true, capture: true });
 document.addEventListener('focusin', warmStory);
 
 /** Post-render enrichment shared by every tab. */
@@ -473,7 +537,7 @@ document.addEventListener('byline:routed', (e) => {
 let scrolledState = false, scrollRaf = 0;
 addEventListener('scroll', () => {
   if (scrollRaf) return;
-  scrollRaf = requestAnimationFrame(() => { scrollRaf = 0; const s = window.scrollY > 8; if (s !== scrolledState) { scrolledState = s; root.classList.toggle('scrolled', s); } });
+  scrollRaf = requestAnimationFrame(() => { scrollRaf = 0; lastY = window.scrollY; const s = lastY > 8; if (s !== scrolledState) { scrolledState = s; root.classList.toggle('scrolled', s); } });
 }, { passive: true });
 
 // ---------------------------------------------------------------- staged run (Today "Run now"): progress in the status pill

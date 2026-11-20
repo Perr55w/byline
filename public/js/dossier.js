@@ -107,11 +107,11 @@ document.addEventListener('byline:routed', (e) => {
 });
 
 function finalRect() {
-  // computed from tokens, never measured (E §3 step 2). Width cap S6: min(1040, 100vw − rail − 2·inset − 160).
+  // computed from tokens, never measured (E §3 step 2). Width: min(1040, 100vw − expanded rail − 2·inset − 160).
   if (phone()) return { left: 0, top: 8, right: innerWidth, bottom: innerHeight, width: innerWidth, height: innerHeight - 8 };
   const inset = 12, rail = collapsed() ? 64 : 232;
   const left = inset + rail + inset, top = inset, bottom = innerHeight - inset;
-  const width = Math.min(1040, innerWidth - rail - 2 * inset - 160);
+  const width = Math.min(1040, innerWidth - 232 - 2 * inset - 160); // R2 S4: constant (the expanded rail), CSS too
   return { left, top, right: left + width, bottom, width, height: bottom - top };
 }
 const visible = (r) => r && r.width > 4 && r.height > 4 && r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth;
@@ -130,6 +130,7 @@ function build(id) {
   root.className = 'dossier';
   root.innerHTML = `
     <div class="dossier-scrim" data-dz-close></div>
+    <div class="dossier-shadow" aria-hidden="true"></div>
     <section class="dossier-panel" role="dialog" aria-modal="true" tabindex="-1">
       <div class="dossier-fill"></div><div class="dossier-frost"></div>
       <div class="dossier-grab" aria-hidden="true"></div>
@@ -173,11 +174,19 @@ export async function open(id, srcEl = null, opts = {}) {
   if (fly) for (const n of ['title', 'ring', 'topic']) { const e = guessShared(src, n); if (e) { const r = e.getBoundingClientRect(); if (visible(r)) srcShared[n] = { el: e, rect: r, fs: parseFloat(getComputedStyle(e).fontSize) || 16 }; } }
   const onPhone = phone();
   const P = finalRect();
+  // R2 S2 (E): the clip starts this far above the row, so the flying title's first line is never cut mid-flight
+  let topPad = 0;
+  if (fly && srcShared.title) {
+    const tcs = getComputedStyle(srcShared.title.el);
+    const lh = parseFloat(tcs.lineHeight) || srcShared.title.fs * 1.25;
+    const padTop = parseFloat(getComputedStyle(src).paddingTop) || 0;
+    topPad = Math.max(8, lh - padTop);
+  }
 
   // 2) content: the idle prebuild when there is one; else render now if the data is already here; else fly at once
   //    with a placeholder and fill on arrival (no waiting before the first frame of motion)
   const pre = takePrebuilt(id);
-  let root, after = {}, late = false, dataP = null, data = null;
+  let root, after = {}, late = false, dataP = null, data = null, skel = null;
   if (pre) {
     root = pre.root; after = pre.after;
     root.classList.remove('is-prebuild'); root.removeAttribute('aria-hidden'); root.inert = false;
@@ -190,6 +199,13 @@ export async function open(id, srcEl = null, opts = {}) {
       late = true;
       body0.innerHTML = placeholderHtml(srcShared.title?.el?.textContent);
       dataP = load(id).then(d => (data = d)).catch(e => { data = { error: e }; });
+      // the section-shaped skeleton shows only if the data takes > 120ms; once shown it is held ≥ 320ms
+      skel = { shownAt: 0, t: setTimeout(() => {
+        if (seq !== S.seq || data) return;
+        const sk = body0.querySelector('.dz-sk'); if (!sk) return;
+        sk.hidden = false; skel.shownAt = performance.now();
+        if (!reduced()) sk.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 240, easing: EASE.fade });
+      }, 120) };
     }
     if (seq !== S.seq) return;
   }
@@ -197,6 +213,9 @@ export async function open(id, srcEl = null, opts = {}) {
   S.root = root; S.panel = root.querySelector('.dossier-panel'); S.body = root.querySelector('.dossier-body'); S.src = src;
   document.body.append(root);
   wire(root);
+  clearTimeout(chromeT);
+  document.documentElement.classList.remove('dz-back');
+  document.documentElement.classList.add('dossier-open'); // S11: the top bar fades out (shell.css)
 
   // 3) flight. Destination rects: cached by the prebuild (no read); otherwise one read of the inserted panel.
   const panel = S.panel, scrim = root.querySelector('.dossier-scrim');
@@ -222,8 +241,13 @@ export async function open(id, srcEl = null, opts = {}) {
     S.srcShared.forEach(e => { e.style.visibility = 'hidden'; });
     const fade = src.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 120, easing: EASE.exit, fill: 'forwards' });
     anims.push(fade);
-    const rTo = (r) => `inset(${(r.top - P.top).toFixed(1)}px ${(P.right - r.right).toFixed(1)}px ${(P.bottom - r.bottom).toFixed(1)}px ${(r.left - P.left).toFixed(1)}px round 12px)`;
-    anims.push(flight = panel.animate([{ clipPath: rTo(srcRect) }, { clipPath: 'inset(0px 0px 0px 0px round 16px)' }], { duration: DUR.morphOpen, easing: EASE.move }));
+    // R2 S2: the clip's corners stay square (round 0) until .75 of the flight and only then round to 16px, so most
+    // frames are a plain rectangular clip; the soft shadow is off the clipped layer (.dossier-shadow)
+    const rTo = (r, rad = 0) => `inset(${(r.top - P.top).toFixed(1)}px ${(P.right - r.right).toFixed(1)}px ${(P.bottom - r.bottom).toFixed(1)}px ${(r.left - P.left).toFixed(1)}px round ${rad}px)`;
+    const r0 = { top: Math.max(P.top, srcRect.top - topPad), right: srcRect.right, bottom: srcRect.bottom, left: srcRect.left };
+    const at = (k) => ({ top: r0.top + (P.top - r0.top) * k, right: r0.right + (P.right - r0.right) * k, bottom: r0.bottom + (P.bottom - r0.bottom) * k, left: r0.left + (P.left - r0.left) * k });
+    panel.style.willChange = 'transform, opacity, clip-path';
+    anims.push(flight = panel.animate([{ clipPath: rTo(r0), offset: 0 }, { clipPath: rTo(at(.75)), offset: .75 }, { clipPath: 'inset(0px 0px 0px 0px round 16px)', offset: 1 }], { duration: DUR.morphOpen, easing: EASE.move }));
     anims.push(scrim.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 240, easing: EASE.fade, fill: 'both' })); // ≥ .6 by 120ms
     // shared elements ride inside the panel's clipped layer, on the title's curve
     for (const { n, s, dst, d, fs } of dsts) {
@@ -243,12 +267,14 @@ export async function open(id, srcEl = null, opts = {}) {
     anims.push(flight = panel.animate([{ opacity: 0, transform: 'scale(.985)' }, { opacity: 1, transform: 'none' }], { duration: 360, easing: EASE.settle }));
   }
   if (!reduced()) {
-    const base = fly ? 300 : 160;
-    cols.forEach(c => anims.push(c.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 360, delay: base, easing: EASE.fade, fill: 'backwards' })));
-    sections.slice(0, 6).forEach((sec, i) => {
-      anims.push(sec.animate([{ opacity: 0, transform: 'translateY(8px)' }, { opacity: 1, transform: 'none' }], { duration: 500, delay: base + i * 50, easing: EASE.settle, fill: 'backwards' }));
+    // R2 S2: base 160ms; a column fades as one unit with its divider (sections inside it don't fade separately), so the
+    // rule never paints before its content; section 1 is fully in by base + 320 = 480ms after the click
+    const base = 160, step = 40, dur = 320;
+    const units = [...sections.filter(sec => !cols.some(c => c.contains(sec))), ...cols];
+    units.slice(0, 7).forEach((u, i) => {
+      anims.push(u.animate([{ opacity: 0, transform: 'translateY(8px)' }, { opacity: 1, transform: 'none' }], { duration: dur, delay: base + i * step, easing: EASE.settle, fill: 'backwards' }));
     });
-    if (sections.length > 6) sections.slice(6).forEach(sec => anims.push(sec.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 500, delay: base + 6 * 50, easing: EASE.fade, fill: 'backwards' })));
+    units.slice(7).forEach(u => anims.push(u.animate([{ opacity: 0 }, { opacity: 1 }], { duration: dur, delay: base + 7 * step, easing: EASE.fade, fill: 'backwards' })));
   }
   // focus once the first frame is out: focusing now would force a layout of the freshly inserted panel inside the
   // click task; after that frame the layout is clean and focus() reads nothing new
@@ -259,22 +285,31 @@ export async function open(id, srcEl = null, opts = {}) {
   // afterFlight once the panel has landed (not when the last section's stagger ends)
   const landed = (flight ? flight.finished.catch(() => {}) : Promise.resolve());
   landed.then(() => {
+    panel.style.willChange = '';
     if (seq !== S.seq || S.closing) return;
-    root.classList.add('frosted'); // frost fades in on a child layer after the flight (E §2)
+    // R2 S2: the soft shadow fades in over 200ms on the opaque fill first; the frost (backdrop blur) replaces the fill
+    // only once nothing under or around the panel is changing, so the blur is computed once, not per frame
+    root.classList.add('landed');
     if (fly && src.isConnected) src.style.visibility = 'hidden';
-    if (!late) { try { after.afterFlight?.(); } catch (e) { console.error(e); } }
+    const frost = () => { if (seq === S.seq && !S.closing) root.classList.add('frosted'); };
+    if (reduced()) frost(); else setTimeout(frost, 220);
+    // R2 S2 contract: afterFlight runs in its own task, after the frame that adds .landed (never in this task)
+    if (!late) requestAnimationFrame(() => setTimeout(() => { if (seq !== S.seq || S.closing) return; try { after.afterFlight?.(); } catch (e) { console.error(e); } }, 0));
   });
   Promise.all(anims.map(a => a.finished.catch(() => {}))).then(() => { if (seq === S.seq && !S.closing) S.anims = []; });
   if (late) {
     dataP.then(async () => {
       if (seq !== S.seq || S.closing) return;
+      clearTimeout(skel?.t);
       await landed; // never re-render mid-flight
+      if (seq !== S.seq || S.closing) return;
+      if (skel?.shownAt) { const wait = 320 - (performance.now() - skel.shownAt); if (wait > 0) await new Promise(r => setTimeout(r, wait)); }
       if (seq !== S.seq || S.closing) return;
       if (data?.error) { S.body.innerHTML = errorHtml(data.error); return; }
       const out = await fill(S.body, S.panel, id, data, 'swap');
       if (!reduced()) S.body.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 240, easing: EASE.fade });
       S.body.querySelector('h1')?.focus({ preventScroll: true });
-      out.afterFlight?.();
+      requestAnimationFrame(() => setTimeout(() => { if (seq === S.seq && !S.closing) out.afterFlight?.(); }, 0));
     });
   }
   // mark viewed (the server's GET side effect), once the user has actually opened it
@@ -298,7 +333,7 @@ async function swap(id, opts = {}) {
   out?.cancel();
   if (!reduced()) body.animate([{ opacity: 0, transform: 'translateY(6px)' }, { opacity: 1, transform: 'none' }], { duration: 360, easing: EASE.settle });
   body.querySelector('h1')?.focus({ preventScroll: true });
-  after.afterFlight?.();
+  requestAnimationFrame(() => setTimeout(() => { if (seq === S.seq && !S.closing) after.afterFlight?.(); }, 0));
   api.get(`/stories/${id}`, { fresh: true }).catch(() => {});
 }
 const root = () => S.root;
@@ -306,8 +341,9 @@ const root = () => S.root;
 /**
  * Close (Esc / Back / × / scrim). Reverses a flight still in progress; otherwise flies back to the
  * source re-measured now, or fades + scales to .98 if the source is gone or off-screen.
- * S5: the frost layer is display:none synchronously (no backdrop-filter repaint under a moving clip) and the
- * body fade, clip and scrim all start in this same frame.
+ * R2 S3: the frost goes at once (opacity 0, no transition), the opaque flight fill is back and the shadow is off; the
+ * body fades in 140ms, then the scroller is display:none. A tall source gets the clip back; a small or off-screen
+ * one gets a 360ms opacity + translate/scale toward it (C).
  */
 export function close({ instant = false } = {}) {
   if (!S.open || S.closing) return Promise.resolve();
@@ -317,42 +353,75 @@ export function close({ instant = false } = {}) {
   if (!r) { teardown(); return Promise.resolve(); }
   document.removeEventListener('keydown', S.keyHandler, true);
   if (instant || reduced()) { teardown(); return Promise.resolve(); }
-  r.classList.remove('frosted');
+  // R2 S3, first close frame: the frost layer goes (opacity 0, no transition), the opaque flight fill is back, the
+  // shadow is off; nothing but transform / opacity / clip-path animates from here
+  // reads first (visibility:hidden keeps geometry, so the hidden source can be measured as is), then writes
+  const src = S.src && S.src.isConnected ? S.src : null;
+  const midFlight = S.anims.some(a => a.playState === 'running');
+  const sr = src && !midFlight ? src.getBoundingClientRect() : null;
+  r.classList.remove('frosted', 'landed');
   r.classList.add('closing');
   // mid-flight: reverse what's running (works at any point of the flight)
-  if (S.anims.some(a => a.playState === 'running')) {
+  if (midFlight) {
     const list = S.anims;
     list.forEach(a => { try { a.reverse(); } catch (e) { /* finished */ } });
     return Promise.all(list.map(a => a.finished.catch(() => {}))).then(() => { if (S.seq === seqAtClose) teardown(); });
   }
-  // reads first (visibility:hidden keeps geometry, so the hidden source can be measured as is), then writes
-  const src = S.src && S.src.isConnected ? S.src : null;
-  const sr = src ? src.getBoundingClientRect() : null;
   const onPhone = phone();
   const P = onPhone ? null : finalRect();
   const anims = [];
-  // once faded the body is hidden too, so the clip's per-frame repaint is just the fill
-  anims.push(S.body.animate([{ opacity: 1, visibility: 'visible' }, { opacity: 0, visibility: 'hidden' }], { duration: 140, easing: EASE.exit, fill: 'forwards' }));
-  if (onPhone) {
-    anims.push(panel.animate([{ transform: 'none' }, { transform: 'translateY(100%)' }], { duration: 320, easing: EASE.exit, fill: 'forwards' }));
-    anims.push(scrim.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 320, easing: EASE.fade, fill: 'forwards' }));
-  } else if (visible(sr)) {
-    const to = `inset(${(sr.top - P.top).toFixed(1)}px ${(P.right - sr.right).toFixed(1)}px ${(P.bottom - sr.bottom).toFixed(1)}px ${(sr.left - P.left).toFixed(1)}px round 12px)`;
-    anims.push(panel.animate([{ clipPath: 'inset(0px 0px 0px 0px round 16px)' }, { clipPath: to }], { duration: DUR.morphClose, easing: EASE.move, fill: 'forwards' }));
-    anims.push(scrim.animate([{ opacity: 1 }, { opacity: 0 }], { duration: DUR.morphClose, easing: EASE.fade, fill: 'forwards' }));
-    // over the last 40% the emptied panel dissolves into the source, which fades back in place (no blank box, no pop)
-    const fill = panel.querySelector('.dossier-fill');
-    if (fill) anims.push(fill.animate([{ opacity: 1, offset: 0 }, { opacity: 1, offset: .6 }, { opacity: 0 }], { duration: DUR.morphClose, easing: 'linear', fill: 'forwards' }));
-    panel.style.boxShadow = 'none';
-    src.getAnimations().forEach(a => { if (a.effect?.getKeyframes?.().some(k => 'opacity' in k)) a.cancel(); });
-    src.style.visibility = '';
-    S.srcShared.forEach(e => { e.style.visibility = ''; });
-    anims.push(src.animate([{ opacity: 0, offset: 0 }, { opacity: 0, offset: .55 }, { opacity: 1 }], { duration: DUR.morphClose, easing: EASE.fade }));
-  } else {
-    anims.push(panel.animate([{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'scale(.98)' }], { duration: 280, easing: EASE.exit, fill: 'forwards' }));
-    anims.push(scrim.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 280, easing: EASE.fade, fill: 'forwards' }));
-  }
-  return Promise.all(anims.map(a => a.finished.catch(() => {}))).then(() => { if (S.seq === seqAtClose) teardown(); });
+  const run = () => {
+    // the body goes in 140ms under a cover (the panel's ::after, the flight fill's colour) fading in on top: a solid
+    // quad's opacity is cheap where fading the body itself made it a render surface; then the scroller leaves the render
+    // (display:none), so whatever moves next moves an empty fill
+    const scroll = panel.querySelector('.dossier-scroll');
+    const bodyOut = onPhone ? null : panel.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 140, easing: EASE.exit, fill: 'forwards', pseudoElement: '::after' });
+    const gone = (bodyOut ? bodyOut.finished : Promise.resolve()).then(() => { if (S.seq === seqAtClose && scroll && !onPhone) scroll.classList.add('is-gone'); }).catch(() => {});
+    if (bodyOut) anims.push(bodyOut);
+    // opacity on the panel only once its body is gone (an opacity animation makes the panel a render surface)
+    const fadePanel = (dur, easing = EASE.fade) => gone.then(() => { if (S.seq !== seqAtClose) return; const a = panel.animate([{ opacity: 1 }, { opacity: 0 }], { duration: dur, easing, fill: 'forwards' }); anims.push(a); return a.finished.catch(() => {}); });
+    const restoreSrc = () => {
+      if (!src) return;
+      src.getAnimations().forEach(a => { if (a.effect?.getKeyframes?.().some(k => 'opacity' in k)) a.cancel(); });
+      src.style.visibility = '';
+      S.srcShared.forEach(e => { e.style.visibility = ''; });
+    };
+    const waits = [];
+    if (onPhone) {
+      anims.push(panel.animate([{ transform: 'none' }, { transform: 'translateY(100%)' }], { duration: 320, easing: EASE.exit, fill: 'forwards' }));
+      anims.push(scrim.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 320, easing: EASE.fade, fill: 'forwards' }));
+    } else if (visible(sr) && sr.height >= P.height * .3) {
+      // a tall source (Today's lead tile): the clip flies back to it, square-cornered after the first quarter
+      panel.style.willChange = 'clip-path';
+      const to = `inset(${(sr.top - P.top).toFixed(1)}px ${(P.right - sr.right).toFixed(1)}px ${(P.bottom - sr.bottom).toFixed(1)}px ${(sr.left - P.left).toFixed(1)}px round 0px)`;
+      anims.push(panel.animate([{ clipPath: 'inset(0px 0px 0px 0px round 16px)' }, { clipPath: 'inset(0px 0px 0px 0px round 0px)', offset: .25 }, { clipPath: to }], { duration: DUR.morphClose, easing: EASE.move, fill: 'forwards' }));
+      anims.push(scrim.animate([{ opacity: 1 }, { opacity: 0 }], { duration: DUR.morphClose, easing: EASE.fade, fill: 'forwards' }));
+      // over the last 40% the emptied panel dissolves into the source, which fades back in place (no blank box, no pop)
+      waits.push(gone.then(() => new Promise(r => setTimeout(r, Math.max(0, DUR.morphClose * .6 - 140)))).then(() => fadePanel(DUR.morphClose * .4, 'linear')));
+      restoreSrc();
+      anims.push(src.animate([{ opacity: 0, offset: 0 }, { opacity: 0, offset: .55 }, { opacity: 1 }], { duration: DUR.morphClose, easing: EASE.fade }));
+    } else if (visible(sr)) {
+      // R2 S3 (C): a small source row (most Feed / Search rows): no clip; the panel drifts and shrinks toward the row
+      // over 360ms and fades once its body is gone, and the row fades back in under it
+      const dx = ((sr.left + sr.width / 2) - (P.left + P.width / 2)) * .18, dy = ((sr.top + sr.height / 2) - (P.top + P.height / 2)) * .18;
+      panel.style.willChange = 'transform';
+      anims.push(panel.animate([{ transform: 'none' }, { transform: `translate(${dx.toFixed(1)}px, ${dy.toFixed(1)}px) scale(.94)` }], { duration: 360, easing: EASE.move, fill: 'forwards' }));
+      waits.push(fadePanel(220));
+      anims.push(scrim.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 360, easing: EASE.fade, fill: 'forwards' }));
+      restoreSrc();
+      anims.push(src.animate([{ opacity: 0, offset: 0 }, { opacity: 0, offset: .3 }, { opacity: 1 }], { duration: 360, easing: EASE.fade }));
+    } else {
+      restoreSrc();
+      panel.style.willChange = 'transform';
+      anims.push(panel.animate([{ transform: 'none' }, { transform: 'scale(.98)' }], { duration: 300, easing: EASE.exit, fill: 'forwards' }));
+      waits.push(fadePanel(160, EASE.exit));
+      anims.push(scrim.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 300, easing: EASE.fade, fill: 'forwards' }));
+    }
+    return Promise.all([...anims.map(a => a.finished.catch(() => {})), ...waits]).then(() => { if (S.seq === seqAtClose) teardown(); });
+  };
+  // the frost has just left (first close frame): start the motion on the next frame, so that frame's one-off redraw
+  // of the area the blur covered isn't compounded with the first animation frame
+  return new Promise((res) => requestAnimationFrame(() => { if (S.seq !== seqAtClose) { res(); return; } run().then(res); }));
 }
 
 function teardown() {
@@ -361,6 +430,8 @@ function teardown() {
   if (src) { src.style.visibility = ''; src.getAnimations?.().forEach(a => { if (a.effect?.getKeyframes?.().some(k => 'opacity' in k)) a.cancel(); }); }
   S.srcShared.forEach(e => { e.style.visibility = ''; });
   S.root?.remove();
+  const html0 = document.documentElement;
+  if (html0.classList.contains('dossier-open')) { html0.classList.add('dz-back'); html0.classList.remove('dossier-open'); clearTimeout(chromeT); chromeT = setTimeout(() => html0.classList.remove('dz-back'), 300); }
   if (S.keyHandler) document.removeEventListener('keydown', S.keyHandler, true);
   const wasOpen = S.open;
   Object.assign(S, { open: false, closing: false, id: null, root: null, panel: null, body: null, src: null, srcShared: [], opener: null, anims: [], keyHandler: null });
@@ -369,7 +440,15 @@ function teardown() {
   back?.focus?.({ preventScroll: true });
 }
 
+let chromeT = 0;
 function wire(r) {
+  // S12: the close button's top fade shows once the body has scrolled (class only; no layout read beyond scrollTop)
+  const sc = r.querySelector('.dossier-scroll');
+  let scRaf = 0, scOn = false;
+  sc?.addEventListener('scroll', () => {
+    if (scRaf) return;
+    scRaf = requestAnimationFrame(() => { scRaf = 0; const on = sc.scrollTop > 8; if (on !== scOn) { scOn = on; sc.classList.toggle('is-scrolled', on); } });
+  }, { passive: true });
   r.addEventListener('click', (e) => { if (e.target.closest('[data-dz-close]')) { e.preventDefault(); requestClose(); } });
   S.keyHandler = (e) => {
     if (!S.open || document.querySelector('.modal-wrap, .ix-wrap')) return;
@@ -404,22 +483,21 @@ function wire(r) {
 }
 
 /**
- * Rail collapse/expand while open: lock the body to its end width for the transition so text doesn't
- * re-wrap every frame (C §3); released at transitionend by app.js calling railDidChange().
- * Prebuilt dossiers were laid out for the old width: drop them.
+ * Rail collapse/expand while open. R2 S4: the panel's width no longer depends on the rail (components.css), so only
+ * its left edge moves and the body never re-wraps; there is no width lock any more. During the move the frost layer
+ * is dropped (no backdrop re-blur of a page moving under it) and the opaque flight fill stands in; app.js restores the
+ * frost at transitionend via railDidChange(). Prebuilt dossiers were laid out for the old geometry: drop them.
  */
-export function railWillChange(targetRailW) {
+export function railWillChange() {
   PRE.clear();
   if (!S.open || phone() || !S.body) return;
-  // no backdrop-filter re-blur of a page that is reflowing under it: opaque fill until transitionend
   S.root?.classList.add('is-reflowing');
-  const scroll = S.body.parentElement;
-  const gutter = scroll ? scroll.offsetWidth - scroll.clientWidth : 0;
-  const w = Math.min(1040, innerWidth - targetRailW - 24 - 160) - gutter;
-  S.body.style.width = `${w}px`;
-  S.body.style.maxWidth = 'none';
+  // the page's own transitionend doesn't fire while the dossier is open (shell.css: .main moves in one step)
+  const p = S.panel;
+  const done = (e) => { if (e.target !== p || e.propertyName !== '--rail-w') return; p.removeEventListener('transitionend', done); railDidChange(); };
+  p?.addEventListener('transitionend', done);
 }
-export function railDidChange() { S.root?.classList.remove('is-reflowing'); if (S.body) { S.body.style.width = ''; S.body.style.maxWidth = ''; } }
+export function railDidChange() { S.root?.classList.remove('is-reflowing'); }
 addEventListener('resize', () => PRE.clear(), { passive: true });
 
 // ------------------------------------------------------------------ minimal honest dossier (until a renderer registers)
@@ -430,9 +508,16 @@ const cleanClaim = (t) => String(t || '').replace(/^\d\s+(?=[A-Z])/, '').replace
 const NUM = /((?:[$€£]\s?\d[\d,.]*\s?(?:[kmb]n?|million|billion|trillion)?)|(?:\d[\d,.]*\s?%)|(?:\d[\d,.]*\s?(?:×|x|times)\b)|(?:\b\d+\s+of\s+\d+\b)|(?:\b(?!(?:19|20)\d{2}\b)\d[\d,.]*(?:\s(?:million|billion|trillion))?\s(?=[a-z]{3,})))/gi;
 const hl = (t) => esc(t).replace(NUM, (m) => (/^v?\d+\.\d+\.\d+/.test(m) ? m : `<mark class="num-hl">${m}</mark>`));
 
+// R2 S2 (C): section-shaped: a 2-bar lede, a row of 3 action pills, two columns of 4 bars. Hidden until the data
+// has taken > 120ms (open() unhides it), so a fast load never flashes it.
 function placeholderHtml(title) {
-  return `<header class="dz-head" data-dossier-section><div><p class="eyebrow">Loading the dossier…</p>${title ? `<h1 class="dz-title">${esc(title)}</h1>` : '<span class="sk sk-line xl" style="width:70%;margin-top:14px"></span>'}</div></header>
-    <div class="dz-grid" data-dossier-section aria-hidden="true"><div><span class="sk sk-line lg" style="width:60%"></span><span class="sk sk-line" style="width:90%;margin-top:12px"></span><span class="sk sk-line" style="width:80%;margin-top:10px"></span></div><div><span class="sk sk-line lg" style="width:40%"></span></div></div>`;
+  const bars = (ws) => ws.map(w => `<i style="width:${w}%"></i>`).join('');
+  return `<header class="dz-head" data-dossier-section><div><p class="eyebrow">Loading the dossier…</p>${title ? `<h1 class="dz-title">${esc(title)}</h1>` : ''}</div></header>
+    <div class="dz-sk" data-dossier-section aria-hidden="true" hidden>
+      <div class="dz-sk-lede">${bars([92, 64])}</div>
+      <div class="dz-sk-acts"><i></i><i></i><i></i></div>
+      <div class="dz-sk-cols"><div>${bars([46, 96, 88, 72])}</div><div>${bars([38, 90, 80, 60])}</div></div>
+    </div>`;
 }
 function errorHtml(e) {
   return String(html`<header class="dz-head"><div><p class="eyebrow">Dossier</p><h1 class="dz-title">This story couldn’t be loaded.</h1><p class="dz-dek">${e?.message || 'Unknown error'}</p></div></header>`);

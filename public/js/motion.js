@@ -269,6 +269,8 @@ function counted() {
   try { countedMemo = new Set(JSON.parse(sessionStorage.getItem(SESSION_KEY) || '[]')); } catch (e) { countedMemo = new Set(); }
   return countedMemo;
 }
+/** S7: true once (key, final) has counted up this session, so a revisit renders the final value with no count. */
+export function hasCounted(key, final) { return !!key && counted().has(`${key}:${final}`); }
 function remember(k) {
   const s = counted(); s.add(k);
   try { sessionStorage.setItem(SESSION_KEY, JSON.stringify([...s].slice(-400))); } catch (e) { /* storage unavailable */ }

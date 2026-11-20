@@ -13,7 +13,7 @@
 //                   narration recording, perspective notes + apply notes, sources + tag suggestions, versions
 //                   (view / restore). The sheet footer adapts the story to another format and archives.
 import { api } from '../api.js';
-import { html, raw, esc, on, act, toast, status as statusTag, evChip, channelLabel, timeAgo, fmtDateTime, copy, download, svgToPng, fileToBase64, modal, confirmBox, scoreChip, icon, useStyle, holdToPress, threshold as liveThreshold } from '../ui.js';
+import { html, raw, esc, on, act, toast, status as statusTag, evChip, channelLabel, timeAgo, fmtDateTime, copy, download, svgToPng, fileToBase64, modal, confirmBox, scoreChip, topicPills, icon, useStyle, holdToPress, threshold as liveThreshold } from '../ui.js';
 import { enterItems, reduced, EASE } from '../motion.js';
 import bg from '../bg.js';
 
@@ -25,6 +25,7 @@ const FLAG_LABEL = { unsupported: 'Unsupported claim', stale: 'Stale sources', e
 const flagLabel = (t) => FLAG_LABEL[t] || String(t || 'flag').replace(/_/g, ' ').replace(/^./, c => c.toUpperCase());
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 const dayShort = (ymd) => ymd ? new Date(`${String(ymd).slice(0, 10)}T12:00:00Z`).toLocaleDateString('en-GB', { timeZone: 'UTC', weekday: 'short', day: 'numeric', month: 'short' }) : '';
+const CHANNELS = ['linkedin', 'instagram', 'video'];
 const STATUS_ORDER = ['in_review', 'draft', 'approved', 'scheduled', 'published', 'archived'];
 const STATUS_LABEL = { all: 'All', in_review: 'In review', draft: 'Draft', approved: 'Approved', scheduled: 'Scheduled', published: 'Published', archived: 'Archived' };
 
@@ -80,17 +81,50 @@ function collapseRuns(text) {
 }
 const hasRuns = (text) => collapseRuns(text).some(r => r.n > 1);
 
+// ---- the opening line of a draft (CS1/CS3): what tells sibling drafts apart. The list endpoint has no text, so the
+// first section is read from each draft (GET /drafts/:id, cached per updated_at); a `hook` field on the list row wins.
+const HOOKS = new Map(); // draft id → { at, hook, next, parts }
+const LEAD_KINDS = ['hook', 'headline', 'title'];
+/** First non-empty line of a section, list marker ("1.", "•") stripped, whitespace collapsed. */
+const firstLine = (t) => (String(t || '').split(/\n+/).map(x => x.trim()).find(Boolean) || '').replace(/^(\d{1,2}[.)]|[-•*–])\s+/, '').replace(/\s+/g, ' ').trim();
+function hookInfo(d) {
+  const secs = (d.sections || []).filter(s => !['sources', 'caption'].includes(s.kind) && String(s.text || '').trim());
+  const first = secs.find(s => LEAD_KINDS.includes(s.kind)) || secs[0];
+  const k = secs.reduce((m, s) => { m[s.kind] = (m[s.kind] || 0) + 1; return m; }, {});
+  return { hook: firstLine(first?.text), next: firstLine(secs[secs.indexOf(first) + 1]?.text), parts: k.scene ? plural(k.scene, 'scene') : k.slide ? plural(k.slide, 'slide') : plural(secs.length, 'section') };
+}
+/** Cut at a word boundary near n characters; trailing punctuation goes before the ellipsis ("harness…", never "harness.…"). */
+const clip = (t, n = 68) => {
+  const s = String(t || '').trim();
+  if (s.length <= n) return s;
+  const cut = s.slice(0, n + 1).replace(/\s+\S*$/, '') || s.slice(0, n);
+  return `${cut.replace(/[\s.,;:!?…\-–—]+$/, '')}…`;
+};
+const norm = (t) => String(t || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+/** Two texts open the same way (the hook restates the story headline, or two drafts share an opening). */
+const sameOpening = (a, b) => { const x = norm(a), y = norm(b); if (!x || !y) return false; const n = Math.min(40, x.length, y.length); return x.slice(0, n) === y.slice(0, n); };
+async function loadHooks(list) {
+  const need = list.filter(d => d.hook == null && HOOKS.get(d.id)?.at !== d.updated_at);
+  let i = 0;
+  const worker = async () => { while (i < need.length) { const d = need[i++]; const full = await api.get(`/drafts/${d.id}`).catch(() => null); if (full) HOOKS.set(d.id, { at: d.updated_at, ...hookInfo(full) }); } };
+  await Promise.all(Array.from({ length: Math.min(6, need.length) }, worker));
+}
+const hookOf = (d) => d.hook != null ? { hook: firstLine(d.hook) } : HOOKS.get(d.id) || null;
+const NOTE_GLYPH = raw('<svg class="st-glyph" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 2.75h6l3 3v7.5h-9z"/><path d="M9.5 2.75v3h3M5.75 8.75h4.5M5.75 11h3"/></svg>');
+
 async function list(el, params) {
-  const [drafts, st, found, slot] = await Promise.all([
+  const [drafts, st, found, settings, ...slotList] = await Promise.all([
     api.get('/drafts?all=1'),
     api.get('/status').catch(() => ({})),
     api.get('/search?type=stories&limit=200').catch(() => null),
-    api.get('/slots/next?channel=linkedin').catch(() => ({}))
+    api.get('/settings').catch(() => ({})),
+    ...CHANNELS.map(c => api.get(`/slots/next?channel=${c}`).catch(() => ({})))
   ]);
+  const slots = Object.fromEntries(CHANNELS.map((c, i) => [c, slotList[i]?.date || null]));
   const th = st.threshold ?? liveThreshold();
   const stories = new Map((found?.stories || []).map(s => [s.id, s]));
   const saved = (() => { try { return JSON.parse(sessionStorage.getItem('byline-studio-filter') || '{}'); } catch (e) { return {}; } })();
-  const F = { status: saved.status || 'all', channel: saved.channel || 'all', open: new Set() };
+  const F = { status: saved.status || 'all', channel: saved.channel || 'all', open: new Set(), dup: new Set() };
   const p0 = params[0] || '';
   if (STATUS_LABEL[p0]) F.status = p0;
   if (FORMATS[p0]) F.channel = p0;
@@ -104,7 +138,8 @@ async function list(el, params) {
 
   // the writing-surface card: the newest draft waiting on review; else the most recently edited open draft
   const leadRow = newest(live.filter(d => d.status === 'in_review')) || newest(open.filter(d => d.status === 'draft' || d.status === 'approved'));
-  const lead = leadRow ? await api.get(`/drafts/${leadRow.id}`).catch(() => null) : null;
+  // the lead's full text, and the opening line of every non-archived draft (to tell sibling rows apart)
+  const [lead] = await Promise.all([leadRow ? api.get(`/drafts/${leadRow.id}`).catch(() => null) : null, loadHooks(live)]);
 
   // F §2 Studio headline + one-liner (first match wins), with honest fallbacks
   let h, l;
@@ -126,7 +161,10 @@ async function list(el, params) {
     if (!lead) return '';
     const story = stories.get(lead.story_id);
     const advisory = lead.flags.length - lead.blocking;
-    const body = lead.sections.filter(s => !['sources', 'caption'].includes(s.kind)).map(s => collapseRuns(s.text).map(r => r.text.trim()).join('\n')).filter(Boolean).join('\n');
+    // only the hook (CS3): list marker stripped, cut at a word, clamped to 2 lines; when the hook just restates the
+    // headline, the next section's opening line says more
+    const hi = hookInfo(lead);
+    const body = clip(hi.hook && !sameOpening(hi.hook, lead.title) ? hi.hook : (hi.next || hi.hook), 220);
     const waiting = lead.status === 'in_review';
     return html`<article class="st-lead" aria-labelledby="st-lead-t">
       <div class="st-lead-main">
@@ -152,59 +190,93 @@ async function list(el, params) {
     </article>`;
   };
 
-  const rowHtml = (d, grouped, common) => {
+  // the row's second voice after the format: the hook's first ~68 characters; when the hook only restates the story
+  // headline, say so and give the draft's shape instead (all computed from the draft's own sections)
+  const hookText = (d, groupTitle) => {
+    const hi = hookOf(d);
+    if (!hi?.hook) return '';
+    return sameOpening(hi.hook, groupTitle) ? `Headline hook${hi.parts ? ` · ${hi.parts}` : ''}` : clip(hi.hook, 68);
+  };
+  const rowHtml = (d, grouped, common, o = {}) => {
     const story = stories.get(d.story_id);
-    const name = grouped ? channelLabel(d.channel, d.format) : (d.title || 'Untitled');
-    const showAngle = d.angle && (!grouped || d.angle !== common);
+    const n = o.dups?.length || 1;
+    const name = o.sub ? `Draft #${d.id}` : grouped ? channelLabel(d.channel, d.format) : (d.title || 'Untitled');
+    const showAngle = !o.sub && d.angle && (!grouped || d.angle !== common);
+    const hook = o.sub ? `edited ${fmtDateTime(d.updated_at)}` : grouped ? hookText(d, o.groupTitle) : '';
     const date = d.status === 'published' && d.published_at ? html`<span class="st-k">Published</span> ${dayShort(d.published_at.slice(0, 10))}`
       : d.planned_date ? html`<span class="st-k">Planned</span> ${dayShort(d.planned_date)}` : null;
-    return html`<li class="st-row${grouped ? '' : ' st-row--solo'}" data-row="${d.id}">
-      ${glyph(d.channel)}
+    return html`<li class="st-row${grouped ? '' : ' st-row--solo'}${o.sub ? ' st-row--sub' : ''}" data-row="${d.id}">
+      ${o.sub ? html`<span class="st-sub-mark" aria-hidden="true"></span>` : glyph(d.channel)}
       <span class="st-row-main">
-        <a class="st-row-t" href="#/draft/${d.id}" title="Draft #${d.id}">${name}<span class="sr-only">, draft #${d.id}</span></a>
+        <span class="st-row-line">
+          <a class="st-row-t" href="#/draft/${d.id}" title="Draft #${d.id}">${name}<span class="sr-only">${o.sub ? '' : `, draft #${d.id}`}${n > 1 ? `, the newest of ${n} with the same opening` : ''}</span></a>
+          ${n > 1 ? html`<button type="button" class="st-dup xbtn" data-dup="${o.key}" aria-expanded="${String(!!o.open)}" title="${o.open ? 'Hide' : 'Show'} each of the ${n} drafts">×${n}</button>` : ''}
+          ${hook ? html`<span class="st-row-h" title="${o.sub ? '' : `Hook: ${hookOf(d)?.hook || ''}`}">${hook}</span>` : ''}
+        </span>
         ${!grouped || showAngle ? html`<span class="st-row-m">${grouped ? '' : html`${channelLabel(d.channel, d.format)}${showAngle || story ? ' · ' : ''}`}${showAngle ? `Angle: ${angleLabel(d.angle)}` : ''}${!grouped && story ? html`${showAngle ? ' · ' : ''}story ${Math.round(story.score)}` : ''}</span>` : ''}
       </span>
-      ${statusTag(d.status)}
+      ${o.sub ? html`<span></span>` : statusTag(d.status)}
       <span class="st-row-plan">${date || (d.status !== 'published' ? html`<button type="button" class="st-plan xbtn" data-plan="${d.id}" aria-label="Plan a date for ${name} (draft #${d.id})">${icon('calendar')}Plan</button>` : '')}</span>
-      <span class="st-row-u"><time datetime="${d.updated_at}">${timeAgo(d.updated_at)}</time></span>
+      <span class="st-row-u">${o.hideTime ? '' : html`<time datetime="${d.updated_at}">${timeAgo(d.updated_at)}</time>`}</span>
       <span class="st-row-go" aria-hidden="true">${icon('arrow-right')}</span>
-    </li>`;
+    </li>${o.open && n > 1 ? html`${o.dups.map(x => rowHtml(x, true, common, { sub: true, hideTime: true }))}` : ''}`;
   };
 
-  // start/end slice the ordered groups: the first renders with the page, the rest right after the swap
-  function rowsHtml(start = 0, end = Infinity) {
-    const shown = drafts.filter(d => (F.status === 'all' ? d.status !== 'archived' : d.status === F.status) && (F.channel === 'all' || d.channel === F.channel));
-    if (!shown.length) return start ? '' : html`<div class="empty st-empty"><h3>${drafts.length ? 'Nothing matches these filters.' : 'No drafts yet.'}</h3><p>${drafts.length ? `${STATUS_LABEL[F.status]} · ${F.channel === 'all' ? 'all channels' : channelLabel(F.channel)}: 0 drafts. Clear a filter to see the other ${live.length}.` : 'Open a story in the Feed or the Map and choose Draft a post. Drafts keep their sources attached.'}</p></div>`;
+  const shownDrafts = () => drafts.filter(d => (F.status === 'all' ? d.status !== 'archived' : d.status === F.status) && (F.channel === 'all' || d.channel === F.channel));
+  function orderedGroups() {
     const groups = new Map();
-    for (const d of shown) { const k = d.story_id ? `s${d.story_id}` : d.project_id ? `p${d.project_id}` : `d${d.id}`; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(d); }
-    const ordered = [...groups.entries()].sort((a, b) => {
+    for (const d of shownDrafts()) { const k = d.story_id ? `s${d.story_id}` : d.project_id ? `p${d.project_id}` : `d${d.id}`; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(d); }
+    return [...groups.entries()].sort((a, b) => {
       const rank = (l) => Math.min(...l.map(d => STATUS_ORDER.indexOf(d.status)));
       return rank(a[1]) - rank(b[1]) || Date.parse(b[1][0].updated_at) - Date.parse(a[1][0].updated_at);
     });
-    return html`${ordered.slice(start, end).map(([k, list], i) => { const gi = start + i;
-      list.sort((a, b) => STATUS_ORDER.indexOf(a.status) - STATUS_ORDER.indexOf(b.status) || Date.parse(b.updated_at) - Date.parse(a.updated_at));
-      const story = stories.get(list[0].story_id);
-      const cv = gi > 3 ? ' cv' : ''; // long lists only: a full-page capture still shows the first groups
-      if (list.length === 1 && !story) return html`<section class="st-group st-group--solo${cv}"><ul class="st-rows" role="list">${rowHtml(list[0], false)}</ul></section>`;
-      const by = list.reduce((m, d) => { m[d.channel] = (m[d.channel] || 0) + 1; return m; }, {});
-      const angles = list.reduce((m, d) => { if (d.angle) m[d.angle] = (m[d.angle] || 0) + 1; return m; }, {});
-      const common = Object.entries(angles).sort((a, b) => b[1] - a[1])[0]?.[0] || null;
-      const expanded = F.open.has(k) || list.length <= 6;
-      const title = story ? story.title : list[0].title;
-      return html`<section class="st-group${cv}" aria-label="${story?.short_title || list[0].title}">
-        <header class="st-group-h">
-          <div class="st-group-tx">
-            <h2 class="st-group-t">${story ? html`<a href="#/story/${story.id}">${title}</a>` : title}${story?.is_demo ? html` <span class="tag tag--demo">Demo</span>` : ''}</h2>
-            <p class="st-group-m">${plural(list.length, 'draft')}: ${Object.entries(by).map(([c, n]) => `${n} ${channelLabel(c)}`).join(', ')}${common ? html` · Angle: ${angleLabel(common)}` : ''}${story ? html` · ${story.main_topic ? html`<span class="chip chip--topic">${story.main_topic}</span>` : ''} ${story.source_line}` : ''}</p>
-          </div>
-          ${story ? scoreChip(story.score, th) : ''}
-        </header>
-        <ul class="st-rows" role="list">${(expanded ? list : list.slice(0, 5)).map(d => rowHtml(d, true, common))}</ul>
-        ${list.length > 6 ? html`<button type="button" class="st-more xbtn" data-more="${k}" aria-expanded="${expanded}">${expanded ? 'Show fewer' : `Show ${list.length - 5} more drafts from this story`}</button>` : ''}
-      </section>`;
-    })}`;
+  }
+  function groupHtml(k, list, gi) {
+    list.sort((a, b) => STATUS_ORDER.indexOf(a.status) - STATUS_ORDER.indexOf(b.status) || Date.parse(b.updated_at) - Date.parse(a.updated_at));
+    const story = stories.get(list[0].story_id);
+    const cv = gi > 3 ? ' cv' : ''; // long lists only: a full-page capture still shows the first groups
+    if (list.length === 1 && !story) return html`<section class="st-group st-group--solo${cv}" data-group="${k}"><ul class="st-rows" role="list">${rowHtml(list[0], false)}</ul></section>`;
+    const by = list.reduce((m, d) => { m[d.channel] = (m[d.channel] || 0) + 1; return m; }, {});
+    const angles = list.reduce((m, d) => { if (d.angle) m[d.angle] = (m[d.angle] || 0) + 1; return m; }, {});
+    const common = Object.entries(angles).sort((a, b) => b[1] - a[1])[0]?.[0] || null;
+    const title = story ? story.title : list[0].title;
+    // true duplicates (same format, status and opening line) collapse into one expandable row: "Video · explainer ×5"
+    const buckets = new Map();
+    for (const d of list) { const hk = hookOf(d)?.hook; const bk = `${d.channel}|${d.format}|${d.status}|${hk ? norm(hk) : `#${d.id}`}`; if (!buckets.has(bk)) buckets.set(bk, []); buckets.get(bk).push(d); }
+    const rows = [...buckets.entries()].map(([bk, ds]) => ({ key: `${k}|${bk}`, ds }));
+    // one shared edit time is said once, in the head, instead of on every row
+    const ages = new Set(list.map(d => timeAgo(d.updated_at)));
+    const oneAge = list.length > 1 && ages.size === 1 ? [...ages][0] : null;
+    const expanded = F.open.has(k) || rows.length <= 6;
+    const vis = expanded ? rows : rows.slice(0, 5);
+    const hidden = rows.slice(5).reduce((n, r) => n + r.ds.length, 0);
+    return html`<section class="st-group${cv}${oneAge ? ' st-group--oneage' : ''}" data-group="${k}" aria-label="${story?.short_title || list[0].title}">
+      <header class="st-group-h">
+        <div class="st-group-tx">
+          <h2 class="st-group-t">${story ? html`<a href="#/story/${story.id}">${title}</a>` : title}${story?.is_demo ? html` <span class="tag tag--demo">Demo</span>` : ''}</h2>
+          <p class="st-group-m">${plural(list.length, 'draft')}: ${Object.entries(by).map(([c, n]) => `${n} ${channelLabel(c)}`).join(', ')}${common ? html` · Angle: ${angleLabel(common)}` : ''}${oneAge ? html` · <span>edited ${oneAge}</span>` : ''}${story ? html` · ${story.main_topic ? topicPills([story.main_topic], story.score, th, { max: 1 }) : ''} ${story.source_line}` : ''}</p>
+        </div>
+        ${story ? scoreChip(story.score, th) : ''}
+      </header>
+      <ul class="st-rows" role="list">${vis.map(r => rowHtml(r.ds[0], true, common, { dups: r.ds, key: r.key, open: F.dup.has(r.key), groupTitle: title, hideTime: !!oneAge }))}</ul>
+      ${rows.length > 6 ? html`<button type="button" class="st-more xbtn" data-more="${k}" aria-expanded="${String(expanded)}">${expanded ? 'Show fewer' : `Show ${hidden} more ${hidden === 1 ? 'draft' : 'drafts'} from this story`}</button>` : ''}
+    </section>`;
   }
 
+  // start/end slice the ordered groups: the first renders with the page, the rest right after the swap
+  function rowsHtml(start = 0, end = Infinity) {
+    const ordered = orderedGroups();
+    if (!ordered.length) return start ? '' : html`<div class="empty st-empty"><h3>${drafts.length ? 'Nothing matches these filters.' : 'No drafts yet.'}</h3><p>${drafts.length ? `${STATUS_LABEL[F.status]} · ${F.channel === 'all' ? 'all channels' : channelLabel(F.channel)}: 0 drafts. Clear a filter to see the other ${live.length}.` : 'Open a story in the Feed or the Map and choose Draft a post. Drafts keep their sources attached.'}</p></div>`;
+    return html`${ordered.slice(start, end).map(([k, list], i) => groupHtml(k, list, start + i))}`;
+  }
+  /** Re-render one group in place (expand a duplicate row, show more): no page re-entrance. */
+  function regroup(k) {
+    const ordered = orderedGroups();
+    const gi = ordered.findIndex(([key]) => key === k);
+    const sec = el.querySelector(`.st-group[data-group="${CSS.escape(k)}"]`);
+    if (gi < 0 || !sec) return repaint();
+    sec.outerHTML = String(groupHtml(k, ordered[gi][1], gi));
+  }
   // one compact filter bar: status and channel as two small segmented groups on one row
   const fBtn = (kind, key, label, n) => html`<button type="button" class="st-f xbtn" data-f="${kind}" data-v="${key}" aria-pressed="${F[kind] === key}">${label}${n != null ? html`<span class="st-f-n">${n}</span>` : ''}</button>`;
   const filtersHtml = () => html`
@@ -219,6 +291,34 @@ async function list(el, params) {
   const approvedUns = live.filter(d => d.status === 'approved' && !d.planned_date && d.id !== lead?.id);
   const drafted = new Set(drafts.map(d => d.story_id).filter(Boolean));
   const ready = [...stories.values()].filter(s => s.score >= th && !drafted.has(s.id) && s.status !== 'archived').sort((a, b) => b.score - a.score);
+  // By channel (CS2): open drafts per channel split by status, set against this week's posting days (settings) and
+  // each channel's next open posting day (/slots/next). Every figure is a count of existing rows.
+  const postingDays = settings?.posting_days?.length ? settings.posting_days : ['Mon', 'Wed', 'Fri'];
+  const today = st.today || new Date().toISOString().slice(0, 10);
+  const wk0 = (() => { const t = new Date(`${today}T12:00:00Z`); t.setUTCDate(t.getUTCDate() - ((t.getUTCDay() + 6) % 7)); return t.toISOString().slice(0, 10); })();
+  const wk1 = (() => { const t = new Date(`${wk0}T12:00:00Z`); t.setUTCDate(t.getUTCDate() + 6); return t.toISOString().slice(0, 10); })();
+  const channelHtml = () => {
+    const rows = CHANNELS.map(c => {
+      const mine = open.filter(d => d.channel === c);
+      const split = STATUS_ORDER.map(s => [s, mine.filter(d => d.status === s).length]).filter(([, n]) => n);
+      const days = new Set(live.filter(d => d.channel === c).map(d => d.status === 'published' && d.published_at ? d.published_at.slice(0, 10) : d.planned_date?.slice(0, 10)).filter(x => x && x >= wk0 && x <= wk1)).size;
+      return { c, n: mine.length, split, days };
+    });
+    if (!rows.some(r => r.n)) return '';
+    const goal = postingDays.length;
+    const nexts = new Set(CHANNELS.map(c => slots[c]));
+    const oneNext = nexts.size === 1 ? [...nexts][0] : undefined; // the same day for every channel is said once
+    return html`<section class="tile tile--static st-side-tile st-chan" aria-labelledby="st-c-h">
+      <h2 class="st-side-h" id="st-c-h">By channel <span class="st-side-sub">posting ${postingDays.join(', ')}</span></h2>
+      <ul class="st-chan-list" role="list">${rows.map(r => html`<li class="st-chan-row">
+        <span class="st-chan-head">${glyph(r.c)}<span class="st-chan-name">${channelLabel(r.c)}</span><span class="st-chan-n"><b>${r.n}</b> open</span></span>
+        <span class="st-chan-split">${r.split.length ? r.split.map(([st0, n]) => `${n} ${STATUS_LABEL[st0].toLowerCase()}`).join(' · ') : 'No open drafts'}</span>
+        <span class="st-chan-week"><span class="st-pips" role="img" aria-label="${r.days} of ${goal} posting days planned this week">${Array.from({ length: Math.max(goal, r.days) }, (_, i) => html`<i class="${i < r.days ? 'is-on' : ''}"></i>`)}</span>${r.days} of ${goal} this week${oneNext === undefined && slots[r.c] ? html` · next open <b>${dayShort(slots[r.c])}</b>` : ''}</span>
+      </li>`)}</ul>
+      ${oneNext !== undefined ? html`<p class="st-chan-next">${oneNext ? html`Next open posting day: <b>${dayShort(oneNext)}</b>, every channel.` : 'No open posting day in the next 60 days.'}</p>` : ''}
+      <a class="st-side-link" href="#/calendar">Plan them in the Calendar ${icon('arrow-right')}</a>
+    </section>`;
+  };
   const sideItem = (d) => html`<li><a class="st-side-row" href="#/draft/${d.id}" title="Draft #${d.id}">${glyph(d.channel)}<span class="st-side-t">${stories.get(d.story_id)?.title || d.title}<span class="st-side-m">${channelLabel(d.channel, d.format)} · ${timeAgo(d.updated_at)}</span></span></a></li>`;
   const sideHtml = html`
     ${queue.length || approvedUns.length || !lead ? html`<section class="tile tile--static st-side-tile" aria-labelledby="st-q-h">
@@ -233,11 +333,7 @@ async function list(el, params) {
         <p class="st-side-foot">Open one and choose Draft a post.</p>`
         : html`<p class="st-side-empty">Every story at or above ${th} already has a draft.</p>`}
     </section>
-    <section class="tile tile--static st-side-tile st-side-slot">
-      <h2 class="st-side-h">Next open posting day</h2>
-      <p class="st-slot">${slot?.date ? html`<b>${dayShort(slot.date)}</b> for LinkedIn` : 'No open LinkedIn slot in the next 60 days.'}</p>
-      <a class="st-side-link" href="#/calendar">Plan it in the Calendar ${icon('arrow-right')}</a>
-    </section>`;
+    ${channelHtml()}`;
 
   el.innerHTML = String(html`
     <header class="page-head st-head">
@@ -266,13 +362,22 @@ async function list(el, params) {
     if (!reduced()) enterItems([...g.querySelectorAll('.st-group')].slice(0, 6), { stagger: 30, y: 4, duration: 380, fadeDuration: 260 });
   };
   on(el, 'click', '[data-f]', (e, b) => { F[b.dataset.f] = b.dataset.v; repaint(); el.querySelector(`.st-list-bar [data-f="${b.dataset.f}"][data-v="${b.dataset.v}"]`)?.focus(); });
-  on(el, 'click', '[data-more]', (e, b) => { const k = b.dataset.more; F.open.has(k) ? F.open.delete(k) : F.open.add(k); repaint(); el.querySelector(`[data-more="${k}"]`)?.focus(); });
+  on(el, 'click', '[data-more]', (e, b) => { const k = b.dataset.more; F.open.has(k) ? F.open.delete(k) : F.open.add(k); regroup(k); el.querySelector(`[data-more="${CSS.escape(k)}"]`)?.focus(); });
+  on(el, 'click', '[data-dup]', (e, b) => {
+    e.preventDefault();
+    const key = b.dataset.dup, k = b.closest('.st-group')?.dataset.group;
+    F.dup.has(key) ? F.dup.delete(key) : F.dup.add(key);
+    regroup(k);
+    el.querySelector(`[data-dup="${CSS.escape(key)}"]`)?.focus();
+    if (F.dup.has(key) && !reduced()) enterItems([...el.querySelectorAll(`.st-group[data-group="${CSS.escape(k)}"] .st-row--sub`)], { stagger: 24, y: 4, duration: 320, fadeDuration: 220 });
+  });
   on(el, 'click', '[data-plan]', (e, b) => { e.preventDefault(); planDialog(drafts.find(d => d.id === Number(b.dataset.plan)), b, repaint); });
   // after the swap: the remaining groups and the side column (the side is still faded out by the router's entrance)
   afterSwap(el, () => {
     if (!full) { full = true; el.querySelector('.st-groups').insertAdjacentHTML('beforeend', String(rowsHtml(1))); }
-    el.querySelector('.st-side').innerHTML = String(sideHtml);
     if (!reduced()) enterItems([...el.querySelectorAll('.st-group')].slice(0, 6), { stagger: 30, delay: 120, y: 6, duration: 460, fadeDuration: 320 });
+    // the side column one frame later, in its own task (two smaller frames instead of one long one)
+    requestAnimationFrame(() => setTimeout(() => { const side = el.querySelector('.st-side'); if (side && el.isConnected) side.innerHTML = String(sideHtml); }, 0));
   }, 400);
 }
 
@@ -606,6 +711,13 @@ async function editor(el, id) {
     <span class="cluster"><button type="button" class="btn btn--ghost btn--sm" data-act="view-version" data-id="${v.id}">View</button><button type="button" class="btn btn--secondary btn--sm" data-act="restore" data-id="${v.id}">Restore</button></span></li>`)}</ol>` : html`<p class="st-muted">No versions yet. Every save, rewrite and regeneration keeps the earlier text here.</p>`;
 
   const TABS = [['review', 'Review'], ['preview', 'Preview'], ['notes', 'Notes'], ['media', d.channel === 'video' ? 'Video' : 'Visual'], ['sources', 'Sources'], ['history', 'History']];
+  // CS4: when the inspector is narrow (container query in studio.css), Sources and History move into a trailing "More"
+  // menu; the More button then names the open one, so the current tab is always visible
+  const OVF = new Set(['sources', 'history']);
+  const CHEV = raw('<svg class="st-chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 6.5 8 10l3.5-3.5"/></svg>');
+  // the label stays "More" (a wider "History 10" would push Visual out of the strip); when Sources or History is open
+  // it carries the selected underline and names the open tab for assistive tech
+  const moreLabel = () => html`More${OVF.has(ui.tab) ? html`<span class="sr-only">: ${TABS.find(t => t[0] === ui.tab)[1]} is open</span>` : ''}${CHEV}`;
   const tabBadge = (k) => k === 'review' ? (d.blocking ? html`<span class="st-badge is-err">${d.blocking}</span>` : d.flags.length ? html`<span class="st-badge">${d.flags.length}</span>` : '')
     : k === 'notes' ? (d.notes.length ? html`<span class="st-badge">${d.notes.length}</span>` : '') : k === 'history' ? (d.versions.length ? html`<span class="st-badge">${d.versions.length}</span>` : '') : '';
 
@@ -672,7 +784,10 @@ async function editor(el, id) {
         </footer>
       </article>
       <aside class="st-insp" aria-label="Inspector">
-        <div class="st-tabs-wrap" data-fade="end"><div class="st-tabs" role="tablist" aria-label="Inspector">${TABS.map(([k, l]) => html`<button type="button" class="st-tab xbtn" role="tab" id="tab-${k}" aria-controls="pane-${k}" aria-selected="${ui.tab === k}" tabindex="${ui.tab === k ? 0 : -1}" data-tab="${k}">${l}<span data-badge="${k}">${tabBadge(k)}</span></button>`)}</div></div>
+        <div class="st-tabs-wrap" data-fade="none"><div class="st-tabs" role="tablist" aria-label="Inspector">${TABS.map(([k, l]) => html`<button type="button" class="st-tab xbtn${OVF.has(k) ? ' st-tab--x' : ''}" role="tab" id="tab-${k}" aria-controls="pane-${k}" aria-selected="${ui.tab === k}" tabindex="${ui.tab === k ? 0 : -1}" data-tab="${k}" ${k === 'notes' ? raw('title="Notes"') : ''}>${k === 'notes' ? html`${NOTE_GLYPH}<span class="sr-only">${l}</span>` : l}<span data-badge="${k}">${tabBadge(k)}</span></button>`)}</div>
+          <div class="st-tabmore"><button type="button" class="st-tab-more xbtn" id="st-tabmore" aria-haspopup="menu" aria-expanded="false" aria-controls="st-tabmenu">${moreLabel()}</button>
+            <div class="st-tabmenu" id="st-tabmenu" role="menu" aria-labelledby="st-tabmore" hidden>${TABS.filter(([k]) => OVF.has(k)).map(([k, l]) => html`<button type="button" role="menuitem" class="st-tabmenu-i xbtn" data-tab="${k}" tabindex="-1">${l}<span data-badge-m="${k}">${tabBadge(k)}</span></button>`)}</div>
+          </div></div>
         <div class="st-insp-body">
         ${TABS.map(([k]) => html`<div class="st-pane" id="pane-${k}" role="tabpanel" aria-labelledby="tab-${k}" ${ui.tab !== k ? raw('hidden') : ''}>${ui.tab === k ? paneHtml(k) : ''}</div>`)}
         </div>
@@ -687,14 +802,17 @@ async function editor(el, id) {
     const t = el.querySelector('.st-tabs'), w = t?.parentElement;
     if (!t) return;
     const upd = () => { const max = t.scrollWidth - t.clientWidth; w.dataset.fade = max <= 1 ? 'none' : t.scrollLeft <= 1 ? 'end' : t.scrollLeft >= max - 1 ? 'start' : 'both'; };
-    t.addEventListener('scroll', upd, { passive: true }); // reads only on scroll: the initial state is the static "end" fade
+    t.addEventListener('scroll', upd, { passive: true });
+    if ('ResizeObserver' in window) new ResizeObserver(upd).observe(t); // after layout: no forced reflow
+    const more = el.querySelector('#st-tabmore'), menu = el.querySelector('#st-tabmenu');
+    more?.classList.toggle('is-on', OVF.has(ui.tab));
   }
 
   function refreshPanels() {
     const set = (sel, v) => { const n = el.querySelector(sel); if (n) n.innerHTML = String(v); };
     set('#flags', checksHtml()); set('#approval', approvalHtml()); set('#preview', previewHtml()); set('#tags', tagsHtml()); set('#versions', versionsHtml());
     set('#st-lede', ledeHtml()); set('#st-meta', metaHtml());
-    TABS.forEach(([k]) => set(`[data-badge="${k}"]`, tabBadge(k)));
+    TABS.forEach(([k]) => { set(`[data-badge="${k}"]`, tabBadge(k)); set(`[data-badge-m="${k}"]`, tabBadge(k)); });
     for (const s of d.sections) {
       const b = el.querySelector(`#sec-${CSS.escape(s.id)}`);
       if (!b) continue;
@@ -732,14 +850,44 @@ async function editor(el, id) {
       const on = t.dataset.tab === k; t.setAttribute('aria-selected', String(on)); t.tabIndex = on ? 0 : -1;
       if (on) { if (focus) t.focus({ preventScroll: true }); const s = t.parentElement; const l = t.offsetLeft, r = l + t.offsetWidth; if (l < s.scrollLeft + 16 || r > s.scrollLeft + s.clientWidth - 16) s.scrollTo({ left: Math.max(0, l - 24), behavior: reduced() ? 'auto' : 'smooth' }); }
     });
+    const more = el.querySelector('#st-tabmore');
+    if (more) { more.innerHTML = String(moreLabel()); more.classList.toggle('is-on', OVF.has(k)); }
     el.querySelectorAll('.st-pane').forEach(p => { const on = p.id === `pane-${k}`; p.hidden = !on; if (on && !p.firstElementChild) p.innerHTML = String(paneHtml(k)); if (on && !reduced()) p.animate([{ opacity: 0, transform: 'translateY(4px)' }, { opacity: 1, transform: 'none' }], { duration: 260, easing: EASE.settle }); });
     wireHold();
   }
-  on(el, 'click', '[data-tab]', (e, t) => showTab(t.dataset.tab));
-  on(el, 'keydown', '.st-tab', (e, t) => {
-    const keys = TABS.map(x => x[0]); const i = keys.indexOf(t.dataset.tab);
-    const j = e.key === 'ArrowRight' ? (i + 1) % keys.length : e.key === 'ArrowLeft' ? (i - 1 + keys.length) % keys.length : e.key === 'Home' ? 0 : e.key === 'End' ? keys.length - 1 : -1;
-    if (j < 0) return; e.preventDefault(); showTab(keys[j], { focus: true });
+  on(el, 'click', '[data-tab]', (e, t) => { const fromMenu = !!t.closest('.st-tabmenu'); menuOpen(false); showTab(t.dataset.tab); if (fromMenu) el.querySelector('#st-tabmore')?.focus(); });
+  // arrows move along the visible tabs (and on to More when it shows); a hidden tab is reached through More
+  const strip = () => [...el.querySelectorAll('.st-tab, .st-tab-more')].filter(b => b.offsetParent !== null);
+  on(el, 'keydown', '.st-tab, .st-tab-more', (e, t) => {
+    const list = strip(); const i = list.indexOf(t);
+    const j = e.key === 'ArrowRight' ? (i + 1) % list.length : e.key === 'ArrowLeft' ? (i - 1 + list.length) % list.length : e.key === 'Home' ? 0 : e.key === 'End' ? list.length - 1 : -1;
+    if (t.classList.contains('st-tab-more') && (e.key === 'ArrowDown' || e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); menuOpen(true, { focus: true }); return; }
+    if (j < 0) return;
+    e.preventDefault();
+    const n = list[j];
+    if (n.dataset.tab) showTab(n.dataset.tab, { focus: true }); else n.focus();
+  });
+  // the More menu: click or ↓ opens, ↑/↓ move, Esc or a click outside closes
+  let menuOff = null;
+  function menuOpen(open, { focus = false } = {}) {
+    const b = el.querySelector('#st-tabmore'), m = el.querySelector('#st-tabmenu');
+    if (!b || !m) return;
+    if (open === (b.getAttribute('aria-expanded') === 'true')) { if (open && focus) m.querySelector('[role=menuitem]')?.focus(); return; }
+    b.setAttribute('aria-expanded', String(open)); m.hidden = !open;
+    menuOff?.(); menuOff = null;
+    if (!open) return;
+    if (!reduced()) m.animate([{ opacity: 0, transform: 'translateY(-4px)' }, { opacity: 1, transform: 'none' }], { duration: 160, easing: EASE.settle });
+    if (focus) (m.querySelector(`[data-tab="${ui.tab}"]`) || m.querySelector('[role=menuitem]'))?.focus();
+    const away = (ev) => { if (!ev.target.closest?.('.st-tabmore')) menuOpen(false); };
+    document.addEventListener('pointerdown', away, true);
+    menuOff = () => document.removeEventListener('pointerdown', away, true);
+  }
+  on(el, 'click', '#st-tabmore', () => menuOpen(el.querySelector('#st-tabmore').getAttribute('aria-expanded') !== 'true', { focus: true }));
+  on(el, 'keydown', '.st-tabmenu-i', (e, t) => {
+    const items = [...el.querySelectorAll('.st-tabmenu-i')]; const i = items.indexOf(t);
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); items[(i + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length].focus(); }
+    else if (e.key === 'Escape') { e.preventDefault(); menuOpen(false); el.querySelector('#st-tabmore')?.focus(); }
+    else if (e.key === 'Tab') menuOpen(false);
   });
 
   // flag note ↔ mark: hovering or focusing a note lights its sentence

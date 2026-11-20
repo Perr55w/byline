@@ -8,9 +8,11 @@
 // hover actions Draft / Save / Dismiss (Restore in Archived).
 
 import { api } from '../api.js';
-import { html, raw, esc, on, act, toast, icon, scoreChip, strikeOut, useStyle } from '../ui.js';
-import { EASE, reduced } from '../motion.js';
+import * as ui from '../ui.js';
+import { EASE, reduced, enterHeading, flip } from '../motion.js';
 import * as dossier from '../dossier.js';
+
+const { html, raw, esc, on, act, toast, icon, scoreChip, strikeOut, useStyle } = ui;
 
 const DEFAULT_COLLECTION = 'AI product management';
 const DAYS = [['7', '7 days'], ['30', '30 days'], ['all', 'All time']];
@@ -104,7 +106,24 @@ function headline(st, stories, T, status) {
   return { h: html`<b>${cleared.length}</b> of <b>${total}</b> ${total === 1 ? 'story' : 'stories'} <b>${when}</b> ${cleared.length === 1 ? 'is' : 'are'} worth a post.`, l: lede };
 }
 
+// ------------------------------------------------------------------ topic pills (R2 / S9)
+/**
+ * The first topic is blue (.chip--main) only when round(score) clears the bar; below it, the neutral lead pill.
+ * Shared `topicPills()` (ui.js) owns the rule; the local copy only covers a ui.js without it.
+ */
+function pills(topics, score, T) {
+  const list = topics.filter(Boolean).slice(0, 2);
+  if (!list.length) return '';
+  const out = typeof ui.topicPills === 'function'
+    ? String(ui.topicPills(list, score, T, { max: 2 }))
+    : list.map((t, i) => `<span class="chip ${i ? 'chip--topic' : Math.round(Number(score) || 0) >= T ? 'chip--main' : 'chip--lead'}">${esc(t)}</span>`).join('');
+  // the first pill is the dossier flight's shared "topic" element
+  return /data-shared=/.test(out) ? out : out.replace(/<span class="chip/, '<span data-shared="topic" class="chip');
+}
+
 // ------------------------------------------------------------------ row (F §4)
+/** What a reused row must match to be kept as is through a repaint (anything the row markup shows). */
+const rowSig = (s, T) => `${s.score}|${T}|${s.viewed_score ?? ''}|${s.collections ?? ''}|${s.new_since_view ?? ''}|${s.updated_at}|${s.finding ?? ''}`;
 function row(s, T, cv = false) {
   const topics = s.topics || [];
   const main = s.main_topic || topics[0] || null;
@@ -113,7 +132,7 @@ function row(s, T, cv = false) {
   const changed = s.viewed_score != null && Math.round(s.viewed_score) !== Math.round(s.score);
   const eng = Object.entries(s.breakdown?.engagement || {});
   const counts = countsLabel(s);
-  return html`<article class="fd-row${below ? ' is-below' : ''}${cv ? ' cv-row' : ''}" data-row data-dossier-src data-id="${s.id}" data-score="${s.score}">
+  return html`<article class="fd-row${below ? ' is-below' : ''}${cv ? ' cv-row' : ''}" data-row data-dossier-src data-key="${s.id}" data-sig="${rowSig(s, T)}" data-id="${s.id}" data-score="${s.score}">
     <div class="fd-score">${raw(String(scoreChip(s.score, T)).replace('<span class="score-chip"', '<span class="score-chip" data-shared="ring"'))}${changed ? html`<span class="fd-was" title="Score when you last opened it">was ${Math.round(s.viewed_score)}</span>` : ''}</div>
     <div class="fd-main">
       <h3 class="fd-h"><a class="fd-title" href="#/story/${s.id}" data-shared="title">${s.title}</a>${s.is_demo ? html` <span class="tag tag--demo" title="Fictional sample data">Demo</span>` : ''}</h3>
@@ -125,7 +144,7 @@ function row(s, T, cv = false) {
       </p>` : ''}
     </div>
     <div class="fd-meta">
-      <div class="fd-topics">${main ? html`<span class="chip chip--main" data-shared="topic">${main}</span>` : html`<span class="fd-none">No topic matched</span>`}${second ? html`<span class="chip chip--topic">${second}</span>` : ''}</div>
+      <div class="fd-topics">${main ? raw(pills([main, second], s.score, T)) : html`<span class="fd-none">No topic matched</span>`}</div>
       <p class="fd-src" title="${counts}">${markers(s)}<span>${outletsLine(s)}</span><span class="sr-only">${s.source_line} (${counts})</span><span class="fd-age-m" aria-hidden="true">· ${age(s.updated_at)}</span></p>
     </div>
     <div class="fd-end">
@@ -155,80 +174,126 @@ function placeActs(el, rowEl, state) {
   bar.querySelector('[data-fd="save"]')?.setAttribute('aria-pressed', String(!!s?.collections));
 }
 
-// CV_FROM: content-visibility only deep in long lists (All time, up to 200 rows). On a short list it saves little
-// layout and makes full-page captures paint skipped rows as an empty band at the foot of the card (C, D).
-const SYNC_ROWS = 12, STAGGER_CAP = 8, CV_FROM = 24;
-/** Row ids + hidden count: when this key is unchanged a repaint leaves the list alone. */
-const listKey = (st, stories, T) => `${T}|${st.sort}|${st.min}|${stories.map(s => `${s.id}:${s.score}`).join(',')}`;
+// FD3 / E1: the first SYNC_ROWS rows render with the page; the rest arrive in one idle chunk. Every row after the
+// 8th skips layout until scrolled to (cv-row; its intrinsic size is the measured Feed row, feed.css).
+// On a phone (rows ≈ 200 px, about 4 on screen) the page renders 5 rows with it; rows 6–8 join the idle chunk.
+const SYNC_ROWS = 8, SYNC_ROWS_PHONE = 5, CV_FROM = 8, REUSE_SYNC = 40;
+const syncRows = () => (matchMedia('(max-width: 760px)').matches ? SYNC_ROWS_PHONE : SYNC_ROWS);
+/** Row ids + scores: when this key is unchanged a repaint leaves the list alone. */
+const listKey = (st, stories, T) => `${T}|${st.status}|${st.sort}|${st.min}|${stories.map(s => `${s.id}:${s.score}`).join(',')}`;
 /**
- * The list (F §4). Returns { html, rest }: the first SYNC_ROWS rows render now; the rest are markup strings
- * appended in one idle chunk (F6). Items past STAGGER_CAP live in `.fd-rest`, which enters as one block.
+ * The list plan (F §4): keyed items in display order, each { key, sig, html() } (markup built on demand),
+ * plus the count the minimum score hides and, when nothing passes it, the empty-state markup.
  */
-function listHtml(st, stories, T) {
+function listPlan(st, stories, T) {
   let list = stories.filter(s => !st.min || s.score >= Number(st.min));
   const hidden = stories.length - list.length;
   if (st.sort === 'new') list = list.slice().sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at)));
-  if (!stories.length) return { html: '', rest: null };
-  if (!list.length) return { html: String(html`<div class="empty"><h3>Nothing at or above ${st.min}.</h3><p>${plural(hidden, 'story', 'stories')} in this range score lower. Lower the minimum score to see them.</p></div>`), rest: null };
-  // items are thunks: rows past the first SYNC_ROWS are only built in the idle chunk
+  if (!stories.length) return { items: [], hidden, empty: '' };
+  if (!list.length) return { items: [], hidden, empty: String(html`<div class="empty"><h3>Nothing at or above ${st.min}.</h3><p>${plural(hidden, 'story', 'stories')} in this range score lower. Lower the minimum score to see them.</p></div>`) };
   const items = [];
-  let divided = false, rows = 0, syncEnd = 0;
+  let divided = false, rows = 0;
   const belowCount = list.filter(s => s.score < T).length;
+  const divText = `Below your bar · ${T} — ${plural(belowCount, 'story', 'stories')}`;
   for (const s of list) {
     if (st.sort === 'score' && !divided && s.score < T) {
       divided = true;
-      items.push(() => String(html`<div class="divider-label fd-divider" role="separator">Below your bar · ${T} — ${plural(belowCount, 'story', 'stories')}</div>`));
+      items.push({ key: 'div', sig: divText, text: divText, html: () => String(html`<div class="divider-label fd-divider" role="separator" data-key="div" data-sig="${divText}">${divText}</div>`) });
     }
-    const cv = rows >= CV_FROM;
-    items.push(() => String(row(s, T, cv)));
-    if (++rows === SYNC_ROWS) syncEnd = items.length;
+    const cv = rows++ >= CV_FROM;
+    items.push({ key: String(s.id), sig: rowSig(s, T), cv, html: () => String(row(s, T, cv)) });
   }
-  if (!syncEnd) syncEnd = items.length;
-  const run = (fns) => fns.map(f => f()).join('');
-  const head = items.slice(0, Math.min(STAGGER_CAP, syncEnd)), mid = items.slice(STAGGER_CAP, syncEnd);
+  return { items, hidden, empty: null };
+}
+const footHtml = (st, hidden) => (hidden ? String(html`<p class="fd-foot" data-fd-foot>${plural(hidden, 'story', 'stories')} below ${st.min} hidden by the minimum score.</p>`) : '');
+/** First paint of the list. Returns { html, rest }: rest() is the markup of every item after the first SYNC_ROWS rows. */
+function listHtml(st, stories, T) {
+  const plan = listPlan(st, stories, T);
+  if (!plan.items.length) return { html: plan.empty || '', rest: null };
+  let cut = plan.items.length, n = 0;
+  const sync = syncRows();
+  for (let i = 0; i < plan.items.length; i++) if (plan.items[i].key !== 'div' && ++n === sync) { cut = i + 1; break; }
+  const run = (list) => list.map(it => it.html()).join('');
   return {
-    html: String(html`<div class="tile tile--static tile--flush fd-list" data-fd-list>${raw(run(head))}<div class="fd-rest" data-fd-rest>${raw(run(mid))}</div></div><template data-acts-home>${actsHtml(st.status === 'archived')}</template>
-    ${hidden ? html`<p class="fd-foot">${plural(hidden, 'story', 'stories')} below ${st.min} hidden by the minimum score.</p>` : ''}`),
-    rest: () => run(items.slice(Math.max(syncEnd, STAGGER_CAP)))
+    html: String(html`<div class="tile tile--static tile--flush fd-list" data-fd-list>${raw(run(plan.items.slice(0, cut)))}</div><template data-acts-home>${actsHtml(st.status === 'archived')}</template>${raw(footHtml(st, plan.hidden))}`),
+    rest: cut < plan.items.length ? () => run(plan.items.slice(cut)) : null
   };
 }
 
-const idle = (fn) => ('requestIdleCallback' in window ? requestIdleCallback(fn, { timeout: 600 }) : setTimeout(() => fn({ timeRemaining: () => 8, didTimeout: true }), 32));
-/** Append the deferred rows (one idle chunk), then check the finding clamps. */
+const idle = (fn, timeout = 600) => ('requestIdleCallback' in window ? requestIdleCallback(fn, { timeout }) : setTimeout(() => fn({ timeRemaining: () => 8, didTimeout: true }), 32));
+/** Append the deferred rows (one idle chunk), then check the finding clamps. `rest` returns markup or nodes. */
 function fillRest(el, state, rest) {
   const token = (state.restToken = {});
   idle(() => {
     if (state.restToken !== token || !el.isConnected) return;
     const more = rest?.();
-    if (more) el.querySelector('[data-fd-rest]')?.insertAdjacentHTML('beforeend', more);
+    const list = el.querySelector('[data-fd-list]');
+    if (more && list) { if (typeof more === 'string') list.insertAdjacentHTML('beforeend', more); else list.append(...more); }
     clampCheck(el, state);
+    releaseCv(el, state);
   });
 }
 /**
- * F2: findings clamp at 2 lines, or 3 when line 2 would cut through a highlighted figure. Reads mark
- * geometry in idle time (layout is clean by then), a few rows per chunk.
+ * cv-row is for the tab-in and append frames only. Once the page is quiet, a short list (≤ 60 rows) lays its
+ * skipped rows out for real, a few per idle slice and all off screen (no visible shift), so the scroll height
+ * is exact and full-page captures never show the estimate as an empty band. Long lists (All time) keep it.
+ */
+function releaseCv(el, state) {
+  const token = (state.cvToken = {});
+  const rows = () => [...el.querySelectorAll('.fd-list > .fd-row.cv-row:not(.fd-leaving)')];
+  if (el.querySelectorAll('.fd-list > .fd-row').length > 60) return;
+  setTimeout(() => {
+    const todo = rows();
+    const step = (dl) => {
+      if (state.cvToken !== token || !el.isConnected) return;
+      let n = 0;
+      while (todo.length && n < 3 && (dl.didTimeout || dl.timeRemaining() > 6)) { todo.shift().classList.remove('cv-row'); n++; }
+      if (todo.length) idle(step, 1000);
+    };
+    idle(step, 1000);
+  }, 1200);
+}
+/**
+ * F2: findings clamp at 2 lines, or 3 when line 2 would cut through a highlighted figure. Mark geometry is read
+ * in a ResizeObserver callback for laid-out rows, and in idle time after the tab change for cv-row rows.
  */
 function clampCheck(el, state) {
   const token = (state.clampToken = {});
-  const todo = [...el.querySelectorAll('.fd-finding:not([data-clamp])')].filter(p => p.querySelector('mark'));
+  const all = [...el.querySelectorAll('.fd-finding:not([data-clamp])')].filter(p => p.querySelector('mark'));
   const LH = 21;
+  // one finding's reads; returns true when its marks straddle lines 2 and 3
+  const needs3 = (p) => {
+    const top = p.getBoundingClientRect().top;
+    for (const m of p.querySelectorAll('mark')) {
+      const r = m.getClientRects(); if (!r.length) continue;
+      const a = Math.floor((r[0].top - top + 2) / LH), b = Math.floor((r[r.length - 1].bottom - top - 2) / LH);
+      if (a <= 1 && b >= 2) return true;
+    }
+    return false;
+  };
+  const write = (seen, n3) => { seen.forEach(p => { p.dataset.clamp = '2'; }); n3.forEach(p => { p.dataset.clamp = '3'; }); };
+  // laid-out rows: read inside a ResizeObserver callback, where layout is clean (no forced layout in the tab change)
+  const live = all.filter(p => !p.closest('.cv-row'));
+  if (live.length && 'ResizeObserver' in window) {
+    const ro = new ResizeObserver(() => {
+      ro.disconnect();
+      if (state.clampToken !== token || !el.isConnected) return;
+      const seen = live.filter(p => p.isConnected);
+      write(seen, seen.filter(needs3));
+    });
+    live.forEach(p => ro.observe(p));
+  }
+  // rows still under content-visibility are off screen: read them in idle time once the tab change is over
+  const todo = 'ResizeObserver' in window ? all.filter(p => p.closest('.cv-row')) : all;
+  if (!todo.length) return;
   const step = (dl) => {
     if (state.clampToken !== token || !el.isConnected) return;
-    const n3 = [];
-    while (todo.length && (dl.didTimeout || dl.timeRemaining() > 2)) {
-      const p = todo.shift();
-      p.dataset.clamp = '2';
-      const top = p.getBoundingClientRect().top;
-      for (const m of p.querySelectorAll('mark')) {
-        const r = m.getClientRects(); if (!r.length) continue;
-        const a = Math.floor((r[0].top - top + 2) / LH), b = Math.floor((r[r.length - 1].bottom - top - 2) / LH);
-        if (a <= 1 && b >= 2) { n3.push(p); break; }
-      }
-    }
-    n3.forEach(p => { p.dataset.clamp = '3'; }); // writes after the reads
+    const seen = [], n3 = [];
+    while (todo.length && (dl.didTimeout || dl.timeRemaining() > 2)) { const p = todo.shift(); seen.push(p); if (needs3(p)) n3.push(p); }
+    write(seen, n3); // writes after the reads
     if (todo.length) idle(step);
   };
-  idle(step);
+  setTimeout(() => idle(step), 1500);
 }
 
 // ------------------------------------------------------------------ page
@@ -247,7 +312,7 @@ export async function render(view, ctx = {}) {
   const state = { st, stories, T, settings, status, all };
   const rest = paint(el, state);
   wire(el, state, topics);
-  // F6: rows past the first 12 arrive in one idle chunk once the page is on screen (byline:routed)
+  // F6 / FD3: rows past the first 8 arrive in one idle chunk once the page is on screen (byline:routed)
   let fired = false;
   const go = () => { if (fired) return; fired = true; document.removeEventListener('byline:routed', onRouted); fillRest(el, state, rest); };
   const onRouted = (e) => { if (!e.detail?.page || e.detail.page.contains(el)) go(); };
@@ -263,12 +328,19 @@ function showing(st, stories) {
   return `${plural(n, st.status === 'archived' ? 'archived story' : 'story', st.status === 'archived' ? 'archived stories' : 'stories')}${st.topic ? ` in ${st.topic}` : ''} · ${range} · ${st.sort === 'new' ? 'newest first' : 'highest score first'}${st.min ? ` · ${st.min}+` : ''}`;
 }
 
-/** Topic chips: the priorities that appear in this date range, most stories first, with their counts. */
+/**
+ * Topic chips: the priorities that appear in this date range, with their counts, ordered by count × priority
+ * weight (the headline-topic rule, DECISIONS); catch-all topics (weight ≤ 1, e.g. Machine learning) come after
+ * every other topic whatever their count (FD13).
+ */
 function topicCounts(state, topics) {
   const base = state.all || state.stories;
+  const weight = new Map((state.settings.priorities || []).map(p => [p.topic, Number(p.weight) || 0]));
   const n = new Map(topics.map(t => [t, 0]));
   for (const s of base) for (const t of s.topics || []) if (n.has(t)) n.set(t, n.get(t) + 1);
-  return [...n].filter(([t, c]) => c > 0 || t === state.st.topic).sort((a, b) => b[1] - a[1]);
+  const w = (t) => weight.get(t) ?? 1;
+  return [...n].filter(([t, c]) => c > 0 || t === state.st.topic)
+    .sort((a, b) => ((w(a[0]) <= 1) - (w(b[0]) <= 1)) || (b[1] * w(b[0]) - a[1] * w(a[0])) || (b[1] - a[1]));
 }
 
 function headHtml(state) {
@@ -281,7 +353,7 @@ function chipsData(state, topics) {
   const { st } = state;
   return [{ v: '', label: 'All', pressed: !st.topic && !st.status }, ...topicCounts(state, topics).map(([t, n]) => ({ v: t, label: t, n, pressed: st.topic === t && !st.status }))];
 }
-const chipHtml = (c) => html`<button type="button" class="chip chip--filter" data-fd="topic" data-v="${c.v}" aria-pressed="${c.pressed}">${c.label}${c.n != null ? html`<span class="fd-n">${c.n}</span>` : ''}</button>`;
+const chipHtml = (c) => html`<button type="button" class="chip chip--filter" data-fd="topic" data-v="${c.v}" aria-pressed="${String(!!c.pressed)}">${c.label}${c.n != null ? html`<span class="fd-n">${c.n}</span>` : ''}</button>`;
 function bodyHtml(state, head) {
   const { st, stories, T } = state;
   if (stories.length) return listHtml(st, stories, T);
@@ -294,7 +366,7 @@ function paint(el, state) {
   const topics = (settings.priorities || []).filter(p => p.weight > 0).map(p => p.topic);
   const head = headHtml(state);
   const body = bodyHtml(state, head);
-  state.head = head; state.key = listKey(st, stories, T);
+  state.head = head; state.key = listKey(st, stories, T); state.listStatus = st.status; state.headSwap = null; state.restToken = null;
   el.innerHTML = String(html`
   <header class="page-head">
     <p class="eyebrow">${head.eyebrow}</p>
@@ -317,7 +389,6 @@ function paint(el, state) {
   <div class="fd-bar">
     <div class="fd-topicbar" role="group" aria-label="Filter by topic" data-fd-topics>
       ${chipsData(state, topics).map(chipHtml)}
-      <button type="button" class="chip chip--filter fd-arch" data-fd="archived" aria-pressed="${st.status === 'archived'}">Archived</button>
     </div>
   </div>
   <div class="fd-viewbar">
@@ -329,44 +400,49 @@ function paint(el, state) {
           ${[T, 70, 40, 25].filter((v, i, a) => a.indexOf(v) === i).sort((a, b) => b - a).map(v => html`<option value="${v}"${String(v) === st.min ? raw(' selected') : ''}>${v === T ? `${v}+ · your bar` : `${v}+`}</option>`)}
         </select>
       </label>
-      <div class="fd-seg" role="radiogroup" aria-label="Date range">${DAYS.map(([k, l]) => html`<button type="button" role="radio" class="fd-seg-btn" data-fd="days" data-v="${k}" aria-checked="${st.days === k}">${l}</button>`)}</div>
-      <div class="fd-seg" role="radiogroup" aria-label="Sort">${SORTS.map(([k, l]) => html`<button type="button" role="radio" class="fd-seg-btn" data-fd="sort" data-v="${k}" aria-checked="${st.sort === k}">${l}</button>`)}</div>
+      <div class="fd-seg" role="radiogroup" aria-label="Date range">${DAYS.map(([k, l]) => html`<button type="button" role="radio" class="fd-seg-btn" data-fd="days" data-v="${k}" aria-checked="${String(st.days === k)}">${l}</button>`)}</div>
+      <div class="fd-seg" role="radiogroup" aria-label="Sort">${SORTS.map(([k, l]) => html`<button type="button" role="radio" class="fd-seg-btn" data-fd="sort" data-v="${k}" aria-checked="${String(st.sort === k)}">${l}</button>`)}</div>
+      <button type="button" class="chip chip--filter fd-arch" data-fd="archived" aria-pressed="${String(st.status === 'archived')}">Archived</button>
     </div>
   </div>
   <div class="fd-body" data-fd-body>${raw(body.html)}</div>`);
   return body.rest;
 }
 
-// ------------------------------------------------------------------ repaint in place (F5: no h1 flash, nothing vanishes at full opacity)
-const fadeIn = (n) => { if (!reduced()) n.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 240, easing: EASE.fade, fill: 'backwards' }); };
-const skeleton = (root) => [...root.childNodes].map(n => (n.nodeType === 1 && n.tagName === 'B' ? '§' : n.textContent)).join('');
+// ------------------------------------------------------------------ repaint in place (FD4: nothing blanks, nothing pops)
+const fadeIn = (n, delay = 0) => { if (!reduced()) n.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 240, delay, easing: EASE.fade, fill: 'backwards' }); };
 /**
- * Swap `node`'s figures to `next` (markup whose variable parts are <b>). Same sentence shape → only the
- * changed <b> texts change, each fading 0 → 1 over 240 ms; otherwise the markup is replaced and the new
- * figures fade. The node itself never changes opacity.
+ * Header swap (FD4). Figures are never blanked in place: a changed h1 cross-fades as a whole (old out over
+ * 120 ms, then motion.js enterHeading's tab variant brings the new sentence and lede in); a lede that changes
+ * under an unchanged h1 does the same on its own (120 ms out, 240 ms in).
  */
-function patchFigures(node, prev, next) {
-  if (!node || prev === next) return;
-  const t = document.createElement('template'); t.innerHTML = next;
-  const was = document.createElement('template'); was.innerHTML = prev || '';
-  const nb = [...t.content.querySelectorAll('b')], ob = [...was.content.querySelectorAll('b')];
-  const live = [...node.querySelectorAll('b')];
-  if (skeleton(t.content) === skeleton(was.content) && live.length === nb.length && nb.length === ob.length) {
-    nb.forEach((b, i) => { if (b.textContent !== ob[i].textContent) { live[i].textContent = b.textContent; fadeIn(live[i]); } });
-    return;
-  }
-  // after the entrance the h1 holds one .ln block per line: reuse the first (wrapping) and empty the rest, so
-  // no line element is removed while visible
-  const lns = node.querySelectorAll(':scope > .ln');
-  if (lns.length) { lns[0].replaceChildren(t.content); lns[0].style.whiteSpace = 'normal'; for (let k = 1; k < lns.length; k++) lns[k].replaceChildren(); }
-  else node.replaceChildren(t.content);
-  [...node.querySelectorAll('b')].forEach((b, i) => { if (b.textContent !== ob[i]?.textContent) fadeIn(b); });
+function swapHead(el, state, head) {
+  const h1 = el.querySelector('.page-head h1'), lede = el.querySelector('.page-head .lede');
+  const eb = el.querySelector('.page-head .eyebrow'); if (eb && eb.textContent !== head.eyebrow) eb.textContent = head.eyebrow;
+  const hChanged = !!h1 && state.head?.h !== head.h, lChanged = !!lede && state.head?.l !== head.l;
+  state.head = head;
+  if (reduced()) { if (hChanged) h1.innerHTML = head.h; if (lChanged) lede.innerHTML = head.l; return; }
+  const pend = state.headSwap; // a swap whose fade-out is still running picks up the latest text when it ends
+  if (pend) { pend.heading = pend.heading || hChanged; return; }
+  if (!hChanged && !lChanged) return;
+  const swap = state.headSwap = { heading: hChanged, anims: [] };
+  const out = (n) => n.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 120, easing: EASE.exit, fill: 'forwards' });
+  if (hChanged) swap.anims.push(out(h1));
+  if (lede) swap.anims.push(out(lede)); // the lede goes with the heading; enterHeading brings it back
+  Promise.all(swap.anims.map(a => a.finished)).then(() => {
+    if (state.headSwap !== swap || !el.isConnected) return;
+    state.headSwap = null;
+    if (swap.heading) h1.innerHTML = state.head.h;
+    if (lede) lede.innerHTML = state.head.l;
+    if (swap.heading) enterHeading(h1, { variant: 'tab', lede });
+    else if (lede) fadeIn(lede);
+    swap.anims.forEach(a => a.cancel()); // same task as the entrance starts: its backwards fill holds the new text at 0
+  }, () => { if (state.headSwap === swap) state.headSwap = null; });
 }
 /** Topic chips keyed by value: kept chips update in place and move; new ones fade in. */
 function patchChips(el, state) {
   const bar = el.querySelector('[data-fd-topics]'); if (!bar) return;
   const topics = (state.settings.priorities || []).filter(p => p.weight > 0).map(p => p.topic);
-  const arch = bar.querySelector('.fd-arch');
   const have = new Map([...bar.querySelectorAll('[data-fd="topic"]')].map(b => [b.dataset.v, b]));
   const next = chipsData(state, topics).map(c => {
     let b = have.get(c.v);
@@ -380,8 +456,104 @@ function patchChips(el, state) {
     return b;
   });
   have.forEach(b => b.remove());
-  bar.replaceChildren(...next, arch);
-  arch.setAttribute('aria-pressed', String(state.st.status === 'archived'));
+  // keep the focused chip in place (re-inserting it would drop focus)
+  if (next.some((b, i) => bar.children[i] !== b) || bar.children.length !== next.length) bar.replaceChildren(...next);
+  el.querySelector('.fd-arch')?.setAttribute('aria-pressed', String(state.st.status === 'archived'));
+}
+
+/** Body swap when one side has no list (empty states): the old content fades out (140 ms), the new fades in (240 ms). */
+async function replaceBody(el, state, head, st) {
+  const bodyEl = el.querySelector('[data-fd-body]');
+  const body = bodyHtml(state, head);
+  state.restToken = null;
+  if (!reduced() && bodyEl.firstElementChild) {
+    const out = bodyEl.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 140, easing: EASE.exit, fill: 'forwards' });
+    await out.finished.catch(() => {});
+    if (state.st !== st) return;
+    bodyEl.innerHTML = body.html;
+    out.cancel();
+    fadeIn(bodyEl);
+  } else bodyEl.innerHTML = body.html;
+  if (body.rest) fillRest(el, state, body.rest);
+}
+
+/**
+ * Keyed list update (FD4). Rows are keyed by story id (the divider by "div"):
+ *  - persisting rows keep opacity 1 and FLIP to their new place (transform, 240 ms, --ease-move, motion.js flip);
+ *  - new rows on screen fade in (240 ms, 30 ms stagger, at most 6 steps);
+ *  - leaving rows on screen fade out over 140 ms, lifted out of flow at their old place.
+ * One read pass before the DOM changes, one after (flip's reads); nothing is rebuilt that didn't change.
+ */
+function reconcile(el, state, head, st) {
+  const bodyEl = el.querySelector('[data-fd-body]');
+  const listEl = bodyEl.querySelector('[data-fd-list]');
+  const plan = listPlan(st, state.stories, state.T);
+  if (!listEl || !plan.items.length) return replaceBody(el, state, head, st);
+  state.restToken = null; // the old list's pending rows are superseded: every row is placed below
+  // FIRST (reads): where each on-screen item is now
+  const vh = innerHeight;
+  const old = new Map();
+  for (const n of listEl.children) if (n.dataset.key) old.set(n.dataset.key, n);
+  const listTop = listEl.getBoundingClientRect().top;
+  const first = new Map(), was = new Map(); // on-screen rects / every row's rect
+  for (const [k, n] of old) { const r = n.getBoundingClientRect(); was.set(k, r); if (r.bottom > 0 && r.top < vh) first.set(k, r); }
+  // writes: reuse unchanged nodes, build the rest (rows past REUSE_SYNC that aren't on screen arrive in the idle chunk)
+  const keep = new Set(plan.items.map(it => it.key));
+  const fresh = [];
+  const parse = (markup) => { const t = document.createElement('template'); t.innerHTML = markup; return [...t.content.children]; };
+  const nodes = [], later = [];
+  const toBuild = [];
+  plan.items.forEach((it, i) => {
+    const n = old.get(it.key);
+    if (n && (n.dataset.sig === it.sig || it.key === 'div')) {
+      if (it.key === 'div' && n.dataset.sig !== it.sig) { n.textContent = it.text; n.dataset.sig = it.sig; }
+      nodes.push(n); old.delete(it.key);
+    } else if (i < REUSE_SYNC || first.has(it.key)) { const slot = { it }; nodes.push(slot); toBuild.push(slot); }
+    else later.push(it);
+  });
+  if (toBuild.length) { const built = parse(toBuild.map(s => s.it.html()).join('')); toBuild.forEach((s, j) => { s.node = built[j]; fresh.push(built[j]); }); }
+  const children = nodes.map(x => x.node || x);
+  // leaving rows: on screen → lifted out of flow at their old place and faded; off screen → dropped
+  const leaving = [];
+  for (const [k, n] of old) {
+    if (keep.has(k)) continue; // changed content: replaced by its rebuilt row
+    const r = first.get(k);
+    if (!r || reduced()) continue;
+    n.classList.add('fd-leaving');
+    n.style.top = `${(r.top - listTop).toFixed(1)}px`;
+    leaving.push(n);
+  }
+  // the hover toolbar belongs to the old status's list when the status changed
+  if (st.status !== state.listStatus) {
+    listEl.querySelector('[data-acts]')?.remove();
+    const tpl = bodyEl.querySelector('template[data-acts-home]');
+    if (tpl) tpl.innerHTML = String(actsHtml(st.status === 'archived'));
+    state.listStatus = st.status;
+  }
+  listEl.replaceChildren(...children, ...leaving);
+  const foot = bodyEl.querySelector('[data-fd-foot]'), footNext = footHtml(st, plan.hidden);
+  if (foot && !footNext) foot.remove();
+  else if (footNext && (!foot || foot.outerHTML !== footNext)) { const [f] = parse(footNext); if (foot) foot.replaceWith(f); else bodyEl.append(f); }
+  // LAST (reads after the writes) + play
+  if (!reduced()) {
+    leaving.forEach(n => n.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 140, easing: EASE.exit, fill: 'forwards' }).finished.then(() => n.remove(), () => n.remove()));
+    let entering = 0;
+    const freshSet = new Set(fresh);
+    for (const n of children) {
+      const k = n.dataset.key;
+      const r = n.getBoundingClientRect();
+      if (r.bottom <= 0 || r.top >= vh) continue; // off screen now: nothing to play
+      const from = !freshSet.has(n) && was.get(k);
+      if (from) { // persisting: stays at full opacity and FLIPs (a row arriving from off screen slides at most 60% of the viewport)
+        const cap = vh * 0.6, dy = Math.max(-cap, Math.min(cap, from.top - r.top));
+        if (Math.abs(dy) > 0.5) flip(n, new DOMRect(from.left, r.top + dy, r.width, r.height), { duration: 240, easing: EASE.move }); // same size: translate only
+        continue;
+      }
+      fadeIn(n, Math.min(entering++, 5) * 30);
+    }
+  } else leaving.forEach(n => n.remove());
+  if (later.length) fillRest(el, state, () => parse(later.map(it => it.html()).join('')));
+  else { clampCheck(el, state); releaseCv(el, state); }
 }
 
 async function update(el, state, patch) {
@@ -391,48 +563,28 @@ async function update(el, state, patch) {
   history.replaceState(history.state, '', hashFor(st));
   const refetch = st.days !== prev.days || st.topic !== prev.topic || st.status !== prev.status;
   const bodyEl = el.querySelector('[data-fd-body]');
-  // while fetching, the list only dims (1 → .55 over 220 ms); it is faded out only once we know it changes
-  let dim = null;
+  // no dimming while fetching (rows that stay must stay at full opacity); aria-busy for assistive tech only
   if (refetch) {
     bodyEl.setAttribute('aria-busy', 'true');
-    if (!reduced()) dim = bodyEl.animate([{ opacity: 1 }, { opacity: 0.55 }], { duration: 220, easing: EASE.fade, fill: 'forwards' });
     try {
       [state.stories, state.all] = await Promise.all([api.get(storiesUrl(st)), st.topic ? api.get(storiesUrl({ ...st, topic: '' })) : null]);
-    } catch (e) { dim?.cancel(); bodyEl.removeAttribute('aria-busy'); toast(e.message, 'err'); return; }
+    } catch (e) { bodyEl.removeAttribute('aria-busy'); toast(e.message, 'err'); return; }
     state.status = state.stories.length ? null : await api.get('/status').catch(() => null);
     if (state.st !== st) return;
   }
   // header, chips and view bar: patched in place
   const head = headHtml(state);
-  patchFigures(el.querySelector('.page-head h1'), state.head?.h, head.h);
-  patchFigures(el.querySelector('.page-head .lede'), state.head?.l, head.l);
-  const eb = el.querySelector('.page-head .eyebrow'); if (eb && eb.textContent !== head.eyebrow) eb.textContent = head.eyebrow;
-  state.head = head;
+  swapHead(el, state, head);
   patchChips(el, state);
   el.querySelectorAll('.fd-seg-btn').forEach(b => b.setAttribute('aria-checked', String(st[b.dataset.fd] === b.dataset.v)));
   const sel = el.querySelector('select[data-fd="min"]'); if (sel && sel.value !== st.min) sel.value = st.min;
   const sh = el.querySelector('.fd-showing'); if (sh) sh.textContent = showing(st, state.stories);
-  // the list: unchanged → untouched; otherwise built first, then the body fades out (120 ms), swaps and fades
-  // back in while the first 8 items and then the rest block rise (transform only: no opacity compounds)
-  const key = listKey(st, state.stories, state.T);
   bodyEl.removeAttribute('aria-busy');
-  if (key === state.key && state.stories.length) { dim?.reverse(); return; }
+  // the list: unchanged → untouched; otherwise reconciled by key
+  const key = listKey(st, state.stories, state.T);
+  if (key === state.key && state.stories.length) return;
   state.key = key;
-  const body = bodyHtml(state, head);
-  if (!reduced()) {
-    const from = dim ? Number(getComputedStyle(bodyEl).opacity) : 1;
-    const out = bodyEl.animate([{ opacity: from }, { opacity: 0 }], { duration: Math.round(120 * from) + 20, easing: EASE.exit, fill: 'forwards' });
-    dim?.cancel();
-    await out.finished.catch(() => {});
-    if (state.st !== st) return;
-    bodyEl.innerHTML = body.html;
-    bodyEl.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 260, easing: EASE.fade, fill: 'backwards' });
-    out.cancel();
-    const list = bodyEl.querySelector('[data-fd-list]');
-    const items = list ? [...list.children].filter(n => n.tagName !== 'TEMPLATE') : [];
-    items.forEach((n, i) => n.animate([{ transform: 'translateY(6px)' }, { transform: 'none' }], { duration: 480, delay: Math.min(i, STAGGER_CAP) * 30, easing: EASE.settle, fill: 'backwards' }));
-  } else bodyEl.innerHTML = body.html;
-  fillRest(el, state, body.rest);
+  return state.stories.length ? reconcile(el, state, head, st) : replaceBody(el, state, head, st);
 }
 
 function wire(el, state) {

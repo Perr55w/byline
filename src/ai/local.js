@@ -31,6 +31,22 @@ const ROLE_LENS = {
   'Machine learning': { who: 'ML engineers and technical PMs', decision: 'which model and deployment option fit cost and latency targets', test: 'benchmark latency and cost per task for two models on the same prompt set' }
 };
 
+/**
+ * R2 S13: the employer that published the story's origin post itself, from the origin's domain: every word of the
+ * employer's name (parenthetical words dropped) must be a label of the domain; the most specific match wins
+ * (cloud.google.com → "Google Cloud", not "Google (other teams)"). Only an announcement-type origin counts.
+ */
+export function firstPartyEmployer(origin, employers = []) {
+  if (!origin || origin.evidence_kind !== 'announcement' || !origin.domain) return null;
+  const labels = new Set(String(origin.domain).toLowerCase().replace(/^www\./, '').split('.'));
+  let best = null, bestN = 0;
+  for (const e of employers) {
+    const words = String(e.name || '').replace(/\([^)]*\)/g, ' ').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+    if (!words.length || !words.every(w => labels.has(w))) continue;
+    if (words.length > bestN) { best = e.name; bestN = words.length; }
+  }
+  return best;
+}
 export const local = {
   name: 'local',
 
@@ -156,8 +172,16 @@ export const local = {
       ? `What happened: ${trimDot(facts[seed % facts.length])}.` : section.text;
   },
 
-  async employerConnections({ story, articles, claims, employers }) {
+  async employerConnections({ story, articles, claims, employers, origin }) {
     const corpus = [...claims.map(c => ({ text: c.text, article_id: c.article_id })), ...articles.flatMap(a => sentences(`${a.title}. ${a.summary || ''}`).map(t => ({ text: t, article_id: a.id })))];
+    // R2 S13: "named" is judged over the whole story (every title, summary and claim, the story's companies and the
+    // origin's domain), not just the best-matching passage
+    const allText = [story?.title || '', ...articles.map(a => `${a.title || ''}. ${a.summary || ''}`), ...claims.map(c => c.text || '')].join(' \n ');
+    let companies = story?.companies || [];
+    if (typeof companies === 'string') { try { companies = JSON.parse(companies); } catch { companies = []; } }
+    const lc = (x) => String(x || '').toLowerCase();
+    const org = origin || articles.find(a => a.evidence_kind === 'announcement') || null;
+    const firstParty = firstPartyEmployer(org, employers);
     const out = [];
     for (const e of employers) {
       const terms = [...(e.terms || []), ...(e.topics || [])];
@@ -166,18 +190,20 @@ export const local = {
         const hits = termHits(c.text, terms);
         if (hits.length > bestHits.length) { best = c; bestHits = hits; }
       }
-      if (!best || !bestHits.length) continue;
-      const art = articles.find(a => a.id === best.article_id) || articles[0];
-      const nameHit = termHits(best.text, [e.name, ...(e.name.split(' ').length > 1 ? [] : [])]).length > 0;
+      const isOrigin = firstParty === e.name;
+      if ((!best || !bestHits.length) && !isOrigin) continue;
+      const art = (best && articles.find(a => a.id === best.article_id)) || (isOrigin ? org : null) || articles[0];
+      const nameHit = isOrigin || termHits(allText, [e.name]).length > 0 || companies.some(c => lc(c) === lc(e.name));
       out.push({
         employer: e.name, matched: bestHits,
-        why: `${e.name} works publicly on ${bestHits.slice(0, 3).join(', ')}; ${art ? `${art.domain}` : 'the source'} says: “${truncate(best.text, 180)}”`,
+        why: best ? `${e.name} works publicly on ${bestHits.slice(0, 3).join(', ')}; ${art ? `${art.domain}` : 'the source'} says: “${truncate(best.text, 180)}”` : `${e.name} published this story itself (${org?.domain || 'its own site'}).`,
         source: art ? { url: art.url, title: art.title, domain: art.domain } : null,
         mention_ok: nameHit,
-        mention_note: nameHit ? 'The source names this company directly, so a mention is supported.' : 'Topical overlap only — mention only if you add specific analysis of their public work.'
+        first_party: isOrigin,
+        mention_note: isOrigin ? `First-party: this is ${e.name}’s own post.` : nameHit ? 'The source names this company directly, so a mention is supported.' : 'Topical overlap only — mention only if you add specific analysis of their public work.'
       });
     }
-    return out.sort((a, b) => b.matched.length - a.matched.length);
+    return out.sort((a, b) => (b.first_party - a.first_party) || (b.matched.length - a.matched.length));
   },
 
   async outreach({ contact, purpose, channel, basis, profile, introFormat, seed = 0 }) {

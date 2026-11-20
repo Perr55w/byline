@@ -8,12 +8,22 @@
 // ungrouped), add / remove drafts, add outreach, new project drafts per channel, the outreach editor, the
 // outcomes panel (replies, meetings, portfolio visits; "unavailable" when nothing was recorded) and sources.
 import { api } from '../api.js';
-import { html, on, act, toast, modal, confirmBox, status, channelLabel, scoreChip, icon, useStyle, evLabel } from '../ui.js';
+import { html, raw, esc, on, act, toast, modal, confirmBox, status, channelLabel, scoreChip, topicPills, icon, useStyle, evLabel } from '../ui.js';
 import { openOutreach, PURPOSES, CHANNELS, plural, demoTag, stripDemo, whenLabel, listJoin } from './people.js';
 
 const CH = { linkedin: 'LinkedIn', instagram: 'Instagram', video: 'Video' };
 const CHANNEL_ORDER = ['linkedin', 'instagram', 'video'];
 const fmtScore = (s) => Math.round(Number(s) || 0);
+/** "Fri 20 Nov" from a YYYY-MM-DD posting date (a calendar day, so read at UTC noon). */
+const dayShort = (ymd) => new Date(`${String(ymd).slice(0, 10)}T12:00:00Z`).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' }).replace(',', '');
+/** Finding with the server's number highlights (finding_marks: [start, end) pairs), the same marks as Feed. */
+function marked(text, marks) {
+  const t = String(text ?? '');
+  if (!marks?.length) return raw(esc(t));
+  let out = '', at = 0;
+  for (const [a, b] of marks) { if (a < at || b > t.length || b <= a) continue; out += esc(t.slice(at, a)) + `<mark class="num-hl">${esc(t.slice(a, b))}</mark>`; at = b; }
+  return raw(out + esc(t.slice(at)));
+}
 
 function campaignFacts(c, d) {
   const drafts = d?.drafts || c.drafts || [];
@@ -36,7 +46,10 @@ async function renderList(el, ctx) {
   const [campaigns, today, stories, drafts, outreach] = await Promise.all([
     api.get('/campaigns'), api.get('/today').catch(() => null), api.get('/stories?days=7').catch(() => []), api.get('/drafts').catch(() => []), api.get('/outreach').catch(() => [])
   ]);
-  const details = await Promise.all(campaigns.slice(0, 24).map(c => api.get(`/campaigns/${c.id}`).catch(() => null)));
+  const [details, slotList] = await Promise.all([
+    Promise.all(campaigns.slice(0, 24).map(c => api.get(`/campaigns/${c.id}`).catch(() => null))),
+    Promise.all(CHANNEL_ORDER.map(ch => api.get(`/slots/next?channel=${ch}`).then(r => [ch, r?.date || null]).catch(() => [ch, null])))
+  ]);
   const T = today?.threshold ?? window.__byline?.threshold ?? 55;
   const cleared = stories.filter(s => s.score >= T);
   const facts = campaigns.map((c, i) => campaignFacts(c, details[i]));
@@ -61,6 +74,10 @@ async function renderList(el, ctx) {
   for (const st of candidates) { const t = st.main_topic || st.topics?.[0] || 'Unsorted'; const v = topicMap.get(t) || [t, 0, 0]; v[1]++; v[2] += (byStory.get(st.id) || []).length; topicMap.set(t, v); }
   const topicRoll = [...topicMap.values()].sort((a, b) => b[1] - a[1] || b[2] - a[2]);
   const nDraftsCand = topicRoll.reduce((n, x) => n + x[2], 0);
+  // The list is grouped by main topic in the same order as the summary on the right (CP4).
+  const mainOf = (st) => st.main_topic || st.topics?.[0] || 'Unsorted';
+  const shown = candidates.slice(0, 8);
+  const shownGroups = topicRoll.map(([t]) => [t, shown.filter(st => mainOf(st) === t)]).filter(([, l]) => l.length);
 
   const root = document.createElement('div');
   root.className = 'cp';
@@ -94,18 +111,20 @@ async function renderList(el, ctx) {
         return withD.length ? html`<b>${withD.length}</b> of these ${candidates.length} already ${withD.length === 1 ? 'has' : 'have'} drafts (${plural(nD, 'draft')} in all)${none ? html`; <b>${none}</b> ${none === 1 ? 'has' : 'have'} none yet.` : '.'}`
           : html`None of these ${candidates.length} has a draft yet.`;
       })()}</p>` : ''}
-      ${candidates.length ? html`<ol class="cp-cand-list">${candidates.slice(0, 8).map(s => {
+      ${candidates.length ? html`<div class="cp-groups">${shownGroups.map(([t, list]) => html`<section class="cp-group" aria-label="${t}">
+        <h3 class="cp-group-h">${topicPills([t], list[0].score, T, { max: 1 })}<span class="cp-group-n">${plural(list.length, 'story', 'stories')}${(() => { const n = list.reduce((k, st) => k + (byStory.get(st.id) || []).length, 0); return n ? ` · ${plural(n, 'draft')} written` : ' · no drafts yet'; })()}</span></h3>
+        <ol class="cp-cand-list">${list.map(s => {
         const ds = byStory.get(s.id) || [];
         return html`<li class="cp-cand-row" data-row data-dossier-src>
           ${scoreChip(s.score, T)}
           <div class="cp-cand-main">
             <a class="cp-cand-title t-title" href="#/story/${s.id}">${s.title}</a>${demoTag(s.is_demo)}
-            <p class="cp-cand-finding">${s.finding}</p>
-            <p class="cp-cand-meta"><span class="chip chip--main">${s.main_topic || s.topics?.[0] || 'Unsorted'}</span><span class="cp-mono">${s.source_line}</span><span>${ds.length ? `${plural(ds.length, 'draft')} already written (${listJoin(CHANNEL_ORDER.filter(ch => ds.some(d => d.channel === ch)).map(ch => CH[ch]))})` : 'No drafts yet'}</span></p>
+            ${s.finding ? html`<p class="cp-cand-finding">${marked(s.finding, s.finding_marks)}</p>` : ''}
+            <p class="cp-cand-meta"><span class="cp-mono">${s.source_line}</span><span>${ds.length ? `${plural(ds.length, 'draft')} already written (${listJoin(CHANNEL_ORDER.filter(ch => ds.some(d => d.channel === ch)).map(ch => CH[ch]))})` : 'No drafts yet'}</span></p>
           </div>
-          <button class="btn btn--ghost btn--sm cp-start" data-act="new" data-story="${s.id}" aria-label="Start a campaign from ${s.short_title || s.title}">${icon('plus')}Start campaign</button>
+          <button type="button" class="btn btn--secondary btn--sm cp-start" data-act="new" data-story="${s.id}" aria-label="Start a campaign from ${s.short_title || s.title}">Start campaign</button>
         </li>`;
-      })}</ol>${candidates.length > 8 ? html`<p class="cp-more cp-pad">${candidates.length - 8} more above your bar in the <a href="#/feed">Feed</a>.</p>` : ''}`
+      })}</ol></section>`)}</div>${candidates.length > 8 ? html`<p class="cp-more cp-pad">${candidates.length - 8} more above your bar in the <a href="#/feed">Feed</a>.</p>` : ''}`
       : html`<p class="cp-empty-line cp-pad">${cleared.length ? 'Every story above your bar already anchors a campaign.' : `No story in the last 7 days is at or above your bar of ${T}.`}</p>`}
       <p class="cp-foot-note cp-pad">Each piece in a campaign keeps its own approval, and deleting a campaign keeps every piece. <a href="#/studio">Review approvals in Studio${icon('arrow-right')}</a></p>
     </section>
@@ -124,6 +143,11 @@ async function renderList(el, ctx) {
         <ul class="cp-topics">${topicRoll.map(([t, n, d]) => html`<li><span class="cp-topic-t">${t}</span><span class="meter"><i style="--v:${n / topicRoll[0][1]}"></i></span><b>${n}</b><span class="cp-topic-d">${d ? plural(d, 'draft') : 'no drafts'}</span></li>`)}</ul>
         <p class="cp-note">${topicRoll[0][2] && nDraftsCand ? html`<b>${Math.round(topicRoll.reduce((m, x) => Math.max(m, x[2]), 0) / nDraftsCand * 100)}%</b> of the drafts for these stories sit under ${topicRoll.slice().sort((a, b) => b[2] - a[2])[0][0]}.` : 'Story counts per main topic; drafts are those already written for each topic’s stories.'}</p>
       </section>` : ''}
+      <section class="tile tile--static cp-card-s" aria-labelledby="cp-slot-h">
+        <h2 class="section-label" id="cp-slot-h">Next open posting slots</h2>
+        <ul class="cp-slots">${slotList.map(([ch, d]) => html`<li><span>${CH[ch]}</span><b>${d ? dayShort(d) : 'none in 60 days'}</b></li>`)}</ul>
+        <p class="cp-note">Posting days with no draft planned for that channel. Plan pieces in <a href="#/calendar">Calendar</a>.</p>
+      </section>
     </aside>
   </div>`);
   el.replaceChildren(root);
@@ -196,8 +220,8 @@ async function renderDetail(el, id, ctx) {
         <div class="cp-anchor-main">
           <p class="section-label">Anchor story</p>
           <a class="t-title cp-anchor-title" href="#/story/${st.id}">${st.title}</a>${demoTag(st.is_demo)}
-          <p class="cp-cand-finding">${st.finding}</p>
-          <p class="cp-cand-meta"><span class="chip chip--main">${st.main_topic || st.topics?.[0] || 'Unsorted'}</span><span class="cp-mono">${st.source_line}</span></p>
+          ${st.finding ? html`<p class="cp-cand-finding">${marked(st.finding, st.finding_marks)}</p>` : ''}
+          <p class="cp-cand-meta">${topicPills([st.main_topic || st.topics?.[0]].filter(Boolean), st.score, T, { max: 1 })}<span class="cp-mono">${st.source_line}</span></p>
         </div>
       </section>` : ''}
 

@@ -42,6 +42,7 @@ function headline(p, drafts) {
 const STATUS_LABEL = { draft: 'Draft', in_review: 'In review', approved: 'Approved', scheduled: 'Scheduled', published: 'Published' };
 const STATUS_TONE = { approved: 'tag--ok', in_review: 'tag--warn', scheduled: 'tag--neutral', draft: 'tag--neutral' };
 const stTag = (s) => html`<span class="tag ${STATUS_TONE[s] || 'tag--neutral'}">${STATUS_LABEL[s] || label(s)}</span>`;
+const STATUS_PHRASE = { draft: 'in draft', in_review: 'in review', approved: 'approved', scheduled: 'scheduled' };
 const NEAR_RANK = { scheduled: 0, approved: 1, in_review: 2, draft: 3 };
 /** YYYY-MM-DD of an ISO timestamp (or now) in the settings timezone. */
 const FMT = new Map();   // Intl formatters are costly to build; one per (kind, timezone)
@@ -57,16 +58,45 @@ function lastEditStrip(open, tz) {
   const today = ymdIn(null, tz);
   const days = Array.from({ length: 14 }, (_, i) => addDays(today, i - 13));
   const by = new Map(days.map(d => [d, { review: 0, draft: 0 }]));
+  const all = new Map();   // every last-edit day, inside the window or not
   let older = 0;
   for (const d of open) {
     const k = ymdIn(d.updated_at, tz);
+    all.set(k, (all.get(k) || 0) + 1);
     if (!by.has(k)) { older++; continue; }
     by.get(k)[d.status === 'draft' ? 'draft' : 'review']++;
   }
   const max = Math.max(1, ...[...by.values()].map(v => v.review + v.draft));
   const peak = [...by.entries()].sort((a, b) => (b[1].review + b[1].draft) - (a[1].review + a[1].draft))[0];
   const active = [...by.values()].filter(v => v.review + v.draft).length;
-  return { days, by, max, older, peak, active, today };
+  const allDays = [...all.entries()].sort((a, b) => b[0].localeCompare(a[0]));   // newest first
+  return { days, by, max, older, peak, active, today, allDays };
+}
+
+/** Open drafts grouped by story (story_id, else exact title): one entry per story, with its channel · format
+ *  variants. Each variant shows its furthest status and how many drafts share it. Ranked by the story's furthest
+ *  status, then its latest edit. */
+function storyGroups(open) {
+  const m = new Map();
+  for (const d of open) {
+    const k = d.story_id != null ? `s${d.story_id}` : `t${d.title}`;
+    if (!m.has(k)) m.set(k, []);
+    m.get(k).push(d);
+  }
+  const rank = (d) => NEAR_RANK[d.status] ?? 9;
+  const byNear = (a, b) => rank(a) - rank(b) || String(b.updated_at || '').localeCompare(String(a.updated_at || ''));
+  return [...m.values()].map(list => {
+    const drafts = [...list].sort(byNear);
+    const kinds = new Map();
+    for (const d of drafts) {
+      const k = `${d.channel}|${d.format || ''}`;
+      if (!kinds.has(k)) kinds.set(k, { best: d, n: 0 });
+      kinds.get(k).n++;
+    }
+    const last = drafts.reduce((a, d) => String(d.updated_at || '') > a ? String(d.updated_at || '') : a, '');
+    const planned = drafts.map(d => d.planned_date).filter(Boolean).sort()[0] || null;
+    return { best: drafts[0], drafts, kinds: [...kinds.values()].sort((a, b) => byNear(a.best, b.best) || b.n - a.n), last, planned };
+  }).sort((a, b) => rank(a.best) - rank(b.best) || b.last.localeCompare(a.last));
 }
 
 export async function render(view) {
@@ -82,13 +112,18 @@ export async function render(view) {
   const hd = headline(p, drafts);
   const open = drafts.filter(d => !['published', 'archived'].includes(d.status));
   const byStatus = STATUS_ORDER.map(s => [s, open.filter(d => d.status === s)]);
-  const near = [...open].sort((a, b) => (NEAR_RANK[a.status] ?? 9) - (NEAR_RANK[b.status] ?? 9) || String(b.updated_at || '').localeCompare(String(a.updated_at || ''))).slice(0, 3);
+  const stories = storyGroups(open);
+  const near = stories.slice(0, 3);
   const byChannel = ['linkedin', 'instagram', 'video'].map(c => [c, open.filter(d => d.channel === c).length]).filter(x => x[1]);
-  const channels = [...new Set([...near.map(d => d.channel), ...byChannel.map(c => c[0])])];
+  const channels = [...new Set([...near.map(g => g.best.channel), ...byChannel.map(c => c[0])])];
   const slotList = await Promise.all(channels.map(c => api.get(`/slots/next?channel=${c}`).then(r => [c, r?.date || null]).catch(() => [c, null])));
   const slots = Object.fromEntries(slotList);
   const postingDays = settings.posting_days?.length ? settings.posting_days : null;
   const strip = lastEditStrip(open, tz);
+  // R13: a chart only when last edits fall on ≥3 distinct days in the window; otherwise one computed sentence.
+  const showChart = strip.active >= 3;
+  const biggest = stories.reduce((a, g) => g.drafts.length > (a?.drafts.length || 0) ? g : a, null);
+  const sinceLast = strip.allDays.length ? Math.round((new Date(`${strip.today}T12:00:00Z`) - new Date(`${strip.allDays[0][0]}T12:00:00Z`)) / 864e5) : null;
   const recorded = (r) => EDITABLE.filter(m => typeof r.metrics?.[m] === 'number').length;
   const cell = (v) => v == null ? html`<td class="num pf-na">—</td>` : html`<td class="num">${fmt(v)}</td>`;
   const funnelMax = Math.max(1, ...byStatus.map(([, a]) => a.length));
@@ -124,7 +159,7 @@ export async function render(view) {
   ${p.posts.length ? html`
   <section class="tile tile--static tile--flush pf-compare" aria-labelledby="pf-c-h">
     <div class="section-head pf-pad"><h2 class="t-h2" id="pf-c-h">${goalLabel} per post, by ${groupLabel.toLowerCase()}</h2>
-      <div class="cluster" role="group" aria-label="Compare by">${GROUPS.map(([k, l]) => html`<button class="chip chip--filter" data-group="${k}" aria-pressed="${k === ui.group}">${l}</button>`)}</div></div>
+      <div class="cluster" role="group" aria-label="Compare by">${GROUPS.map(([k, l]) => html`<button class="chip chip--filter" data-group="${k}" aria-pressed="${String(k === ui.group)}">${l}</button>`)}</div></div>
     <p class="pf-sub pf-pad">${best ? html`Best average ${goalLabel.toLowerCase()}: <b>${ui.group === 'by_channel' ? channelLabel(best.key) : best.key}</b> (${fmt(best[ui.goal])} across ${plural(best.posts, 'post')}).${groups.some(g => g.posts < 3) ? ' Groups under 3 posts are a hint, not a verdict.' : ''}` : `No ${goalLabel.toLowerCase()} recorded yet for any published post.`}</p>
     <div class="pf-scroll"><table class="table pf-table">
       <thead><tr><th>${groupLabel}</th><th class="num">Posts</th><th class="pf-goalcol">${goalLabel} (avg)</th>${metrics.filter(m => m !== ui.goal).map(m => html`<th class="num">${label(m)}</th>`)}</tr></thead>
@@ -157,38 +192,45 @@ export async function render(view) {
       <ol class="pf-pipe" aria-label="Open drafts by status">${byStatus.map(([s, a]) => html`<li class="${a.length ? '' : 'is-zero'}"><span class="pf-pipe-n">${a.length}</span><span class="pf-pipe-l">${STATUS_LABEL[s]}</span><span class="pf-pipe-bar" aria-hidden="true"><i style="--v:${a.length / funnelMax}"></i></span></li>`)}<li class="is-zero pf-pipe-end"><span class="pf-pipe-n">0</span><span class="pf-pipe-l">Published</span><span class="pf-pipe-bar" aria-hidden="true"><i style="--v:0"></i></span></li></ol>
       <p class="pf-sub">Metrics start once a draft is published: publish from Studio, or use “Mark as published” there after posting by hand.</p>
     </div>
-    <div class="pf-strip" role="group" aria-labelledby="pf-strip-h">
-      <div class="pf-strip-head"><h3 class="pf-h4" id="pf-strip-h">Last edit per open draft · 14 days</h3>
+    <div class="pf-strip ${showChart ? '' : 'pf-strip--line'}" role="group" aria-labelledby="pf-strip-h">
+      ${showChart ? html`<div class="pf-strip-head"><h3 class="pf-h4" id="pf-strip-h">Last edit per open draft · 14 days</h3>
         <span class="pf-legend"><span><i class="k k--rev"></i>In review or later</span><span><i class="k k--dr"></i>Draft</span></span></div>
       <ol class="pf-days">${strip.days.map(d => { const v = strip.by.get(d); const n = v.review + v.draft; return html`<li title="${dShort(d)}: ${n ? plural(n, 'draft') + ' last edited' : 'no draft last edited'}${v.review ? ` (${v.review} in review or later)` : ''}">
         <span class="pf-col" aria-hidden="true">${v.draft ? html`<i class="pf-seg pf-seg--dr" style="--h:${v.draft / strip.max}"></i>` : ''}${v.review ? html`<i class="pf-seg pf-seg--rev" style="--h:${v.review / strip.max}"></i>` : ''}</span>
         <span class="pf-dn ${n ? 'has' : ''}">${n || ''}</span>
         <span class="pf-dl ${d === strip.today ? 'is-today' : ''}">${d === strip.today ? 'Today' : new Date(`${d}T12:00:00Z`).getUTCDate()}</span>
         <span class="sr-only">${dShort(d)}: ${plural(n, 'draft')}</span></li>`; })}</ol>
-      <p class="pf-sub pf-strip-note">${strip.active ? html`All ${plural(open.length - strip.older, 'open draft')} shown were last edited on ${strip.active === 1 ? html`<b>${dShort(strip.peak[0])}</b>` : html`${strip.active} days, most on <b>${dShort(strip.peak[0])}</b> (${strip.peak[1].review + strip.peak[1].draft})`}${strip.older ? html`; ${strip.older} not touched in 14 days` : ''}. Creation and review dates aren’t recorded per draft, so this counts each draft once.`
-        : html`No open draft was edited in the last 14 days${strip.older ? html` (${plural(strip.older, 'draft')} older)` : ''}.`}</p>
+      <p class="pf-sub pf-strip-note">Edits fall on ${strip.active} days, most on <b>${dShort(strip.peak[0])}</b> (${strip.peak[1].review + strip.peak[1].draft})${strip.older ? html`; ${strip.older} not touched in 14 days` : ''}. Creation and review dates aren’t recorded per draft, so this counts each draft once.</p>`
+      : html`<h3 class="pf-h4" id="pf-strip-h">When the open drafts were last edited</h3>
+      <p class="pf-line">${!open.length ? 'No open drafts.'
+        : strip.allDays.length === 1 ? html`${open.length === 1 ? 'The one open draft was' : html`All <b>${open.length}</b> open drafts were`} last edited <b>${dShort(strip.allDays[0][0])}</b>.`
+        : strip.allDays.length === 2 ? html`<b>${open.length}</b> open drafts were last edited on two days: <b>${strip.allDays[1][1]}</b> on ${dShort(strip.allDays[1][0])} and <b>${strip.allDays[0][1]}</b> on ${dShort(strip.allDays[0][0])}.`
+        : html`<b>${open.length}</b> open drafts were last edited on ${strip.allDays.length} days, most recently <b>${dShort(strip.allDays[0][0])}</b>${strip.older ? html`; ${strip.older} not touched in 14 days` : ''}.`}</p>
+      ${biggest && biggest.drafts.length > 1 ? html`<div class="pf-stat"><span class="pf-stat-n">${biggest.drafts.length}<span class="pf-stat-of"> of ${open.length}</span></span><span class="pf-stat-l">open drafts are for one story, ranked first below</span></div>`
+        : sinceLast != null ? html`<div class="pf-stat"><span class="pf-stat-n">${sinceLast}</span><span class="pf-stat-l">${sinceLast === 1 ? 'day' : 'days'} since the last edit to an open draft</span></div>` : ''}
+      <p class="pf-sub pf-strip-note">A day-by-day chart appears once edits span three or more days. Only the last edit is recorded per draft.</p>`}
     </div>
   </section>
 
   <div class="pf-cols">
     <section class="tile tile--static pf-card pf-near-card" aria-labelledby="pf-near-h">
-      <div class="section-head"><h2 class="t-h2" id="pf-near-h">Closest to publishing</h2><span class="section-meta">by status, then latest edit</span></div>
-      ${near.length ? html`<ol class="pf-near">${near.map((d, i) => html`<li>
+      <div class="section-head"><h2 class="t-h2" id="pf-near-h">Closest to publishing</h2><span class="section-meta">${plural(stories.length, 'story', 'stories')} · furthest status, then latest edit</span></div>
+      ${near.length ? html`<ol class="pf-near">${near.map((g, i) => html`<li>
         <span class="pf-rank" aria-hidden="true">${i + 1}</span>
-        <div class="pf-near-main"><a class="pf-title" href="#/draft/${d.id}">${d.title}</a>
-          <span class="pf-meta">${stTag(d.status)}<span>${channelLabel(d.channel, d.format)}</span><span>edited ${dDay(ymdIn(d.updated_at, tz))}</span></span></div>
-        <span class="pf-slot">${d.planned_date ? html`<span class="pf-slot-l">Planned</span><b>${dShort(d.planned_date)}</b>`
-          : slots[d.channel] ? html`<span class="pf-slot-l">Next open ${channelLabel(d.channel)} slot</span><b>${dShort(slots[d.channel])}</b>` : html`<span class="pf-slot-l">No open slot in 60 days</span>`}</span>
-      </li>`)}</ol>` : html`<p class="pf-sub">No open drafts. Start one from a story in Today or Feed.</p>`}
-      <div class="pf-chan">
-        <span class="pf-chan-l">Drafts by channel</span>
-        <span class="pf-chan-bar" role="img" aria-label="${byChannel.map(([c, n]) => `${n} ${channelLabel(c)}`).join(', ')}">${byChannel.map(([c, n], i) => html`<i class="pf-chan-seg pf-chan-seg--${i}" style="--w:${n}"></i>`)}</span>
-        <span class="pf-chan-n">${byChannel.map(([c, n], i) => html`<span><i class="k pf-chan-seg--${i}"></i>${n} ${channelLabel(c)}</span>`)}</span>
-      </div>
+        <div class="pf-near-main"><a class="pf-title" href="#/draft/${g.best.id}">${g.best.title}</a>
+          <ul class="pf-kinds" aria-label="Drafts for this story by channel">${g.kinds.map(k => html`<li><a class="pf-kind" href="#/draft/${k.best.id}"><span class="pf-kind-c">${channelLabel(k.best.channel, k.best.format)}</span>${stTag(k.best.status)}${k.n > 1 ? html`<span class="pf-kind-n" title="${k.n} drafts in this format">×${k.n}</span>` : ''}</a></li>`)}</ul>
+</div>
+        <span class="pf-slot">${g.planned ? html`<span class="pf-slot-l">Planned</span><b>${dShort(g.planned)}</b>`
+          : slots[g.best.channel] ? html`<span class="pf-slot-l">Next open ${channelLabel(g.best.channel)} slot</span><b>${dShort(slots[g.best.channel])}</b>` : html`<span class="pf-slot-l">No open slot in 60 days</span>`}<span class="pf-slot-m">${plural(g.drafts.length, 'draft')} · edited ${dDay(ymdIn(g.last, tz))}</span></span>
+      </li>`)}</ol>${stories.length > 3 ? html`<p class="pf-sub pf-near-more">${plural(stories.length - 3, 'more story', 'more stories')} with open drafts in <a href="#/studio">Studio</a>.</p>` : ''}` : html`<p class="pf-sub">No open drafts. Start one from a story in Today or Feed.</p>`}
     </section>
     <section class="tile tile--static pf-card pf-side" aria-labelledby="pf-slots-h">
       <div class="section-head"><h2 class="t-h2" id="pf-slots-h">Next open slots</h2><span class="section-meta">${postingDays ? `posting days ${postingDays.join(', ')}` : 'posting days not set'}</span></div>
-      <ul class="pf-slots">${byChannel.map(([c, n]) => html`<li><span class="pf-slots-c">${channelLabel(c)}</span><span class="pf-slots-d">${slots[c] ? dShort(slots[c]) : 'none in 60 days'}</span><span class="pf-slots-n">${plural(n, 'draft')} waiting</span></li>`)}</ul>
+      <div class="pf-chan pf-chan--side">
+        <span class="pf-chan-l">Drafts by channel</span>
+        <span class="pf-chan-bar" role="img" aria-label="${byChannel.map(([c, n]) => `${n} ${channelLabel(c)}`).join(', ')}">${byChannel.map(([c, n], i) => html`<i class="pf-chan-seg pf-chan-seg--${i}" style="--w:${n}"></i>`)}</span>
+      </div>
+      <ul class="pf-slots">${byChannel.map(([c, n], i) => { const sc = STATUS_ORDER.map(st => [st, open.filter(d => d.channel === c && d.status === st).length]).filter(x => x[1]); return html`<li><span class="pf-slots-c"><i class="k pf-chan-seg--${i}" aria-hidden="true"></i>${channelLabel(c)}</span><span class="pf-slots-d">${slots[c] ? dShort(slots[c]) : 'none in 60 days'}</span><span class="pf-slots-n">${plural(n, 'draft')} waiting, ${sc.length === 1 ? `all ${STATUS_PHRASE[sc[0][0]]}` : sc.slice().reverse().map(([st, k]) => `${k} ${STATUS_PHRASE[st]}`).join(', ')}</span></li>`; })}</ul>
       <p class="pf-sub">Open means no draft is planned for that channel on that posting day. Plan drafts onto days in Calendar.</p>
       <div class="pf-side-import">${importCard}</div>
     </section>

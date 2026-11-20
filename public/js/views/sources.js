@@ -20,7 +20,9 @@ const ui = { tab: 'sources', group: '', health: '', text: '', sort: 'group', dir
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 const splitTerms = (s) => s.split(',').map(t => t.trim()).filter(Boolean);
 const opts = (list, sel) => list.map(([v, l]) => html`<option value="${v}"${v === sel ? raw(' selected') : ''}>${l}</option>`);
-const fmtWhen = (iso, tz) => iso ? new Date(iso).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true, ...(tz ? { timeZone: tz } : {}) }).replace(',', '') : '';
+// SS9: times read h:mm AM/PM ("11:52 AM"), after an en-GB day ("18 Nov 11:52 AM")
+const fmtClock = (iso, tz) => new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, ...(tz ? { timeZone: tz } : {}) });
+const fmtWhen = (iso, tz) => iso ? `${new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', ...(tz ? { timeZone: tz } : {}) })} ${fmtClock(iso, tz)}` : '';
 const fmtDay = (iso, tz) => iso ? new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', ...(tz ? { timeZone: tz } : {}) }) : '';
 
 /** Visible table columns at this width (a colspan wider than the visible columns would add a phantom column). */
@@ -44,7 +46,10 @@ function healthMark(h) {
 }
 
 /** R1: a 7 px health dot (ok / stale / error colour; a hollow neutral ring for paused). Always next to a text label. */
-const healthDot = (h) => raw(`<i class="so-dot" data-h="${esc(h)}" aria-hidden="true"></i>`);
+const healthDot = (h, ring = false) => raw(`<i class="so-dot${ring ? ' so-dot--ring' : ''}" data-h="${esc(h)}" aria-hidden="true"></i>`);
+/** SS9: a paused source leads with the state it had when it was last collected; "paused" is the muted sub-label. */
+const WAS = { error: 'was failing', ok: 'was healthy', stale: 'stale' };
+const clip60 = (t) => { t = String(t || '').replace(/\s+/g, ' ').trim(); return t.length > 60 ? `${t.slice(0, 59).replace(/\s+\S*$/, '')}…` : t; };
 /** R2: demo rows carry a Demo tag, so the stored "DEMO · " name prefix is dropped from the display (data unchanged). */
 const displayName = (s) => (s.is_demo ? String(s.name).replace(/^\s*demo\s*[·:\-–—]\s*/i, '') : s.name);
 
@@ -127,15 +132,19 @@ function sourceRow(s, S, { cv = false, d7 = true } = {}) {
   const res = ui.sync[s.id];
   const polled = !s.is_demo && s.kind !== 'manual';
   const wasErr = s.health === 'paused' && s.health_unpaused === 'error';
-  const sub = wasErr ? html`<span class="so-sub so-was" title="${s.last_error ? `Last error: ${s.last_error}` : 'Failing when last collected'}">was failing</span>`
-    : s.health === 'stale' && !s.last_sync_at ? html`<span class="so-sub">never synced</span>` : '';
+  const was = s.health === 'paused' && WAS[s.health_unpaused] ? s.health_unpaused : null;
+  const failing = s.health === 'error' || wasErr;
+  const healthCell = was
+    ? html`<span class="so-health" data-h="${was}" data-paused>${healthDot(was, true)}<span>${WAS[was]}</span></span><span class="so-sub">paused</span>`
+    : html`<span class="so-health" data-h="${s.health}">${healthDot(s.health)}<span>${HEALTH[s.health] || s.health}</span></span>${s.health === 'stale' && !s.last_sync_at ? html`<span class="so-sub">never synced</span>` : ''}`;
   const name = displayName(s);
   return html`<tr class="so-row${open ? ' is-open' : ''}${cv && !open ? ' cv-row' : ''}" data-row data-id="${s.id}">
     <td class="so-c-x"><button type="button" class="btn btn--ghost btn--icon btn--sm so-x" data-so-expand="${s.id}" aria-expanded="${open}" aria-controls="so-d-${s.id}" aria-label="${open ? 'Hide' : 'Show'} details for ${name}">${icon('chevron-right')}</button></td>
-    <td class="so-c-h"><span class="so-health" data-h="${s.health}">${healthDot(s.health)}<span>${HEALTH[s.health] || s.health}</span></span>${sub}</td>
+    <td class="so-c-h">${healthCell}</td>
     <td class="so-c-name"><span class="so-name" title="${name}">${name}</span>
       <span class="so-url-line">${s.is_demo ? html`<span class="tag tag--demo">Demo</span>` : ''}<span class="so-url">${s.kind === 'x' ? `query: ${s.url}` : s.url.replace(/^https?:\/\//, '')}</span></span>
-      <span class="so-phone-meta">${wasErr ? html`<span class="so-was">was failing</span> · ` : ''}${s.grp || 'General'} · ${EV_SHORT[s.evidence_kind] || s.evidence_kind} · ${s.is_demo ? 'not polled' : s.last_sync_at ? `synced ${timeAgo(s.last_sync_at)}` : 'never synced'} · ${s.article_count} articles</span>
+      ${failing && s.last_error ? html`<span class="so-err-line" title="${s.last_error}"><span class="so-err-k">Last error</span> ${clip60(s.last_error)}</span>` : ''}
+      <span class="so-phone-meta">${was ? html`<span class="so-was" data-h="${was}">${WAS[was]}</span> · paused · ` : ''}${s.grp || 'General'} · ${EV_SHORT[s.evidence_kind] || s.evidence_kind} · ${s.is_demo ? 'not polled' : s.last_sync_at ? `synced ${timeAgo(s.last_sync_at)}` : 'never synced'} · ${s.article_count} articles</span>
       ${res ? html`<span class="so-res ${res.ok ? 'ok' : 'err'}">${res.msg}</span>` : ''}</td>
     <td class="so-c-grp">${s.grp || 'General'}</td>
     <td class="so-c-ev"><span class="so-ev">${EV_SHORT[s.evidence_kind] || s.evidence_kind}</span><span class="so-sub">${s.kind}</span></td>
@@ -165,7 +174,7 @@ function detailHtml(s, S) {
     <section class="so-d-status" aria-label="Status">
       <h3 class="section-label">Status</h3>
       <dl class="kv so-kv">
-        <dt>Health</dt><dd><span class="so-health" data-h="${s.health}">${healthDot(s.health)}${HEALTH[s.health]}</span>${s.health === 'paused' && s.health_unpaused ? html` <span class="so-sub">· ${HEALTH[s.health_unpaused].toLowerCase()} when on</span>` : ''}</dd>
+        <dt>Health</dt><dd>${s.health === 'paused' && WAS[s.health_unpaused] ? html`<span class="so-health" data-h="${s.health_unpaused}" data-paused>${healthDot(s.health_unpaused, true)}${WAS[s.health_unpaused]}</span> <span class="so-sub so-inline">· paused</span>` : html`<span class="so-health" data-h="${s.health}">${healthDot(s.health)}${HEALTH[s.health]}</span>`}</dd>
         <dt>Connector</dt><dd>${s.connector || s.kind}${s.connector_status?.ready === false ? html`<span class="so-res err">${s.connector_status.reason}</span>` : ''}</dd>
         <dt>Last sync</dt><dd>${s.last_sync_at ? html`${fmtWhen(s.last_sync_at, S.tz)} · ${plural(s.last_count ?? 0, 'new item')}` : 'Never'}</dd>
         <dt>Newest article</dt><dd>${s.last_article_at ? fmtWhen(s.last_article_at, S.tz) : '—'}</dd>

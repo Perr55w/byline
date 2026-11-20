@@ -5,7 +5,7 @@
 
 .cp-cols { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: var(--gap); align-items: start; }
 .cp-cols > * { min-width: 0; }
-.cp-aside { position: sticky; top: 72px; align-self: start; }
+.cp-aside { position: sticky; top: calc(var(--topbar-h) + 16px); align-self: start; }
 .cp-summary { margin: -2px 0 0; padding-bottom: 12px; color: var(--text-2); font: 400 14px/21px var(--font-sans); border-bottom: 1px solid var(--line); }
 .cp-summary b { color: var(--text-1); font-weight: 500; }
 .cp-foot-note a { display: inline-flex; align-items: center; gap: 4px; color: var(--text-2); font-weight: 500; }
@@ -38,20 +38,22 @@
 .cp-card-foot { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: auto; padding-top: 10px; border-top: 1px solid var(--line); color: var(--text-3); font: 450 12.5px/18px var(--font-sans); }
 
 /* ---------------------------------------------------------------- candidate stories */
+.cp-groups { display: flex; flex-direction: column; }
+.cp-group + .cp-group { border-top: 1px solid var(--line); }
+.cp-group-h { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin: 0; padding: 16px 24px 4px; font: inherit; }
+.cp-group-n { color: var(--text-3); font: 450 12.5px/18px var(--font-sans); }
 .cp-cand-list { margin: 0; padding: 0; list-style: none; }
-.cp-cand-row { display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; gap: 16px; align-items: start; padding: 16px 24px; border-top: 1px solid var(--line); transition: background-color var(--dur-micro) var(--ease-fade); }
-.cp-cand-row:first-child { border-top: 0; }
+.cp-cand-row { display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; gap: 16px; align-items: start; padding: 14px 24px 16px; }
+.cp-cand-row + .cp-cand-row { border-top: 1px solid var(--line); }
 .cp-cand-row:hover { background: var(--hover-row); }
 .cp-cand-row .score-chip { margin-top: 1px; }
-.cp-cand-row > .btn { margin-top: 1px; }
-/* Start campaign: a ghost action revealed on row hover or keyboard focus; always shown on touch and phone. */
-.cp-start { opacity: 0; transition: opacity var(--dur-hover-out) var(--ease-fade); }
-.cp-start .icon { width: 14px; height: 14px; }
-.cp-cand-row:hover .cp-start, .cp-cand-row:focus-within .cp-start { opacity: 1; transition-duration: var(--dur-hover-in); }
-@media (hover: none) { .cp-start { opacity: 1; } }
+/* Start campaign (R10): a permanent small secondary button at the top right of each row. It only opens the
+   new-campaign form pre-filled with this story; nothing is created until the form is submitted. */
+.cp-start { margin-top: 0; }
 .cp-cand-title { color: var(--text-1); text-decoration: none; margin-right: 8px; }
 .cp-cand-title:hover { color: var(--accent-text); }
-.cp-cand-finding { margin: 6px 0 0; color: var(--text-2); font: 400 14px/21px var(--font-sans); max-width: 72ch; }
+.cp-cand-finding { margin: 6px 0 0; color: var(--text-2); font: 400 14px/21px var(--font-sans); max-width: 64ch; text-wrap: pretty; }
+.cp-cand-finding mark.num-hl { box-decoration-break: clone; -webkit-box-decoration-break: clone; }
 .cp-cand-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin: 10px 0 0; color: var(--text-3); font: 450 12.5px/18px var(--font-sans); }
 
 /* ---------------------------------------------------------------- aside */
@@ -70,6 +72,12 @@
 .cp-topics b { font: 500 13px/18px var(--font-mono); text-align: right; font-variant-numeric: tabular-nums; }
 .cp-topic-d { color: var(--text-3); font-size: 12px; text-align: right; white-space: nowrap; }
 .cp-bars .meter > i { background: color-mix(in oklab, var(--text-3) 60%, transparent); }
+.cp-slots { display: flex; flex-direction: column; margin: 0 0 12px; padding: 0; list-style: none; }
+.cp-slots li { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: baseline; gap: 0 12px; padding: 8px 0; border-top: 1px solid var(--line); color: var(--text-1); font: 450 13.5px/20px var(--font-sans); }
+.cp-slots li:first-child { border-top: 0; padding-top: 0; }
+.cp-slots b { font-weight: 500; text-align: right; }
+.cp-slot-n { grid-column: 1 / -1; color: var(--text-3); font: 450 12px/16px var(--font-sans); }
+.cp-note a { color: var(--text-1); }
 .cp-outcomes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 0 0 14px; }
 .cp-outcomes dt { color: var(--text-3); font: 450 12px/16px var(--font-sans); }
 .cp-outcomes dd { margin: 4px 0 0; color: var(--text-1); font: 320 32px/1 var(--font-sans); letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
@@ -102,7 +110,7 @@
   .tile--flush .section-head.cp-pad { flex-wrap: wrap; }
   .cp-cand-row { grid-template-columns: 44px minmax(0, 1fr); padding: 14px 18px; gap: 12px; }
   .cp-cand-row > .btn { grid-column: 2; justify-self: start; }
-  .cp-start { opacity: 1; margin-left: -10px; }
+  .cp-group-h { padding: 14px 18px 2px; }
   .cp-foot-note.cp-pad { padding-bottom: 16px; }
   .cp-summary.cp-pad { padding-top: 0; padding-bottom: 12px; }
   .cp-pick .cp-pick-row { grid-template-columns: 16px minmax(0, 1fr); }

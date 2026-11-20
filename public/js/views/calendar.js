@@ -37,6 +37,30 @@ const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 /** F's short title: the part before ":" / " — " when it is ≥ 20 chars, else the title capped at 60. */
 const shortTitle = (t = '') => { const m = /^(.{20,}?)(?::\s| — )/.exec(t); const s = m ? m[1] : t; return s.length > 60 ? `${s.slice(0, 59).replace(/\s+\S*$/, '')}…` : s; };
 
+// ------------------------------------------------------------------ draft openings (CS1): the tray tells sibling drafts
+// apart by their hook. The calendar rows carry no text, so each tray draft's first section is read (GET /drafts/:id,
+// 15 s API cache); a `hook` field on the row wins.
+const HOOKS = new Map(); // draft id → { hook, parts }
+const firstLine = (t) => (String(t || '').split(/\n+/).map(x => x.trim()).find(Boolean) || '').replace(/^(\d{1,2}[.)]|[-•*–])\s+/, '').replace(/\s+/g, ' ').trim();
+function hookInfo(d) {
+  const secs = (d.sections || []).filter(s => !['sources', 'caption'].includes(s.kind) && String(s.text || '').trim());
+  const first = secs.find(s => ['hook', 'headline', 'title'].includes(s.kind)) || secs[0];
+  const k = secs.reduce((m, s) => { m[s.kind] = (m[s.kind] || 0) + 1; return m; }, {});
+  return { hook: firstLine(first?.text), parts: k.scene ? plural(k.scene, 'scene') : k.slide ? plural(k.slide, 'slide') : plural(secs.length, 'section') };
+}
+const clip = (t, n = 64) => { const s = String(t || '').trim(); if (s.length <= n) return s; const cut = s.slice(0, n + 1).replace(/\s+\S*$/, '') || s.slice(0, n); return `${cut.replace(/[\s.,;:!?…\-–—]+$/, '')}…`; };
+const norm = (t) => String(t || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+const sameOpening = (a, b) => { const x = norm(a), y = norm(b); if (!x || !y) return false; const n = Math.min(40, x.length, y.length); return x.slice(0, n) === y.slice(0, n); };
+async function loadHooks(list) {
+  const need = list.filter(d => d.hook == null && !HOOKS.has(d.id));
+  let i = 0;
+  const worker = async () => { while (i < need.length) { const d = need[i++]; const full = await api.get(`/drafts/${d.id}`).catch(() => null); if (full) HOOKS.set(d.id, hookInfo(full)); } };
+  await Promise.all(Array.from({ length: Math.min(6, need.length) }, worker));
+}
+const hookOf = (d) => d.hook != null ? { hook: firstLine(d.hook) } : HOOKS.get(d.id) || null;
+/** The quiet second line of a tray row: the hook, or (when it only restates the story headline) the draft's shape. */
+const hookText = (d, groupTitle) => { const hi = hookOf(d); if (!hi?.hook) return ''; return sameOpening(hi.hook, groupTitle) ? `Headline hook${hi.parts ? ` · ${hi.parts}` : ''}` : clip(hi.hook); };
+
 // ------------------------------------------------------------------ channel glyphs (12px, 1.5 stroke, currentColor)
 const GLYPH = {
   linkedin: '<path d="M3 3.5h10M3 6.5h10M3 9.5h7M3 12.5h5"/>',
@@ -56,6 +80,7 @@ useStyle('/css/v4/calendar.css'); // warm on the shell's idle prefetch, so the f
 
 export async function render(view, { params = [] } = {}) {
   await useStyle('/css/v4/calendar.css');
+  HOOKS.clear(); // openings are re-read each visit (the API's 15 s cache dedupes)
   const st = await api.get('/status').catch(() => ({}));
   const today = st.today || toYMD(new Date());
   const tz = st.timezone || 'America/New_York';
@@ -71,7 +96,7 @@ export async function render(view, { params = [] } = {}) {
   const S = {
     month: /^\d{4}-\d{2}$/.test(params[0] || '') ? params[0] : today.slice(0, 7),
     view: (() => { try { return localStorage.getItem('byline-cal-view') === 'week' ? 'week' : 'month'; } catch (e) { return 'month'; } })(),
-    week: null, selected: null, side: 'day', carry: null, openGroups: new Set(), trayReady: false, sideReady: false, bodyReady: false,
+    week: null, selected: null, side: 'day', carry: null, openGroups: new Set(), openDups: new Set(), trayReady: false, sideReady: false, bodyReady: false,
     drafts: new Map(), outreach: [], followups: [], unplanned: [], unplannedTotal: 0, history: [],
     settings: {}, nextSlot: null
   };
@@ -95,7 +120,8 @@ export async function render(view, { params = [] } = {}) {
     api.get('/followups').catch(() => null),
     api.get('/slots/next?channel=linkedin').catch(() => ({})),
     api.get('/search?type=stories&limit=200').catch(() => null),
-    ensureMonths(neededMonths())
+    // the tray's openings are read before the first paint, so the tray never re-renders mid-transition
+    ensureMonths(neededMonths()).then(() => loadHooks(S.unplanned))
   ]);
   // news context: stories by the local day they were first seen (what arrived when, to plan posts against)
   const news = new Map();
@@ -116,7 +142,19 @@ export async function render(view, { params = [] } = {}) {
     for (const d of S.drafts.values()) if (d.status !== 'archived') push(dayOf(d), { kind: 'draft', ...d, state: chipState(d) });
     for (const o of S.outreach) push(localDay(o.send_at), { kind: 'outreach', ...o, time: /T(\d{2}:\d{2})/.exec(o.send_at || '')?.[1] || '' });
     for (const f of S.followups) push(f.day, { kind: 'followup', ...f });
-    for (const list of map.values()) list.sort((a, b) => (a.kind !== 'draft') - (b.kind !== 'draft') || (STATUS_RANK[a.status] ?? 9) - (STATUS_RANK[b.status] ?? 9) || a.id - b.id);
+    for (const [day, list] of map) {
+      list.sort((a, b) => (a.kind !== 'draft') - (b.kind !== 'draft') || (STATUS_RANK[a.status] ?? 9) - (STATUS_RANK[b.status] ?? 9) || a.id - b.id);
+      // identical outreach on one day (same person, channel, status and time) is one item: "Test Alumna ×2" (CS8)
+      const seen = new Map(), out = [];
+      for (const it of list) {
+        if (it.kind === 'draft') { out.push(it); continue; }
+        const k = `${it.kind}|${it.name}|${it.channel || ''}|${it.status || ''}|${it.time || ''}`;
+        const prev = seen.get(k);
+        if (prev) { prev.n++; prev.ids.push(it.id); continue; }
+        const c = { ...it, n: 1, ids: [it.id] }; seen.set(k, c); out.push(c);
+      }
+      map.set(day, out);
+    }
     return map;
   }
   const postsBetween = (from, to, map) => { let n = 0, pub = 0; for (let d = from; d <= to; d = addDays(d, 1)) for (const it of map.get(d) || []) if (it.kind === 'draft') { n++; if (it.state === 'published') pub++; } return { n, pub }; };
@@ -141,11 +179,12 @@ export async function render(view, { params = [] } = {}) {
   const qTier = (score) => score == null ? 'none' : qualityTier(score, th);
   const draftLabel = (d) => `${shortTitle(d.title || 'Untitled')}: ${channelLabel(d.channel, d.format)}, ${STATE_WORD[chipState(d)]}${d.score != null ? `, story score ${Math.round(d.score)} (${qualityLabel(d.score, th)})` : ', no linked story'}`;
 
-  const chip = (it, { wrap = false } = {}) => {
+  const chip = (it, { wrap = false, time = false } = {}) => {
     // month cells are narrow: the full name up to 14 characters, else "Priya N." (full name in the title, the side panel and the week view)
     const nm = (n = '') => { const b = n.replace(/\s*\(demo\)\s*$/i, ''); if (wrap || b.length <= 14) return b; const p = b.split(/\s+/); return p.length > 1 ? `${p[0]} ${p[p.length - 1][0]}.` : b; };
-    if (it.kind === 'outreach') return html`<a class="cal-chip cal-chip--out${wrap ? ' cal-chip--wrap' : ''}" href="#/people" tabindex="-1" title="Outreach to ${it.name} (${it.channel}, ${it.status})${it.time ? ` at ${it.time}` : ''}">${glyph('outreach')}<span class="cal-chip-t">${wrap && it.time ? html`<span class="cal-time">${it.time}</span> ` : ''}${nm(it.name)}</span></a>`;
-    if (it.kind === 'followup') return html`<a class="cal-chip cal-chip--out${wrap ? ' cal-chip--wrap' : ''}" href="#/people" tabindex="-1" title="Follow up with ${it.name}: ${it.next_step || ''}">${glyph('followup')}<span class="cal-chip-t">${nm(it.name)}</span></a>`;
+    const times = it.n > 1 ? html`<span class="cal-x">×${it.n}</span>` : '';
+    if (it.kind === 'outreach') return html`<a class="cal-chip cal-chip--out${wrap ? ' cal-chip--wrap' : ''}" href="#/people" tabindex="-1" title="${it.n > 1 ? `${it.n} identical messages: ` : ''}Outreach to ${it.name} (${it.channel}, ${it.status})${it.time ? ` at ${it.time}` : ''}">${glyph('outreach')}<span class="cal-chip-t">${time && it.time ? html`<span class="cal-time">${it.time}</span> ` : ''}${nm(it.name)}${times ? html` ${times}` : ''}</span></a>`;
+    if (it.kind === 'followup') return html`<a class="cal-chip cal-chip--out${wrap ? ' cal-chip--wrap' : ''}" href="#/people" tabindex="-1" title="Follow up with ${it.name}: ${it.next_step || ''}">${glyph('followup')}<span class="cal-chip-t">${nm(it.name)}${times ? html` ${times}` : ''}</span></a>`;
     const movable = it.state !== 'published';
     return html`<div class="cal-chip${wrap ? ' cal-chip--wrap' : ''}" data-id="${it.id}" data-st="${it.state}" data-q="${qTier(it.score)}" style="${q(it.score)}" ${movable ? raw('data-movable') : ''}
       title="${it.title}\n${channelLabel(it.channel, it.format)} · ${it.status.replace('_', ' ')}${it.score != null ? ` · story ${Math.round(it.score)}` : ''}${movable ? ' · drag to move' : ''}">
@@ -161,7 +200,7 @@ ${nw.map(x => `${Math.round(x.score)}  ${x.short_title || x.title}`).join('\n')}
   const monthRows = () => { const first = `${S.month}-01`; const [y, m] = S.month.split('-').map(Number); return Math.ceil((dow(first) + new Date(Date.UTC(y, m, 0)).getUTCDate()) / 7); };
   const bodyCls = () => S.view === 'week' ? ' is-week' : monthRows() >= 6 ? ' is-6' : '';
 
-  function monthGrid(map) {
+  function monthGrid(map, { defer = false } = {}) {
     const first = `${S.month}-01`;
     const start = mondayOf(first);
     const [y, m] = S.month.split('-').map(Number);
@@ -180,7 +219,8 @@ ${nw.map(x => `${Math.round(x.score)}  ${x.short_title || x.title}`).join('\n')}
         const shown = list.slice(0, list.length > cap ? cap - 1 : cap);
         const more = list.length - shown.length;
         const nw = news.get(day) || [];
-        const label = `${dayLong(day)}${day === today ? ', today' : ''}, ${drafts ? plural(drafts, 'post') : 'no posts'}${list.length - drafts ? `, ${plural(list.length - drafts, 'outreach item')}` : ''}${open ? ', open posting day' : ''}${nw.length ? `, ${plural(nw.length, 'story', 'stories')} first seen, top score ${Math.round(nw[0].score)}` : ''}`;
+        const outN = list.reduce((n, i) => n + (i.kind === 'draft' ? 0 : (i.n || 1)), 0);
+        const label = `${dayLong(day)}${day === today ? ', today' : ''}, ${drafts ? plural(drafts, 'post') : 'no posts'}${outN ? `, ${plural(outN, 'outreach item')}` : ''}${open ? ', open posting day' : ''}${nw.length ? `, ${plural(nw.length, 'story', 'stories')} first seen, top score ${Math.round(nw[0].score)}` : ''}`;
         row.push(html`<div class="cal-cell${out ? ' is-out' : ''}${c > 4 ? ' is-weekend' : ''}${day === today ? ' is-today' : ''}${day === S.selected ? ' is-selected' : ''}" role="gridcell" data-cell="${day}" data-drop="${day}"
           tabindex="${day === S.selected ? 0 : -1}" aria-selected="${day === S.selected}" aria-label="${label}">
           <span class="cal-num" aria-hidden="true">${Number(day.slice(8))}${day.slice(8) === '01' ? html`<span class="cal-mon"> ${fmt(day, { month: 'short' })}</span>` : ''}</span>
@@ -188,7 +228,7 @@ ${nw.map(x => `${Math.round(x.score)}  ${x.short_title || x.title}`).join('\n')}
           <div class="cal-chips">${shown.map(it => chip(it, { wrap: list.length === 1 }))}${more > 0 ? html`<button type="button" class="cal-more xbtn" data-act="day" data-day="${day}" tabindex="-1" title="${list.slice(shown.length).map(x => x.title || x.name).join('\n')}">+${more} more</button>` : ''}${open ? html`<span class="cal-open" aria-hidden="true">open slot</span>` : ''}</div>
         </div>`);
       }
-      cells.push(html`<div class="cal-row" role="row">${row}</div>`);
+      cells.push(html`<div class="cal-row${defer && r >= 3 ? ' cal-row--later' : ''}" role="row">${row}</div>`);
     }
     return html`<div class="cal-month${rows >= 6 ? ' is-6' : ''}" role="grid" aria-label="${monthYear(S.month)}" aria-describedby="cal-help" style="--rows:${rows}" data-grid>
       <div class="cal-row cal-dow" role="row">${WEEKDAYS.map((d, i) => html`<div class="cal-dow-c${i > 4 ? ' is-weekend' : ''}" role="columnheader"><abbr title="${['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'][i]}">${d}</abbr></div>`)}</div>
@@ -209,7 +249,7 @@ ${nw.map(x => `${Math.round(x.score)}  ${x.short_title || x.title}`).join('\n')}
     return html`<div class="cal-week" role="grid" aria-label="Week of ${dayLong(S.week)}" aria-describedby="cal-help" data-grid>
       <div class="cal-row cal-whead" role="row"><div class="cal-lane-l" role="columnheader"><span class="sr-only">Lane</span>W${isoWeek(S.week)}</div>${days.map((day, i) => html`<div class="cal-whead-c${i > 4 ? ' is-weekend' : ''}${day === today ? ' is-today' : ''}" role="columnheader"><span class="cal-wd">${WEEKDAYS[i]}</span><span class="cal-num">${Number(day.slice(8))}</span></div>`)}</div>
       ${lane('posts', 'Posts', (day, list) => { const ds = list.filter(i => i.kind === 'draft'); return { say: ds.length ? plural(ds.length, 'post') : 'none', html: html`<div class="cal-chips">${ds.map(it => chip(it, { wrap: true }))}</div>` }; })}
-      ${lane('outreach', 'Outreach', (day, list) => { const os = list.filter(i => i.kind !== 'draft'); return { say: os.length ? plural(os.length, 'item') : 'none', html: html`<div class="cal-chips">${os.map(it => chip(it, { wrap: true }))}</div>` }; })}
+      ${lane('outreach', 'Outreach', (day, list) => { const os = list.filter(i => i.kind !== 'draft'); return { say: os.length ? plural(os.reduce((n, i) => n + (i.n || 1), 0), 'item') : 'none', html: html`<div class="cal-chips">${os.map(it => chip(it, { wrap: true, time: true }))}</div>` }; })}
       ${lane('slots', 'Slots', (day, list) => {
         const n = list.filter(i => i.kind === 'draft').length;
         if (!isPostingDay(day)) return { say: 'not a posting day', html: html`<span class="cal-slot is-off" aria-hidden="true">—</span>` };
@@ -219,46 +259,60 @@ ${nw.map(x => `${Math.round(x.score)}  ${x.short_title || x.title}`).join('\n')}
       ${lane('news', 'Stories', (day) => {
         const nw = news.get(day) || [];
         if (!nw.length) return { say: 'no stories first seen', html: html`<span class="cal-slot is-off" aria-hidden="true">—</span>` };
-        return { say: `${plural(nw.length, 'story', 'stories')} first seen, top ${nw[0].short_title} at ${Math.round(nw[0].score)}`, html: html`<ul class="cal-wnews" role="list">${nw.slice(0, 5).map(x => html`<li><a href="#/story/${x.id}" tabindex="-1" title="${x.title}"><span class="cal-wnews-s" data-q="${qTier(x.score)}" style="${q(x.score)}">${Math.round(x.score)}</span><span class="cal-wnews-t">${x.short_title || x.title}</span></a></li>`)}</ul>${nw.length > 5 ? html`<span class="cal-wnews-more">+${nw.length - 5} more</span>` : ''}` };
+        return { say: `${plural(nw.length, 'story', 'stories')} first seen, top ${nw[0].short_title} at ${Math.round(nw[0].score)}`, html: html`<ul class="cal-wnews" role="list">${nw.slice(0, 5).map(x => html`<li><a href="#/story/${x.id}" tabindex="-1" title="${x.title}"><span class="cal-wnews-s" data-q="${qTier(x.score)}" style="${q(x.score)}">${Math.round(x.score)}</span><span class="cal-wnews-t">${shortTitle(x.short_title || x.title)}</span></a></li>`)}</ul>${nw.length > 5 ? html`<span class="cal-wnews-more">+${nw.length - 5} more</span>` : ''}` };
       })}
     </div>`;
   }
 
-  const draftRow = (d, { inDay = false } = {}) => {
+  // o.dups: the drafts this row stands for (same format, status and opening line → "Video · explainer ×5");
+  // o.sub: one of them, listed under an expanded duplicate row
+  const draftRow = (d, { inDay = false, dups = null, dupKey = '', open = false, sub = false, groupTitle = '' } = {}) => {
     const state = chipState(d);
     const movable = state !== 'published';
-    return html`<li class="cal-item" data-row="${d.id}">
+    const n = dups?.length || 1;
+    const hook = d.grouped && !sub ? hookText(d, groupTitle) : '';
+    return html`<li class="cal-item${sub ? ' cal-item--sub' : ''}" data-row="${d.id}">
       <span class="cal-qbar" data-q="${qTier(d.score)}" style="${q(d.score)}" aria-hidden="true"></span>
-      <button type="button" class="cal-pick xbtn" title="Draft #${d.id}" data-pick="${d.id}" ${movable ? raw('data-movable') : raw('aria-disabled="true"')} data-id="${d.id}" aria-label="${draftLabel(d)}" aria-describedby="${movable ? 'cal-help' : ''}">
-        ${glyph(d.channel)}
+      <button type="button" class="cal-pick xbtn" title="Draft #${d.id}" data-pick="${d.id}" ${movable ? raw('data-movable') : raw('aria-disabled="true"')} data-id="${d.id}" aria-label="${draftLabel(d)}${sub ? `, draft #${d.id}` : ''}${n > 1 ? `, the newest of ${n} with the same opening` : ''}" aria-describedby="${movable ? 'cal-help' : ''}">
+        ${sub ? html`<span class="cal-sub-mark" aria-hidden="true"></span>` : glyph(d.channel)}
         <span class="cal-pick-main${inDay || !d.grouped ? '' : ' is-grouped'}">
           ${inDay || !d.grouped ? html`<span class="cal-pick-t">${d.title || 'Untitled'}</span>` : ''}
-          <span class="cal-pick-m">${channelLabel(d.channel, d.format)}</span>
+          <span class="cal-pick-m">${sub ? `Draft #${d.id}` : channelLabel(d.channel, d.format)}</span>
+          ${hook ? html`<span class="cal-pick-h" title="Hook: ${hookOf(d)?.hook || ''}">${hook}</span>` : ''}
         </span>
       </button>
-      <span class="cal-item-tags">${statusTag(d.status)}${d.score != null && !d.grouped ? scoreChip(d.score, th) : ''}</span>
+      <span class="cal-item-tags">${n > 1 ? html`<button type="button" class="cal-dup xbtn" data-dup="${dupKey}" aria-expanded="${String(open)}" title="${open ? 'Hide' : 'Show'} each of the ${n} drafts">×${n}</button>` : ''}${sub ? '' : statusTag(d.status)}${d.score != null && !d.grouped ? scoreChip(d.score, th) : ''}</span>
       <span class="cal-item-acts">
         ${movable ? html`<button type="button" class="btn btn--ghost btn--sm btn--icon" data-act="menu" data-id="${d.id}" aria-label="Schedule ${shortTitle(d.title)} (#${d.id})…" title="Schedule…">${icon('calendar')}</button>` : ''}
         <a class="cal-ilink" href="#/draft/${d.id}" aria-label="Open draft #${d.id} in Studio" title="Open in Studio">${icon('arrow-up-right')}</a>
       </span>
-    </li>`;
+    </li>${open && n > 1 ? html`${dups.map(x => draftRow({ ...x, grouped: true }, { sub: true }))}` : ''}`;
   };
 
-  function trayList() {
-    if (!S.unplanned.length) return html`<p class="cal-empty-note">Every open draft has a date. New drafts from the Feed or Today land here.</p>`;
+  function trayList(start = 0, end = Infinity) {
+    trayMissing = S.unplanned.some(d => !hookOf(d));
+    if (!S.unplanned.length) return start ? '' : html`<p class="cal-empty-note">Every open draft has a date. New drafts from the Feed or Today land here.</p>`;
     const groups = new Map();
     for (const d of S.unplanned) { const k = d.story_id ? `s${d.story_id}` : `t${d.title}`; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(d); }
-    return html`${[...groups.values()].map(list => {
+    return html`${[...groups.values()].slice(start, end).map(list => {
       if (list.length === 1) return html`<ul class="cal-items" role="list">${draftRow(list[0])}</ul>`;
       const by = list.reduce((m, d) => { m[d.channel] = (m[d.channel] || 0) + 1; return m; }, {});
+      const full = list[0].story_title || list[0].title || 'Untitled';
+      const key = list[0].story_id || list[0].title;
+      // true duplicates collapse into one expandable row (CS1); each keeps its own drag handle once expanded
+      const buckets = new Map();
+      for (const d of list) { const hk = hookOf(d)?.hook; const bk = `${d.channel}|${d.format}|${d.status}|${hk ? norm(hk) : `#${d.id}`}`; if (!buckets.has(bk)) buckets.set(bk, []); buckets.get(bk).push(d); }
+      const rows = [...buckets.entries()].map(([bk, ds]) => ({ key: `${key}|${bk}`, ds }));
+      const openAll = S.openGroups.has(key) || rows.length <= 5;
+      const vis = openAll ? rows : rows.slice(0, 4);
+      const hidden = rows.slice(4).reduce((n, r) => n + r.ds.length, 0);
       return html`<div class="cal-group">
         <div class="cal-group-h"><span class="cal-qbar" data-q="${qTier(list[0].score)}" style="${q(list[0].score)}" aria-hidden="true"></span>
-          <p class="cal-group-tx"><span class="cal-group-t">${list[0].story_title || list[0].title}</span>
+          <p class="cal-group-tx"><span class="cal-group-t" title="${full}">${shortTitle(full)}</span>
           <span class="cal-group-m">${plural(list.length, 'draft')} · ${Object.entries(by).map(([c, n]) => `${n} ${channelLabel(c)}`).join(', ')}</span></p>
           ${list[0].score != null ? scoreChip(list[0].score, th) : ''}</div>
-        ${(() => { const key = list[0].story_id || list[0].title; const openAll = S.openGroups.has(key) || list.length <= 5; const vis = openAll ? list : list.slice(0, 4);
-          return html`<ul class="cal-items" role="list">${vis.map(d => draftRow({ ...d, grouped: true }))}</ul>
-          ${list.length > 5 ? html`<button type="button" class="cal-moreg xbtn" data-group="${key}" aria-expanded="${openAll}">${openAll ? 'Show fewer' : `Show ${list.length - 4} more from this story`}</button>` : ''}`; })()}
+        <ul class="cal-items" role="list">${vis.map(r => draftRow({ ...r.ds[0], grouped: true }, { dups: r.ds, dupKey: r.key, open: S.openDups.has(r.key), groupTitle: full }))}</ul>
+        ${rows.length > 5 ? html`<button type="button" class="cal-moreg xbtn" data-group="${key}" aria-expanded="${String(openAll)}">${openAll ? 'Show fewer' : `Show ${hidden} more from this story`}</button>` : ''}
       </div>`;
     })}`;
   }
@@ -276,8 +330,8 @@ ${nw.map(x => `${Math.round(x.score)}  ${x.short_title || x.title}`).join('\n')}
       <p class="cal-day-sub">${sub}</p>
       ${drafts.length ? html`<ul class="cal-items cal-items--day" role="list">${drafts.map(d => draftRow(d, { inDay: true }))}</ul>` : ''}
       ${others.length ? html`<ul class="cal-items cal-items--out" role="list">${others.map(o => html`<li class="cal-item cal-item--out">${glyph(o.kind === 'followup' ? 'followup' : 'outreach')}
-        <a href="#/people" class="cal-out-t">${o.kind === 'followup' ? `Follow up with ${o.name}` : `Outreach to ${o.name}`}</a>
-        <span class="cal-out-m">${o.kind === 'followup' ? (o.next_step || o.stage || '') : `${o.channel} · ${o.status}${o.time ? ` · ${o.time}` : ''}`}</span></li>`)}</ul>` : ''}
+        <a href="#/people" class="cal-out-t">${o.kind === 'followup' ? `Follow up with ${o.name}` : `Outreach to ${o.name}`}${o.n > 1 ? html` <span class="cal-x">×${o.n}</span>` : ''}</a>
+        <span class="cal-out-m">${o.kind === 'followup' ? (o.next_step || o.stage || '') : `${o.n > 1 ? `${o.n} identical messages · ` : ''}${o.channel} · ${o.status}${o.time ? ` · ${o.time}` : ''}`}</span></li>`)}</ul>` : ''}
       ${(news.get(day) || []).length ? html`<div class="cal-newsl"><p class="cal-newsl-h">First seen this day · ${plural(news.get(day).length, 'story', 'stories')}</p>
         <ul class="cal-items" role="list">${news.get(day).slice(0, 3).map(x => html`<li class="cal-item cal-item--news"><span class="cal-qbar" data-q="${qTier(x.score)}" style="${q(x.score)}" aria-hidden="true"></span>
           <a class="cal-out-t" data-shared="title" href="#/story/${x.id}">${x.short_title || x.title}${x.is_demo ? html` <span class="tag tag--demo">Demo</span>` : ''}</a>${scoreChip(x.score, th)}</li>`)}</ul>
@@ -304,7 +358,7 @@ ${nw.map(x => `${Math.round(x.score)}  ${x.short_title || x.title}`).join('\n')}
         const pips = Math.max(goal, w.n);
         return html`<li class="cal-cad-w${w.cur ? ' is-cur' : ''}" aria-label="${w.cur ? 'This week' : `Week ${isoWeek(w.a)}`}: ${w.pub} published, ${w.n - w.pub} planned, goal ${goal}">
           <span class="cal-pips" aria-hidden="true">${Array.from({ length: pips }, (_, i) => html`<i class="${i < w.pub ? 'is-pub' : i < w.n ? 'is-plan' : ''}"></i>`)}</span>
-          <span class="cal-cad-l" aria-hidden="true">${w.cur ? 'This wk' : `W${isoWeek(w.a)}`}</span>
+          <span class="cal-cad-l" aria-hidden="true">${w.cur ? 'This week' : `W${isoWeek(w.a)}`}</span>
           <span class="cal-cad-n" aria-hidden="true">${w.n}/${goal}</span>
         </li>`;
       })}</ol>
@@ -414,8 +468,10 @@ ${nw.map(x => `${Math.round(x.score)}  ${x.short_title || x.title}`).join('\n')}
     if (S.bodyReady || !el.isConnected) return;
     S.bodyReady = true;
     const body = el.querySelector('.cal-body');
-    if (body && !body.firstElementChild) body.innerHTML = String(S.view === 'month' ? monthGrid(byDay()) : weekGrid(byDay()));
+    // month: rows 4+ lay out one task later (content-visibility: hidden keeps their height), halving the swap frame
+    if (body && !body.firstElementChild) body.innerHTML = String(S.view === 'month' ? monthGrid(byDay(), { defer: true }) : weekGrid(byDay()));
   }
+  const revealRows = () => el.querySelectorAll('.cal-row--later').forEach(r => r.classList.remove('cal-row--later'));
   function fillSide() {
     if (S.sideReady || !el.isConnected) return;
     fillBody();
@@ -425,13 +481,28 @@ ${nw.map(x => `${Math.round(x.score)}  ${x.short_title || x.title}`).join('\n')}
     if (pane) pane.innerHTML = String(sidePane(map));
     pane?.insertAdjacentHTML('afterend', String(cadence(map)));
   }
+  // the tray list alone, in place (keeps its scroll; no re-entrance)
+  const refreshTray = () => {
+    const tl = el.querySelector('.cal-tray-list');
+    if (!tl || !S.trayReady) return;
+    const top = tl.scrollTop; tl.innerHTML = String(trayList()); tl.scrollTop = top;
+  };
+  // tray openings: read once the month data names the tray drafts; a late arrival refreshes the tray in place
+  // (only when the tray was painted before they came; in its own task after a frame, so layout is already clean)
+  let trayMissing = false;
+  const hooksFor = () => loadHooks(S.unplanned).then(() => {
+    if (!el.isConnected || !S.trayReady || !trayMissing) return;
+    requestAnimationFrame(() => setTimeout(() => { if (el.isConnected) refreshTray(); }, 0));
+  });
   const fillTray = () => {
     if (S.trayReady || !el.isConnected) return;
     S.trayReady = true;
     const tl = el.querySelector('.cal-tray-list');
     if (!tl) return;
-    tl.innerHTML = String(trayList());
-    if (!reduced()) enterItems([...tl.querySelectorAll('.cal-group, .cal-tray-list > .cal-items')].slice(0, 6), { stagger: 30, cap: 6, y: 4, duration: 380, fadeDuration: 280 });
+    // the first story group fills the visible tray; the rest (below the fold) join one task later
+    tl.innerHTML = String(trayList(0, 1));
+    if (!reduced()) enterItems([...tl.querySelectorAll('.cal-group, .cal-tray-list > .cal-items')], { stagger: 30, cap: 6, y: 4, duration: 380, fadeDuration: 280 });
+    requestAnimationFrame(() => setTimeout(() => { if (el.isConnected && tl.isConnected && tl.children.length <= 1) tl.insertAdjacentHTML('beforeend', String(trayList(1))); }, 0));
   };
   const enterBody = (delay = 0) => {
     if (reduced()) return;
@@ -449,7 +520,7 @@ ${nw.map(x => `${Math.round(x.score)}  ${x.short_title || x.title}`).join('\n')}
       fillBody();
       enterBody(120);
       const next = (fn) => requestAnimationFrame(() => setTimeout(fn, 0));
-      next(() => { fillSide(); next(fillTray); });
+      next(() => { revealRows(); next(() => { fillSide(); next(fillTray); }); });
     }, 0)));
   };
   const onRouted = (e) => { if (e.detail?.page?.contains(el)) afterSwap(); };
@@ -505,6 +576,13 @@ ${nw.map(x => `${Math.round(x.score)}  ${x.short_title || x.title}`).join('\n')}
   on(el, 'click', '[data-side]', (e, b) => { S.side = b.dataset.side; repaint({ head: false }); });
   on(el, 'click', '[data-act="day"]', (e, b) => { e.stopPropagation(); select(b.dataset.day); });
   on(el, 'click', '[data-group]', (e, b) => { const k = /^\d+$/.test(b.dataset.group) ? Number(b.dataset.group) : b.dataset.group; S.openGroups.has(k) ? S.openGroups.delete(k) : S.openGroups.add(k); repaint({ head: false }); el.querySelector(`[data-group="${b.dataset.group}"]`)?.focus(); });
+  on(el, 'click', '[data-dup]', (e, b) => {
+    const k = b.dataset.dup; const was = S.openDups.has(k);
+    was ? S.openDups.delete(k) : S.openDups.add(k);
+    refreshTray();
+    const nb = el.querySelector(`[data-dup="${CSS.escape(k)}"]`); nb?.focus();
+    if (!was && !reduced()) { const subs = []; let n = nb?.closest('.cal-item')?.nextElementSibling; while (n?.classList.contains('cal-item--sub')) { subs.push(n); n = n.nextElementSibling; } enterItems(subs, { stagger: 24, y: 4, duration: 320, fadeDuration: 220 }); }
+  });
   on(el, 'click', '[data-act="menu"]', (e, b) => scheduleMenu(Number(b.dataset.id), b));
   // a click on a cell (not a chip drag) selects the day; a chip click selects its day and highlights its row
   on(el, 'click', '[data-cell]', (e, c) => {
@@ -523,7 +601,7 @@ ${nw.map(x => `${Math.round(x.score)}  ${x.short_title || x.title}`).join('\n')}
     const d = findDraft(id); if (!d) return;
     S.unplanned = S.unplanned.filter(x => x.id !== id);
     if (date) { S.drafts.set(id, { ...d, planned_date: date }); }
-    else { S.drafts.delete(id); S.unplanned = [{ ...d, planned_date: null }, ...S.unplanned]; }
+    else { S.drafts.delete(id); S.unplanned = [{ ...d, planned_date: null }, ...S.unplanned]; hooksFor(); }
   }
   function countFix(wasPlanned, nowPlanned) { if (wasPlanned && !nowPlanned) S.unplannedTotal += 1; if (!wasPlanned && nowPlanned) S.unplannedTotal = Math.max(0, S.unplannedTotal - 1); }
 

@@ -3,7 +3,7 @@
 import { all, get, run, now, tx, getSettings, cacheGet, cacheSet, parse, hydrate } from './db.js';
 import { connectorFor, fetchArticle } from './connectors/index.js';
 import { tokens, jaccard, sentences, hasNumber, termHits, domainOf, wordCount, readingMinutes, truncate, entities } from './text.js';
-import { sourceCounts, cleanClaim, numberMarks, markedText } from './finding.js';
+import { sourceCounts, cleanClaim, numberMarks, markedText, keyEligible } from './finding.js';
 import { WEIGHTS, BREAKDOWN_VERSION, scoreFrom, r1, r2, r3 } from './score.js';
 import { getProvider } from './ai/index.js';
 import { loadStory, loadEmployers, createDraft, storyPreferences } from './store.js';
@@ -163,7 +163,7 @@ export { WEIGHTS, BREAKDOWN_VERSION, scoreFrom } from './score.js';
 
 /** First sentence of the story text that contains one of the terms (for "Why it's post-worthy" quotes). */
 function quoteFor(sents, test) {
-  const hit = sents.find(test);
+  const hit = sents.find(x => test(x) && keyEligible(x)); // R2 S14: no filler / numberless self-talk as a quote
   return hit ? truncate(hit.replace(/\s+([.,;:!?])/g, '$1'), 220) : null;
 }
 

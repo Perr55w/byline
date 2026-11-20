@@ -11,11 +11,14 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; scrollbar-gutter:
    --rail-w / --grp-h are registered with inherits:false (tokens.css). Each consumer holds and transitions its own
    copy, so one collapse restyles only these elements instead of every node in the document. All copies share
    one duration/curve and start on the same class toggle, so they stay frame-locked (dossier.left ≥ rail.right). */
-.main, .rail, .dossier-panel, .toasts, .rail-tip { --rail-w: var(--rail-expanded); transition: --rail-w var(--dur-layout) var(--ease-move); }
-html.rail-collapsed :is(.main, .rail, .dossier-panel, .toasts, .rail-tip) { --rail-w: var(--rail-collapsed); }
+.main, .rail, .dossier-panel, .dossier-shadow, .toasts, .rail-tip { --rail-w: var(--rail-expanded); transition: --rail-w var(--dur-layout) var(--ease-move); }
+html.rail-collapsed :is(.main, .rail, .dossier-panel, .dossier-shadow, .toasts, .rail-tip) { --rail-w: var(--rail-collapsed); }
 .rail-group, .rail-hl { --grp-h: 24px; }
 html.rail-collapsed :is(.rail-group, .rail-hl) { --grp-h: 4px; }
-@media (max-width: 760px) { .main, .rail, .dossier-panel, .toasts, .rail-tip, html.rail-collapsed :is(.main, .rail, .dossier-panel, .toasts, .rail-tip) { --rail-w: 0px; } }
+/* R2 S4: with the dossier open, the page behind the .72 scrim takes its new padding in one step (one layout) instead of
+   re-wrapping on every frame of the collapse; the rail and the panel's left edge still move together, frame-locked */
+html.dossier-open .main { transition: none; }
+@media (max-width: 760px) { .main, .rail, .dossier-panel, .dossier-shadow, .toasts, .rail-tip, html.rail-collapsed :is(.main, .rail, .dossier-panel, .dossier-shadow, .toasts, .rail-tip) { --rail-w: 0px; } }
 html.no-anim, html.no-anim * { transition: none !important; } /* first paint + instant state restores only */
 body {
   margin: 0; min-height: 100vh; min-height: 100dvh; background: var(--bg); color: var(--text-1);
@@ -45,6 +48,12 @@ kbd, .keycap { font: 500 11px/1 var(--font-mono); letter-spacing: .02em; }
   transition: opacity var(--dur-theme) var(--ease-ambient); }
 html[data-bg=dim] #bg { opacity: .35; }
 html[data-bg=still] #bg { opacity: .28; }
+/* R2 S2/S3: while the dossier is up the field leaves the render: a translucent, scaled full-viewport canvas under the
+   .72 scrim was the single most expensive quad of every flight frame. On dim / still routes (≤ 10% of a faint pattern
+   shows through the scrim) it goes at once; on full routes it fades with the scrim (240ms). It fades back in over
+   --dur-theme once the dossier has closed. */
+html.dossier-open #bg { opacity: 0; visibility: hidden; transition: none; }
+html.dossier-open[data-bg=full] #bg { transition: opacity 240ms var(--ease-fade), visibility 0s linear 240ms; }
 #bg-light {
   position: fixed; left: 0; top: 0; z-index: 0; width: 720px; height: 720px; margin: -360px 0 0 -360px; border-radius: 50%;
   pointer-events: none; opacity: 0; will-change: transform, opacity;
@@ -82,7 +91,8 @@ html[data-bg=dim] #bg-light { visibility: hidden; } /* still (overlays) fades it
 /* S14: in the app chrome the mark is strokes only (no tile): b and y in ink, the y's descender running into the
    underline in accent, so the "line" of by—line survives at 26px. The filled tile stays for favicon / PWA icons. */
 .brand-tile--line { background: none; color: var(--text-1); }
-.brand-tile--line .brand-mark { stroke-width: 5.2; overflow: visible; }
+/* R2 S16: the viewBox is cropped to the glyph (10 8.5 44 44), so the drawn mark fills ~25 of the 26px box; 3.8 units ≈ 2.2px */
+.brand-tile--line .brand-mark { stroke-width: 3.8; overflow: visible; }
 .brand-tile--line .mark-line { stroke: var(--accent); }
 html.brand-draw .rail .brand-mark .mark-line { animation: mark-draw 700ms var(--ease-settle) 240ms both; }
 @keyframes mark-draw { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
@@ -203,6 +213,10 @@ html.scrolled .crumb { opacity: 0; pointer-events: none; }
 .topbar::before { content: ""; position: fixed; left: 0; right: 0; top: 0; height: 72px; z-index: -1; pointer-events: none;
   background: linear-gradient(var(--bg) 55%, transparent); opacity: 0; transition: opacity 240ms var(--ease-fade); }
 html.scrolled .topbar::before { opacity: 1; }
+/* R2 S11 (R7): while the dossier is open the top bar's children fade out (240ms --ease-exit) and then leave the
+   glass budget (visibility); on close they fade back over 240ms (html.dz-back, set for 300ms by dossier.js). */
+html.dz-back :is(.crumb, .topbar-right) { transition: opacity 240ms var(--ease-fade), visibility 0s linear 0s; } /* named children, never `> *` or :not(): those invalidate the whole document on a class flip */
+html.dossier-open :is(.crumb, .topbar-right) { opacity: 0; visibility: hidden; pointer-events: none; transition: opacity 240ms var(--ease-exit), visibility 0s linear 240ms; }
 .topbar-right { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .status-pill { margin: 0; }
 /* S16: three pre-rendered forms (long / phone / ≤400px), never an ellipsis through a number; painted from the last
@@ -270,30 +284,26 @@ html.scrolled .topbar::before { opacity: 1; }
 }
 
 /* ---------------------------------------------------------------- router: pages, transitions (E §3, C §3) */
-/* S2: both pages share one grid cell, so toggling pending/leaving never changes position (no document Layout).
-   The old page leaves in place (−6px, 220ms); the new page's blocks start once the old one is below .3 opacity. */
-#view { position: relative; display: grid; grid-template-columns: minmax(0, 1fr); }
+/* Both pages share one grid cell, so toggling pending/leaving never changes position (no document Layout).
+   R2 S1: the old page leaves in place (−6px, 220ms) and its .page-head fades first (140ms --ease-exit, below .05 by
+   150ms); the new page's entrance is WAAPI (app.js reveal): cascade at 120ms, the new h1 at 170ms. align-self:start
+   keeps each page at its own height, so removing the leaving page never re-sizes the one that stays. */
+#view { position: relative; display: grid; grid-template-columns: minmax(0, 1fr); align-items: start; }
 .page { position: relative; grid-area: 1 / 1; min-width: 0; contain: layout style; }
 /* pending = opacity 0, not visibility:hidden: visibility is inherited, so un-hiding restyled every text node of
    the new page and re-laid it out in the swap frame (measured: a 35–55 ms Layout at 4×); opacity is not inherited */
-.page.is-pending { opacity: 0; pointer-events: none; }
-.page.leaving { pointer-events: none; opacity: 0; transform: translateY(-6px);
+/* R2 S1: no pointer-events here: it is inherited, so toggling it restyled every node of both pages in the swap frame
+   (~700 elements, 30+ ms at 4×). The pending / leaving pages sit at z-index −1 instead and app.js swallows their
+   clicks in a capture listener. z-index is not inherited. */
+.page.is-pending { opacity: 0; z-index: -1; }
+.page.is-building { content-visibility: hidden; } /* app.js routeTo: rendered without style/layout, laid out a frame later */
+.page.leaving { z-index: -1; opacity: 0; transform: translateY(-6px);
   transition: opacity 220ms var(--ease-fade), transform 220ms var(--ease-exit); }
-.page.entering .enter-item { opacity: 0; transform: translateY(10px); }
-.page.entering .enter-head { opacity: 0; transform: translateY(4px); }
-.page.entering.in .enter-item { opacity: 1; transform: none;
-  transition: opacity var(--dur-fade) var(--ease-fade), transform 600ms var(--ease-settle);
-  transition-delay: calc(var(--enter-base, 120ms) + var(--i, 0) * var(--stagger-item)); }
-.page.entering.in .enter-head { opacity: 1; transform: none;
-  transition: opacity var(--dur-fade) var(--ease-fade), transform var(--dur-fade) var(--ease-settle);
-  transition-delay: calc(var(--enter-head, 280ms) + var(--i, 0) * var(--stagger-item)); }
-@media (prefers-reduced-motion: reduce) { .page.entering .enter-item, .page.entering .enter-head { opacity: 1; transform: none; } }
+.page.leaving .page-head { opacity: 0; transition: opacity 140ms var(--ease-exit); }
 /* utilities for long tabs: skip offscreen rendering (tab owners; deferred work waits for byline:routed) */
 .cv { content-visibility: auto; contain-intrinsic-size: auto 320px; }
 .cv-row { content-visibility: auto; contain-intrinsic-size: auto 56px; }
-.page.skeleton-page { pointer-events: none; }
-.page.skeleton-page.leaving { transition-duration: 240ms; transform: none; transition-timing-function: var(--ease-fade); }
-.page.from-skeleton .enter-item, .page.from-skeleton .enter-head { transform: none !important; }
+.page.skeleton-page.leaving { transition-duration: 160ms; transform: none; transition-timing-function: var(--ease-fade); }
 
 /* ---------------------------------------------------------------- theme cross-fade (S7): surfaces fade, ink swaps once
    Surfaces cross-fade their fill and hairline over --dur-theme. Text must NOT cross-fade: a light ink fading to dark
@@ -301,7 +311,7 @@ html.scrolled .topbar::before { opacity: 1; }
    old theme's ink tokens (html.ink-hold-*, tokens.css) until the midpoint, when the surface is mid-luminance and both
    inks clear it, then drops them in one frame (html.theme-mid). Chips, tags and eyebrows swap with the rest of the ink.
    The surface curve is --ease-move so the low-contrast middle of the fade is as short as possible. Never `*`. */
-html.theme-xfade :is(body, .rail, .rail-item, .seg, .seg-thumb, .topbar .cmdk, .glass-pill, .tile, .panel, .dossier-fill, .table, .table th, .btn, .input, .phone-bar, .toast, .sheet, .chip, .tag) {
+html.theme-xfade :is(body, .rail, .rail-item, .rail-hl, .seg, .seg-opt, .seg-thumb, .topbar .cmdk, .glass-pill, .tile, .panel, .dossier-fill, .table, .table th, .btn, .input, .phone-bar, .toast, .sheet, .chip, .tag) {
   transition: background-color var(--dur-theme) var(--ease-move), border-color var(--dur-theme) var(--ease-move),
     fill var(--dur-theme) var(--ease-move), stroke var(--dur-theme) var(--ease-move) !important;
 }

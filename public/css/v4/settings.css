@@ -4,7 +4,7 @@
    ===================================================================== */
 
 .sg-layout { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 32px; align-items: start; }
-.sg-main { display: flex; flex-direction: column; gap: 16px; min-width: 0; max-width: 880px; }
+.sg-main { display: flex; flex-direction: column; gap: 14px; min-width: 0; max-width: 880px; }
 /* the post-swap block (Automation + folds) joins .sg-main's column so its tiles keep the same 16 px rhythm */
 .sg-rest { display: contents; }
 
@@ -19,14 +19,22 @@
 .sg-toc-a[aria-current]::before { content: ""; position: absolute; left: -1px; top: 8px; bottom: 8px; width: 2px; border-radius: 1px; background: var(--accent); }
 
 /* ---------------------------------------------------------------- sections */
-.sg-group { margin: 16px 2px -4px; color: var(--text-2); font: 500 13px/18px var(--font-sans); letter-spacing: 0; text-transform: none; }
+/* SS3: group labels sit on the cards' content edge (the 24 px inset of every section heading) */
+.sg-group { margin: 10px 24px -4px; color: var(--text-2); font: 500 13px/18px var(--font-sans); letter-spacing: 0; text-transform: none; }
 .sg-sec { padding: 0; scroll-margin-top: calc(var(--topbar-h) + 16px); }
-.sg-sec-head { padding: 22px 24px 0; }
+.sg-sec-head { padding: 20px 24px 0; }
+/* a short section keeps Save in its header row instead of a footer band (SS3) */
+.sg-sec--hsave .sg-sec-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; }
+.sg-sec-ht { min-width: 0; }
+.sg-hsave { display: flex; flex: none; align-items: center; gap: 12px; padding-top: 0; }
+.sg-hsave [data-save] { min-width: 84px; }
+.sg-hsave .sg-dirty { margin: 0; }
 .sg-h { margin: 0; color: var(--text-1); font: var(--wt-title) 22px/28px var(--font-serif); font-variation-settings: 'opsz' 28; letter-spacing: var(--tr-title); }
 .sg-h:focus { outline: none; }
 .sg-h { scroll-margin-top: calc(var(--topbar-h) + 38px); } /* the ⌘K Index scrolls to the heading itself */
 .sg-dek { max-width: 72ch; margin: 6px 0 0; color: var(--text-2); font: 400 14px/21px var(--font-sans); text-wrap: pretty; }
-.sg-sec-body { display: flex; flex-direction: column; gap: 14px; padding: 18px 24px 22px; }
+.sg-sec--hsave .sg-sec-body { padding-top: 16px; }
+.sg-sec-body { display: flex; flex-direction: column; gap: 14px; padding: 16px 24px 20px; }
 .sg-sec-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; padding: 12px 24px; border-top: 1px solid var(--line); background: var(--surface-nested); border-radius: 0 0 var(--r-tile) var(--r-tile); }
 .sg-sec-foot [data-save] { min-width: 84px; }
 .sg-dirty { margin-right: auto; color: var(--text-2); font: 450 12.5px/18px var(--font-sans); }
@@ -52,11 +60,30 @@
 .sg-code { width: 14ch; letter-spacing: .2em; font-family: var(--font-mono); }
 .mono { font-family: var(--font-mono); }
 
-/* priorities editor */
-.sg-prio-head, .sg-prio { display: grid; grid-template-columns: minmax(150px, 1fr) 190px minmax(0, 1.6fr) 28px; align-items: center; gap: 10px; }
+/* compact rows: threshold + brief size + this week's count; schedule toggle + time + zone; four AI fields */
+.sg-thr { display: grid; grid-template-columns: 200px 150px minmax(0, 1fr); align-items: end; gap: 14px 16px; }
+.sg-thr-n { padding-bottom: 0; align-self: end; }
+.sg-sched { display: grid; grid-template-columns: minmax(0, 1.25fr) 170px minmax(0, 1fr); align-items: end; gap: 14px; }
+.sg-sched .sg-toggle { min-height: 38px; }
+.sg-ai4 { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr) minmax(0, 1.2fr) minmax(0, 1fr); gap: 14px; }
+
+/* ---------------------------------------------------------------- disclosures (SS3): Budget, Calendar feed & access, Media */
+.sg-disc-head { display: flex; align-items: center; gap: 14px; padding: 16px 16px 16px 24px; cursor: pointer; }
+.sg-disc-head .sg-h { flex: none; }
+.sg-disc-sum { flex: 1; min-width: 0; overflow: hidden; color: var(--text-2); font: 450 13.5px/20px var(--font-sans); white-space: nowrap; text-overflow: ellipsis; }
+.sg-disc-btn { flex: none; }
+.sg-disc-btn .icon { width: 14px; height: 14px; margin: 0 -2px 0 2px; transform: rotate(90deg); transition: transform var(--dur-micro) var(--ease-move); }
+.sg-disc-btn[aria-expanded=true] .icon { transform: rotate(-90deg); }
+.sg-disc.is-open .sg-disc-head { padding-bottom: 0; }
+.sg-disc-dek { margin: 6px 24px 0; }
+.sg-disc-b[hidden] { display: none; }
+
+/* priorities editor. SS4: the topic column is at least 240 px so a name like "De-emphasize: model horse-race" is never cut */
+.sg-prio-head, .sg-prio { display: grid; grid-template-columns: minmax(250px, 1.05fr) 156px minmax(0, 1.25fr) 28px; align-items: center; gap: 10px; }
 .sg-prio-head { padding: 0 2px 2px; color: var(--text-3); font: 500 10.5px/1 var(--font-mono); letter-spacing: var(--tr-label); text-transform: uppercase; }
-[data-prios] { display: flex; flex-direction: column; gap: 8px; }
-.sg-prio .input { height: 34px; font-size: 13.5px; }
+[data-prios] { display: flex; flex-direction: column; gap: 5px; }
+.sg-prio .input { height: 30px; font-size: 13.5px; }
+.sg-prio [data-p=topic] { padding-right: 8px; }
 .sg-w { display: flex; align-items: center; gap: 10px; }
 /* G1: neutral track + neutral fill from the zero mark to the value; the thumb turns blue only on hover or
    focus, and a negative weight gets a warn thumb plus its signed value (never colour alone). */
@@ -144,6 +171,17 @@
 .sg-fold-v { color: var(--text-3); font: 450 12.5px/18px var(--font-sans); overflow-wrap: anywhere; }
 .sg-fold-b { display: flex; flex-direction: column; gap: 16px; }
 .sg-fold-b[hidden] { display: none; }
+/* SS3: closed groups share one row (three columns); an opened group takes the full width, the others pack around it */
+.sg-folds { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); grid-auto-flow: row dense; align-items: start; gap: 14px; }
+.sg-folds .sg-fold.is-open { grid-column: 1 / -1; margin-top: 0; }
+.sg-folds .sg-fold:not(.is-open) { display: flex; flex-direction: column; padding: 18px 24px 18px; }
+.sg-folds .sg-fold-list { grid-template-columns: 1fr; gap: 8px; margin-top: 12px; padding-top: 12px; }
+.sg-folds .sg-fold-v { overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; }
+.sg-folds .sg-fold:not(.is-open) .sg-fold-h { font-size: 20px; line-height: 26px; }
+/* SS1: off-screen sections skip layout until scrolled to (shared .cv); estimates are the measured heights at 1440 */
+.sg-sec.cv#sg-schedule { contain-intrinsic-size: auto 173px; }
+.sg-sec.cv#sg-ai { contain-intrinsic-size: auto 241px; }
+.sg-folds.cv { contain-intrinsic-size: auto 361px; }
 
 /* ---------------------------------------------------------------- overview: source health + collection */
 .sg-ov { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 12px; }
@@ -172,7 +210,7 @@ a.sg-ov-card:hover { text-decoration: none; background: var(--hover-row); box-sh
 .sg-kv dd { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; }
 
 /* ---------------------------------------------------------------- responsive */
-@media (prefers-reduced-motion: reduce) { .sg-fold-btn .icon, .sg-w input[type=range]::-webkit-slider-thumb { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .sg-disc-btn .icon, .sg-fold-btn .icon, .sg-w input[type=range]::-webkit-slider-thumb { transition: none; } }
 @media (max-width: 1100px) {
   .sg-layout { grid-template-columns: 1fr; }
   .sg-toc { position: static; flex-direction: row; flex-wrap: nowrap; overflow-x: auto; gap: 4px; max-height: none; margin: 0 0 4px; padding-bottom: 2px; }
@@ -186,13 +224,27 @@ a.sg-ov-card:hover { text-decoration: none; background: var(--hover-row); box-sh
   .sg-sec-head { padding: 18px 18px 0; }
   .sg-sec-body { padding: 14px 18px 18px; }
   .sg-sec-foot { padding: 12px 18px; }
-  .sg-grid2, .sg-grid4, .sg-ov, .sg-themes { grid-template-columns: 1fr; }
+  .sg-grid2, .sg-grid4, .sg-ov, .sg-themes, .sg-thr, .sg-sched, .sg-ai4 { grid-template-columns: 1fr; }
+  .sg-group { margin-left: 18px; }
+  /* phone: title and Save share the first row, the dek runs full width under both */
+  .sg-sec--hsave .sg-sec-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 0 12px; }
+  .sg-sec--hsave .sg-sec-ht { display: contents; }
+  .sg-sec--hsave .sg-sec-head .sg-dek { grid-column: 1 / -1; }
+  .sg-hsave { grid-row: 1; grid-column: 2; }
+  .sg-status { display: block; }
+  .sg-status .dot { margin-right: 6px; }
+  .sg-disc-head { padding: 14px 12px 14px 18px; gap: 10px; flex-wrap: wrap; }
+  .sg-disc-sum { order: 3; flex-basis: 100%; white-space: normal; }
+  .sg-disc-head .sg-h { flex: 1; }
+  .sg-disc-dek { margin: 6px 18px 0; }
+  .sg-thr-n { padding-bottom: 0; }
   .sg-prio-head { display: none; }
   .sg-prio { grid-template-columns: minmax(0, 1fr) 28px; padding: 12px; border-radius: var(--r-ctl); background: var(--surface-nested); box-shadow: inset 0 0 0 1px var(--line); }
   .sg-prio .sg-w, .sg-prio [data-p=terms] { grid-column: 1 / -1; }
   .sg-prio .btn--icon { grid-row: 1; grid-column: 2; }
   .sg-note { margin-left: 0; }
-  .sg-fold:not(.is-open) { padding: 16px 18px 18px; }
+  .sg-fold:not(.is-open), .sg-folds .sg-fold:not(.is-open) { padding: 16px 18px 18px; }
+  .sg-sec.cv#sg-schedule { contain-intrinsic-size: auto 362px; } .sg-sec.cv#sg-ai { contain-intrinsic-size: auto 609px; } .sg-folds.cv { contain-intrinsic-size: auto 908px; }
   .sg-fold-list { grid-template-columns: 1fr; gap: 10px; }
   .sg-theme { flex-direction: row; align-items: center; }
   .sg-theme-sw { width: 52px; height: 36px; flex: none; }

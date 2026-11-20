@@ -148,7 +148,7 @@ async function renderList(el, ctx) {
             <td class="pp-stagecell">${status(c.stage)}${c.dnc ? html`<span class="tag tag--err">Do not contact</span>` : ''}</td>
             ${hasEmp ? html`<td class="pp-hide-sm pp-hide-md">${c.employer || html`<span class="ink-3">—</span>`}</td>` : ''}
             <td class="pp-next">${c.next_step || html`<span class="ink-3">—</span>`}${c.next_date ? html`<span class="pp-date ${c.dnc ? '' : c.next_date < today ? 'is-late' : c.next_date === today ? 'is-today' : ''}"><time datetime="${c.next_date}">${dayLabel(c.next_date)}</time>${c.dnc ? ' · paused' : ''}</span>` : ''}</td>
-            <td class="pp-hide-sm pp-mono">${c.last_interaction ? html`<time datetime="${c.last_interaction}">${dayLabel(c.last_interaction, { weekday: false })}</time>` : '—'}</td>
+            <td class="pp-c-last pp-hide-sm pp-mono">${c.last_interaction ? html`<time datetime="${c.last_interaction}">${dayLabel(c.last_interaction, { weekday: false })}</time>` : '—'}</td>
           </tr>`)}</tbody></table>`
         : html`<div class="pp-pad"><div class="empty"><h3>No people yet.</h3><p>Add someone whose public work you’ve actually read, with a source for every detail.</p></div></div>`}
       </section>
@@ -160,7 +160,7 @@ async function renderList(el, ctx) {
           <tbody>${queue.map(o => html`<tr data-outreach="${o.id}">
             <td><button class="pp-linkbtn" data-outreach-open="${o.id}">${stripDemo(o.name)}</button>${dupIds.has(o.contact_id) ? html`<span class="pp-dupnote">Duplicate contact</span>` : ''}${o.subject ? html`<span class="pp-sub">${o.subject}</span>` : ''}</td>
             <td>${PURPOSES[o.purpose] || label(o.purpose)}</td>
-            <td class="pp-hide-sm">${CHANNELS[o.channel] || o.channel}</td>
+            <td class="pp-hide-sm pp-nowrap">${CHANNELS[o.channel] || o.channel}</td>
             <td class="pp-hide-sm pp-mono">${o.sent_at ? `sent ${whenLabel(o.sent_at, tz)}` : o.send_at ? `send ${whenLabel(o.send_at, tz)}` : '—'}</td>
             <td>${status(o.status)}</td></tr>`)}</tbody></table>`
         : html`<p class="pp-empty-line pp-pad">No outreach drafts. Open a person to draft one; every message waits for your approval of the exact text, recipient and send time.</p>`}

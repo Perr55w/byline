@@ -10,9 +10,10 @@
 // three weight buckets (one path each), nodes by the quality ramp quantised to 12 steps (one path per step;
 // non-colour cues: below the bar = hollow, top tier = an inner halo ring), then the selection last.
 // Hit-testing is a uniform world grid. Wheel zooms about the cursor, drag pans with inertia, two pointers
-// pinch. Labels: the top-3 hot regions first (always shown, at the top-centre of their hull), then ≤ 20 node
-// labels (selection, hover, stories at or above the bar) and the other regions where room is left; pooled DOM
-// moved with transform. Node discs are 8–22 px by score at the fitted view; every topic gets a hull.
+// pinch. Labels: the top-3 hot regions first (at the top-centre of their hull), then ≤ 20 node labels (selection,
+// hover, stories at or above the bar; with a selection, it and its linked stories) and the other regions where room
+// is left; pooled DOM moved with transform, short titles with a 3 px --bg halo, 6 px off their disc, never nearer
+// another disc. Node discs are 8–22 px by score at the fitted view; only a topic with ≥ 3 stories gets a region.
 // Colours come from tokens (read with getComputedStyle) and quality.js; nothing literal.
 
 import { qualityColor, qualityTier } from './quality.js';
@@ -154,28 +155,51 @@ function measurer() {
 }
 
 /**
- * Short title (round-1 M5/M6): the text before the first ':', ' — ', ' – ', ',' or ';' (when that prefix reads as
- * a title, ≥ 12 characters), with an `org/` repo prefix stripped; otherwise the whole title, cut at a word boundary
- * only when it exceeds `max`. `always` cuts at the first break even when the title already fits.
+ * Short title (round-2 M3): the text before the first ':', ' — ' / ' – ' or ', ' when that prefix is at least `min`
+ * (20) characters and fits `max`; otherwise the title cut at a word boundary to at most `max` (32) characters (plus
+ * the ellipsis), never ending on a preposition, article, conjunction or auxiliary verb. An `org/` repo prefix is stripped.
+ * A title that already fits is kept whole unless `always` (then the prefix rule still applies).
  */
-export function shortTitle(title, { max = 34, always = false } = {}) {
+const FN_WORD = /\s+(?:a|an|the|of|on|in|at|to|for|with|about|by|from|into|onto|over|under|as|via|per|and|or|but|nor|its|their|his|her|our|your|this|that|is|are|was|were|be|will|would|can|could|has|have)$/i;
+export function shortTitle(title, { max = 32, min = 20, always = false } = {}) {
   let t = String(title || '').replace(/\s*…$/, '').trim();
   t = t.replace(/^[a-z0-9][\w.-]*\/(?=[\w.-]+(?:\s|$))/i, '');
   if (!always && t.length <= max) return t;
-  const m = /:\s|\s[—–]\s|,\s|;\s/.exec(t);
-  if (m && m.index >= 12 && m.index <= max) return t.slice(0, m.index).trim();
+  const m = /:\s|\s[—–]\s|,\s/.exec(t);
+  if (m && m.index >= min && m.index <= max) return t.slice(0, m.index).trim();
   if (t.length <= max) return t;
-  const cut = t.slice(0, max);
-  const sp = t[max] === ' ' ? max : cut.lastIndexOf(' ');
+  const lim = max;
+  const cut = t.slice(0, lim);
+  const sp = t[lim] === ' ' ? lim : cut.lastIndexOf(' ');
+  let head = (sp > lim * 0.4 ? cut.slice(0, sp) : cut).replace(/[\s,;:—–-]+$/, '');
+  // a lone word dangling after a ':' / ' — ' / ', ' break is dropped with it ('Gemini at Work 2026: Introducing…')
+  const tail = /(?::|\s[—–]|,)\s+\S+$/.exec(head);
+  if (tail && tail.index >= 12) head = head.slice(0, tail.index);
   // never end on a function word ('…publishes draft guidance on…' → '…publishes draft guidance…')
-  let head = (sp > max * 0.5 ? cut.slice(0, sp) : cut).replace(/[\s,;:—–-]+$/, '');
-  for (let i = 0; i < 3; i++) { const h2 = head.replace(/\s+(?:a|an|the|of|on|in|at|to|for|with|about|by|from|and|or|its|their)$/i, ''); if (h2 === head || h2.length < max * 0.5) break; head = h2; }
+  for (let i = 0; i < 4; i++) { const h2 = head.replace(FN_WORD, '').replace(/[\s,;:—–-]+$/, ''); if (h2 === head || h2.length < 8) break; head = h2; }
   return `${head}…`;
 }
 // node label: from the full title (the server's short_title may itself be a mid-phrase cut)
 function labelText(n) {
   const base = n.short_title && !/…$/.test(n.short_title) ? n.short_title : (n.title || n.short_title || `Story ${n.id}`);
-  return shortTitle(base, { max: 34 });
+  return shortTitle(base);
+}
+/** The full title, wrapped into ≤ 3 lines of ≤ `w` px (the selected node's label: full titles on selection only). */
+function wrapTitle(text, w, measure) {
+  const words = String(text || '').split(/\s+/).filter(Boolean), lines = [];
+  let cur = '';
+  for (const word of words) {
+    const next = cur ? `${cur} ${word}` : word;
+    if (cur && measure(next) > w) { lines.push(cur); cur = word; } else cur = next;
+    if (lines.length === 3) break;
+  }
+  if (lines.length < 3 && cur) lines.push(cur);
+  if (lines.length === 3 && lines.join(' ').length < words.join(' ').length) {
+    let last = lines[2];
+    while (last.length > 1 && measure(`${last}…`) > w) last = last.replace(/\s*\S+$/, '');
+    lines[2] = `${last.replace(FN_WORD, '')}…`;
+  }
+  return lines;
 }
 
 // ====================================================================== the engine
@@ -216,6 +240,9 @@ class MapEngine {
     this.labelW = new Map();
     this.destroyed = false;
     this.held = !!opts.defer && !this.mini; // no full draw until release() (the view calls it when idle)
+    // round-2 M5: a deferred engine draws nothing at all (not even the cached frame) until arm(), which the view
+    // calls one frame after byline:routed, so the tab-in's frames carry no canvas work
+    this.armed = !this.held;
 
     if (!this.mini) this.buildOverlays();
     this.ro = new ResizeObserver((entries) => this.onResize(entries[0].contentRect));
@@ -398,7 +425,7 @@ class MapEngine {
     const out = { x0, y0, cell, gw, gh, paths: [], labels: [] };
     const heatOf = (c) => clamp(+c.heat || 0, 0, 1);
     const ink = (tok.ink || '0,0,0').split(',').map(Number), hot = (tok.hot || tok.ink || '0,0,0').split(',').map(Number);
-    const coreMax = new Float32Array(gw * gh), haloMax = new Float32Array(gw * gh), owner = new Int16Array(gw * gh).fill(-1);
+    const coreMax = new Float32Array(gw * gh), owner = new Int16Array(gw * gh).fill(-1);
     const sigma = (i) => 26 + this.R[i] * 1.4;
     const splat = (f, i, bb) => {
       const s = sigma(i), R = s * 3, s2 = 2 * s * s;
@@ -417,31 +444,29 @@ class MapEngine {
       const c = this.clusters[ci];
       if (!c.members.length || c.topic == null) continue;
       yield;
-      // a region's core is the same-topic stories that sit near each other; when none do, every story of the
-      // topic is its core, so each topic gets a hull of its own (round-1 M5); outliers keep a faint halo
-      const near = 3.2 * 40;
-      let core = c.members.filter(i => c.members.some(j => j !== i && Math.hypot(this.X[i] - this.X[j], this.Y[i] - this.Y[j]) < near + this.R[i] + this.R[j]));
-      if (!core.length) core = c.members.slice();
-      const fc = new Float32Array(gw * gh), fh = new Float32Array(gw * gh);
+      // round-2 M2: a region only for a topic with ≥ 3 stories, drawn round the ones that sit near another of the
+      // same topic (near enough that their fields merge into one blob at the outer isobar). No halo ever rings a
+      // single story: an outlier, or a topic with fewer than 3 stories, gets no region at all.
+      if (c.members.length < 3) continue;
+      const core = c.members.filter(i => c.members.some(j => j !== i && Math.hypot(this.X[i] - this.X[j], this.Y[i] - this.Y[j]) < 1.65 * (sigma(i) + sigma(j))));
+      if (core.length < 2) continue;
+      const fc = new Float32Array(gw * gh);
       const bb = [gw, gh, 0, 0];
       for (const i of core) splat(fc, i, bb);
-      const hb = [gw, gh, 0, 0];
-      for (const i of c.members) splat(fh, i, hb);
       let best = 0, bi = -1;
-      const scan = (f, box, max, cb) => {
-        for (let gy = box[1]; gy <= box[3]; gy++) for (let gx = box[0]; gx <= box[2]; gx++) { const k = gy * gw + gx; cb(f[k], k, max); }
-      };
-      if (core.length) scan(fc, bb, coreMax, (v, k) => { if (v > coreMax[k]) { coreMax[k] = v; owner[k] = ci; } if (v > best) { best = v; bi = k; } });
-      scan(fh, hb, haloMax, (v, k) => { if (v > haloMax[k]) { haloMax[k] = v; if (coreMax[k] < 0.2) owner[k] = ci; } if (!core.length && v > best) { best = v; bi = k; } });
+      for (let gy = bb[1]; gy <= bb[3]; gy++) for (let gx = bb[0]; gx <= bb[2]; gx++) {
+        const k = gy * gw + gx, v = fc[k];
+        if (v > coreMax[k]) { coreMax[k] = v; owner[k] = ci; }
+        if (v > best) { best = v; bi = k; }
+      }
       // ripple anchor: the core's peak; the label anchor is found after every cluster has claimed its cells
       if (bi >= 0) fields[ci] = { fc, core, bi, best };
       // isobars on the core field: the outer ring marks the region, inner rings show how tightly stories overlap
-      if (core.length) {
-        const levels = this.mini ? [0.45, 1.25] : [0.45, 1.25, 2.0, 2.9, 3.9];
-        levels.forEach((lv, li) => {
-          const p = new Path2D();
-          if (contour(fc, gw, gh, lv, x0, y0, cell, p, bb)) out.paths.push({ p, ci, li, heat: heatOf(c) });
-        });
+      const levels = this.mini ? [0.45, 1.25] : [0.45, 1.25, 2.0, 2.9, 3.9];
+      yield; // the isobars get a slice of their own (marching squares over the region's box, 5 levels)
+      for (let li = 0; li < levels.length; li++) {
+        const p = new Path2D();
+        if (contour(fc, gw, gh, levels[li], x0, y0, cell, p, bb)) out.paths.push({ p, ci, li, heat: heatOf(c) });
       }
     }
     yield;
@@ -475,6 +500,7 @@ class MapEngine {
     for (let ci = 0; ci < fields.length; ci++) {
       const F = fields[ci];
       if (!F) continue;
+      yield; // one idle slice per region's label anchor (flood fills over the grid; ≈ 10 ms each at phone 4×)
       const { fc, core, bi, best } = F;
       const lab = { ci, x: x0 + (bi % gw) * cell, y: y0 + Math.floor(bi / gw) * cell, peak: best, tx: x0 + (bi % gw) * cell, ty: y0 + Math.floor(bi / gw) * cell };
       let top = core[0];
@@ -521,7 +547,7 @@ class MapEngine {
       const ci = owner[k];
       if (ci < 0) continue;
       const c = this.clusters[ci];
-      const sm = this.mini ? Math.max(ss(0.3, 1.5, coreMax[k]), ss(0.25, 1, haloMax[k]) * 0.3) : Math.max(ss(0.36, 0.56, coreMax[k]), ss(0.25, 1, haloMax[k]) * 0.25);
+      const sm = this.mini ? ss(0.3, 1.5, coreMax[k]) : ss(0.36, 0.56, coreMax[k]);
       if (sm <= 0) continue;
       const h = heatOf(c), t = h * 0.85, o = k * 4;
       img.data[o] = ink[0] + (hot[0] - ink[0]) * t;
@@ -871,17 +897,24 @@ class MapEngine {
   snapKey() { return `${this.data?.meta?.etag || this.data?.meta?.generated_at || this.N}|${themeNow()}|${this.w}x${this.h}`; }
   /** While held: show the cached frame from the last visit (a single drawImage), if it matches this stage. */
   paintSnap() {
-    if (!SNAP || !this.w || this.snapShown === this.canvas.width || SNAP.key !== this.snapKey()) return;
+    if (!this.armed || !SNAP || !this.w || this.snapShown === this.canvas.width || SNAP.key !== this.snapKey()) return;
     this.ctx.setTransform(1, 0, 0, 1, 0, 0);
     this.ctx.imageSmoothingEnabled = true;
     this.ctx.drawImage(SNAP.canvas, 0, 0, this.canvas.width, this.canvas.height);
     this.snapShown = this.canvas.width;
+  }
+  /** round-2 M5: allow the first draw (the cached frame while held, else a full frame). */
+  arm() {
+    if (this.armed || this.destroyed) return;
+    this.armed = true;
+    if (this.held) this.paintSnap(); else this.requestDraw();
   }
   /** True when the cached frame is on screen (the view then skips the intro: the map was already seen). */
   get fromSnap() { return !!this.snapShown; }
   /** End the hold: full draw (regions, isobars, labels) in the next frame. */
   release() {
     if (!this.held || this.destroyed) return;
+    this.armed = true;
     // over the cached frame, build the regions in idle slices first so the full draw fits a frame (round-1 M7)
     if (this.snapShown && !this.regions && this.N && (this.tok || (this.tok = tokens()))) {
       const go = () => { clearTimeout(this.holdT); if (this.held && !this.destroyed) { this.held = false; this.requestDraw(); } };
@@ -1191,18 +1224,23 @@ class MapEngine {
     const inView = (r) => r.x > ins.l && r.y > ins.t && r.x + r.w < this.w - ins.r && r.y + r.h < this.h - ins.b;
     // discs with a screen radius ≥ 6 px block labels (round-1 M5). Node labels go to the selection, the hovered
     // node and the stories at or above the bar; nothing else is labelled
-    const discs = [], cand = [];
+    const discs = [], cand = [], dots = [];
     for (let i = 0; i < this.N; i++) {
       if (this.alpha[i] < 0.6 || this.intro[i] < 0.6) continue;
       const s = this.screenOf(i), rs = this.rs(i);
       if (s.x < -20 || s.y < -20 || s.x > this.w + 20 || s.y > this.h + 20) continue;
-      const d = { x: s.x - rs - 2, y: s.y - rs - 2, w: rs * 2 + 4, h: rs * 2 + 4 };
+      const d = { x: s.x - rs - 4, y: s.y - rs - 4, w: rs * 2 + 8, h: rs * 2 + 8 };
       if (rs >= 6) discs.push(d);
+      dots.push({ i, x: s.x, y: s.y, r: rs });
       const above = (this.nodes[i].score || 0) >= this.th;
-      const pri = i === this.sel ? 3 : i === this.hover ? 2.5 : above ? (this.nbr.has(i) ? 2 : 1) : 0;
+      // while a story is selected only it and its linked stories are labelled (the rest are dimmed)
+      const pri = i === this.sel ? 3 : i === this.hover ? 2.5 : this.sel >= 0 ? (this.nbr.has(i) ? 2 : 0) : above ? 1 : 0;
       if (pri > 0) cand.push({ i, s, rs, pri, d });
     }
     const free = (r, self) => inView(r) && !placed.some(q => hitR(r, q)) && !discs.some(d => d !== self && hitR(r, d));
+    const gapTo = (q, x, y, r) => Math.hypot(Math.max(q.x - x, 0, x - q.x - q.w), Math.max(q.y - y, 0, y - q.y - q.h)) - r;
+    // round-2 M3: a region's name keeps 10 px clear of other topics' stories, so it never reads as their label
+    const clearOf = (q, topic) => !dots.some(o => (this.nodes[o.i].topic ?? null) !== topic && gapTo(q, o.x, o.y, o.r) < 10);
 
     // 1. the top-3 hot regions, always: at the top-centre of their hull, nudged off nodes, forced into view
     const tl = this.regions ? this.regions.labels : [];
@@ -1229,7 +1267,7 @@ class MapEngine {
       // nearest clear spot to the anchor (forced labels search up to 130 px out; upward moves are cheaper,
       // since the hull lies below its top edge), else the other regions give up after a short search
       let r = null;
-      for (const [dx, dy] of force ? SPIRAL : SPIRAL_NEAR) { const q = { x: ax + dx, y: ay + dy, w, h: H }; if (free(q)) { r = q; break; } }
+      for (const [dx, dy] of force ? SPIRAL : SPIRAL_NEAR) { const q = { x: ax + dx, y: ay + dy, w, h: H }; if (free(q) && clearOf(q, c.topic ?? null)) { r = q; break; } }
       if (!r && force) {
         // nowhere clear: keep it at its anchor (inside the stage), stepping past other forced labels only
         const q = { x: clamp(ax, ins.l + 1, this.w - ins.r - w - 1), y: clamp(ay, ins.t + 1, this.h - ins.b - H - 1), w, h: H };
@@ -1243,25 +1281,41 @@ class MapEngine {
     };
     topics.filter(t => t.rank).sort((a, b) => a.rank - b.rank).forEach(t => placeTopic(t, true));
 
-    // 2. node labels (≤ 20), greedy over 8 spots; a label that would cover another label or a disc is dropped
+    // 2. node labels (≤ 20), greedy over 8 spots 6 px off the disc (round-2 M3); a label that would cover another
+    // label, a region name or a disc is dropped, and so is one that would sit more than 24 px from its node. Labels
+    // carry the short title; the selected story's label carries its full title, wrapped (full titles on selection;
+    // the hover card carries it on hover)
     cand.sort((a, b) => b.pri - a.pri || (this.nodes[b.i].score || 0) - (this.nodes[a.i].score || 0));
-    const fN = '500 12px Geist, system-ui, sans-serif';
+    const fN = '500 12px Geist, system-ui, sans-serif', fSel = '600 12px Geist, system-ui, sans-serif';
+    const G = 6, LH = 16, MAXD = 24;
     let used = 0;
     for (const c of cand) {
       if (used >= this.labelPool.length) break;
       const n = this.nodes[c.i];
-      const text = labelText(n);
-      const w = Math.ceil(this.measure(text, fN)) + 2, h = 16, g = 6;
-      const dg = c.rs * 0.72;
-      const opts = [[c.s.x + c.rs + g, c.s.y - h / 2], [c.s.x - c.rs - g - w, c.s.y - h / 2], [c.s.x - w / 2, c.s.y + c.rs + 4], [c.s.x - w / 2, c.s.y - c.rs - 4 - h],
-        [c.s.x + dg + 4, c.s.y - dg - h], [c.s.x + dg + 4, c.s.y + dg], [c.s.x - dg - 4 - w, c.s.y - dg - h], [c.s.x - dg - 4 - w, c.s.y + dg]];
-      let r = null;
-      for (const [x, y] of opts) { const q = { x, y, w, h }; if (free(q, c.d)) { r = q; break; } }
+      const isSel = c.i === this.sel;
+      const { x: sx, y: sy } = c.s, rs = c.rs, dg = (rs + G) * Math.SQRT1_2;
+      const gap = (q) => gapTo(q, sx, sy, rs);
+      // unambiguous: no other story's disc may sit within 3 px of the label's own gap (6 px), so a label always reads
+      // as its own node's
+      const own = (q) => { const g = gap(q); return !dots.some(o => o.i !== c.i && gapTo(q, o.x, o.y, o.r) < g + 3); };
+      const spot = (lines, font) => {
+        const w = Math.ceil(Math.max(...lines.map(t => this.measure(t, font)))) + 2, h = LH * lines.length;
+        const opts = [[sx + rs + G, sy - h / 2], [sx - rs - G - w, sy - h / 2], [sx - w / 2, sy + rs + G], [sx - w / 2, sy - rs - G - h],
+          [sx + dg, sy - dg - h], [sx + dg, sy + dg], [sx - dg - w, sy - dg - h], [sx - dg - w, sy + dg]];
+        for (const [x, y] of opts) { const q = { x, y, w, h }; if (gap(q) <= MAXD && free(q, c.d) && own(q)) return q; }
+        return null;
+      };
+      // the selection tries its full title first, then falls back to the short one where the full one has no room
+      let lines = isSel ? wrapTitle(n.title || labelText(n), phone ? 200 : 260, (t) => this.measure(t, fSel)) : [labelText(n)];
+      let r = spot(lines, isSel ? fSel : fN);
+      if (!r && lines.length > 1) { lines = [labelText(n)]; r = spot(lines, fSel); }
       if (!r) continue;
+      const text = lines.join('\n');
       placed.push(r);
       const el = this.labelPool[used++];
-      if (el.dataset.id !== String(n.id)) { el.dataset.id = String(n.id); el.textContent = text; }
-      el.classList.toggle('is-sel', c.i === this.sel);
+      if (el.dataset.id !== String(n.id) || el.dataset.t !== text) { el.dataset.id = String(n.id); el.dataset.t = text; el.textContent = text; }
+      el.classList.toggle('is-sel', isSel);
+      el.classList.toggle('is-full', lines.length > 1);
       el.style.transform = `translate3d(${Math.round(r.x)}px, ${Math.round(r.y)}px, 0)`;
       el.classList.add('on');
     }

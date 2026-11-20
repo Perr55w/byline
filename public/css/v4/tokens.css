@@ -36,7 +36,7 @@
   --surface-solid: #FFFFFF;
   --surface-glass: rgba(255,255,255,.64);
   --surface-glass-strong: rgba(255,255,255,.82);
-  --surface-flight: rgba(255,255,255,.94);          /* dossier fill during the FLIP (E) */
+  --surface-flight: rgba(255,255,255,.98);          /* dossier fill during the FLIP (E); R5: .98, page text ghosted at .94 */
   --surface-nested: rgba(255,255,255,.7);           /* sections inside glass: no glass on glass */
   --raised: #FFFFFF;
   --inset: #EEF0F3;
@@ -69,11 +69,12 @@
   --focus-c: #1F5EFF;
   --focus-halo: rgba(31,94,255,.16);
   --focus: 0 0 0 2px var(--bg), 0 0 0 4px var(--focus-c), 0 0 0 7px var(--focus-halo);
-  --ctl-ring: 0 0 0 3px rgba(31,94,255,.16);
+  --ctl-ring: 0 0 0 2px var(--accent);
 
   /* ---- hover (B §1) ---- */
-  --hover-wash: rgba(31,94,255,.05);
-  --hover-spot: rgba(31,94,255,.10);
+  --hover-wash: rgba(31,94,255,.02);
+  --surface-hover: rgba(255,255,255,.97);
+  --hover-spot: rgba(31,94,255,.07);
   --hover-line: rgba(31,94,255,.34);
   --hover-row: rgba(31,94,255,.05);
   --hover-nav: rgba(31,94,255,.05);
@@ -135,11 +136,11 @@
   --surface-solid: #1A1B1F;
   --surface-glass: rgba(30,31,35,.60);
   --surface-glass-strong: rgba(30,31,35,.82);
-  --surface-flight: rgba(30,31,35,.94);
+  --surface-flight: rgba(30,31,35,.98);
   --surface-nested: rgba(255,255,255,.035);
   --raised: #232429;
   --inset: #15161A;
-  --scrim: rgba(8,9,11,.72);
+  --scrim: rgba(18,19,22,.72);
   --scrim-sheet: rgba(0,0,0,.5);
   --sk: rgba(255,255,255,.055);
   --track: rgba(255,255,255,.06);
@@ -164,10 +165,11 @@
   --on-accent: #FFFFFF;
   --focus-c: #7FA6FF;
   --focus-halo: rgba(127,166,255,.25);
-  --ctl-ring: 0 0 0 3px rgba(77,134,255,.28);
+  --ctl-ring: 0 0 0 2px var(--accent);
 
-  --hover-wash: rgba(77,134,255,.05);
-  --hover-spot: rgba(77,134,255,.14);
+  --hover-wash: rgba(77,134,255,.03);
+  --surface-hover: rgba(26,27,31,.96);
+  --hover-spot: rgba(77,134,255,.11);
   --hover-line: rgba(127,166,255,.30);
   --hover-row: rgba(77,134,255,.07);
   --hover-nav: rgba(255,255,255,.04);
@@ -211,6 +213,10 @@
 /* theme switch (S7): the old theme's ink, held until the surface fade's midpoint (app.js applyTheme) */
 html.ink-hold-proof { --text-1: #0C0D10; --text-2: #4A4E57; --text-3: #62666F; --accent-text: #1A50E0; --ok-text: #066847; --warn-text: #7A500F; --err-text: #B42323; }
 html.ink-hold-night { --text-1: #EDEEF0; --text-2: #A6AAB2; --text-3: #8C9099; --accent-text: #8AB0FF; --ok-text: #3CCB8F; --warn-text: #E3A542; --err-text: #F58A8A; }
+/* R2 S6: across the mid-tones of the surface fade (≈100–480ms) no ink may be mid-grey: muted inks are held at the
+   theme's strongest ink (old theme until the midpoint, new theme after), so every text/surface pair stays ≥ 3:1. */
+html.ink-strong-proof { --text-1: #0C0D10; --text-2: #0C0D10; --text-3: #0C0D10; --accent-text: #0C0D10; --ok-text: #0C0D10; --warn-text: #0C0D10; --err-text: #0C0D10; }
+html.ink-strong-night { --text-1: #EDEEF0; --text-2: #EDEEF0; --text-3: #EDEEF0; --accent-text: #EDEEF0; --ok-text: #EDEEF0; --warn-text: #EDEEF0; --err-text: #EDEEF0; }
 ::selection { background: rgba(31,94,255,.18); }
 [data-theme=night] ::selection { background: rgba(77,134,255,.32); }
 
@@ -279,7 +285,7 @@ html.ink-hold-night { --text-1: #EDEEF0; --text-2: #A6AAB2; --text-3: #8C9099; -
   --dur-morph-close: 440ms;
   --dur-count: 1400ms;
   --dur-count-2: 1100ms;
-  --dur-theme: 400ms;   /* S7: contrast wins over the 600ms B asked for */
+  --dur-theme: 600ms;   /* R2 S6: back to DECISIONS 600ms; contrast is held by the strong-ink step (app.js applyTheme), not by a shorter fade */
   --dur-ambient: 1600ms;
   --dur-skeleton-breath: 1800ms;
   --stagger-line: 120ms;

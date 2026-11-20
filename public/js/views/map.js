@@ -236,15 +236,21 @@ class MapView {
   entered() {
     if (this.didEnter) return;
     this.didEnter = true;
-    // the full draw (regions, isobars, labels) and the screen-reader twin wait for idle time after the swap
+    // round-2 M5: the first canvas draw (the cached frame, if any) waits for byline:routed + 1 frame, so the tab-in
+    // (55 ms at desktop 4×) carries no canvas work; the full draw (regions, isobars, labels) and the screen-reader
+    // twin then wait for idle time
     const ric = window.requestIdleCallback || ((f) => setTimeout(f, 60));
-    ric(() => {
+    requestAnimationFrame(() => setTimeout(() => {
       if (!this.alive) return;
-      const seen = this.eng.fromSnap;
-      this.eng.release();
-      if (!this.list && !seen) this.eng.introduce(); // the intro plays once; a cached frame means the map was seen
-      ric(() => { if (this.alive) this.paintTwin(); }, { timeout: 600 });
-    }, { timeout: 300 });
+      this.eng.arm();
+      ric(() => {
+        if (!this.alive) return;
+        const seen = this.eng.fromSnap;
+        this.eng.release();
+        if (!this.list && !seen) this.eng.introduce(); // the intro plays once; a cached frame means the map was seen
+        ric(() => { if (this.alive) this.paintTwin(); }, { timeout: 600 });
+      }, { timeout: 300 });
+    }, 0));
     this.onResizeTop = () => { clearTimeout(this.topT); this.topT = setTimeout(() => this.measureTop(), 200); };
     addEventListener('resize', this.onResizeTop, { passive: true });
     const items = this.side.querySelectorAll('.map-hot-list > li, .map-detail > *');
@@ -356,17 +362,22 @@ class MapView {
   }
 
   // -------------------------------------------------------------- side panel
+  /** The top-3 hot topics (Glass's list, kept). Round-2 M1 (ruling R12): each bar is neutral and labelled with what
+   *  it measures, the stories whose main topic it is out of every story on the map ("6 of 19 stories"); the ranking
+   *  itself is the server's heat (scores of stories updated in the last 7 days), named in the tooltip. */
   hotHTML() {
-    const hotMeta = (h) => `Leads ${h.count}${h.in_count != null ? ` · in ${h.in_count}` : ''}${h.recent != null && h.recent !== h.count ? ` · ${h.recent} this week` : ''}`;
-    const hotTitle = (h) => `Main topic of ${plural(h.count, 'story', 'stories')}${h.in_count != null ? `; tagged on ${h.in_count}` : ''}${h.recent != null ? `; ${h.recent} updated in the last 7 days` : ''}`;
+    const N = this.nodes.length;
     const hot = (this.data.hot_topics || []).slice(0, 3);
     if (!hot.length) return html`<p class="map-muted">No topic has a recent story yet.</p>`;
+    const meta = (h) => `Main topic${h.in_count != null && h.in_count > h.count ? ` · tagged on ${h.in_count}` : ''}${h.recent != null && h.recent !== h.count ? ` · ${h.recent} this week` : ''}`;
+    const tip = (h) => `${h.topic}: main topic of ${h.count} of ${plural(N, 'story', 'stories')} on the map${h.in_count != null ? `; tagged on ${h.in_count}` : ''}${h.recent != null ? `; ${h.recent} updated in the last 7 days` : ''}. Ranked by heat ${Number(h.heat || 0).toFixed(2)} (scores of stories updated in the last 7 days; hottest topic = 1).`;
     return html`<ol class="map-hot-list">${hot.map((h, i) => html`
-      <li><button type="button" class="map-hot-btn" data-hot="${h.topic}" aria-pressed="${this.topics.size === 1 && this.topics.has(h.topic) ? 'true' : 'false'}">
+      <li><button type="button" class="map-hot-btn" data-hot="${h.topic}" aria-pressed="${this.topics.size === 1 && this.topics.has(h.topic) ? 'true' : 'false'}" title="${tip(h)}">
         <span class="map-hot-rank" aria-hidden="true">${i + 1}</span>
         <span class="map-hot-name">${h.topic}</span>
-        <span class="map-hot-meta" title="${hotTitle(h)}">${hotMeta(h)}</span>
-        <span class="meter map-hot-meter" title="${`Heat ${Number(h.heat).toFixed(2)}: scores of stories updated in the last 7 days, hottest topic = 1`}"><i style="${`--v:${Math.max(0.04, Math.min(1, +h.heat || 0))}`}"></i></span>
+        <span class="map-hot-meta">${meta(h)}</span>
+        <span class="map-hot-val"><b>${h.count}</b> of ${plural(N, 'story', 'stories')}</span>
+        <span class="meter map-hot-meter" aria-hidden="true"><i style="${`--v:${N ? Math.max(0.02, Math.min(1, h.count / N)) : 0}`}"></i></span>
       </button></li>`)}</ol>`;
   }
   paintSide({ animate = false } = {}) {
@@ -375,7 +386,7 @@ class MapView {
     const detail = n ? this.storyHTML(n) : this.bridgeHTML();
     const hot = html`
       <section class="map-sec map-hot${n ? ' map-hot--after' : ''}" aria-labelledby="map-hot-h">
-        <div class="map-sec-head"><h2 class="map-h2" id="map-hot-h">Hottest topics</h2><span class="section-meta">last 7 days</span></div>
+        <div class="map-sec-head"><h2 class="map-h2" id="map-hot-h">Hottest topics</h2><span class="section-meta" title="Ranked by heat: the scores of each topic's stories updated in the last 7 days">ranked by this week’s scores</span></div>
         ${this.hotHTML()}
       </section>`;
     // the selection leads when there is one; the top-3 hot topics lead otherwise

@@ -157,3 +157,50 @@ test('contrast · helpers: WCAG ratio sanity', () => {
   assert.deepEqual(parseColor('rgba(255,255,255,.82)'), [255, 255, 255, 0.82]);
   assert.deepEqual(themeVars(':root, [data-theme=proof] { --a: #fff; } @media (x) { :root { --a: #000; } } [data-theme=night] { --a: #111 }', [':root']), { '--a': '#fff' });
 });
+
+// ---------- round 2 S8: score chips carry the ramp (components.css .score-chip[data-band]; ui.js scoreChip) ----------
+const toLin = (c) => { c /= 255; return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; };
+const toGam = (c) => Math.round(255 * Math.min(1, Math.max(0, c <= 0.0031308 ? 12.92 * c : 1.055 * c ** (1 / 2.4) - 0.055)));
+function oklab([R, G, B]) {
+  const r = toLin(R), g = toLin(G), b = toLin(B);
+  const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b), m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b), s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b);
+  return [0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s, 1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s, 0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s];
+}
+function rgbOf([L, a, b]) {
+  const l = (L + 0.3963377774 * a + 0.2158037573 * b) ** 3, m = (L - 0.1055613458 * a - 0.0638541728 * b) ** 3, s = (L - 0.0894841775 * a - 1.291485548 * b) ** 3;
+  return [toGam(4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s), toGam(-1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s), toGam(-0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s), 1];
+}
+const mixOk = (a, b, p) => { const A = oklab(a), B = oklab(b); return rgbOf(A.map((v, i) => v * p + B[i] * (1 - p))); };
+const dE = (a, b) => { const A = oklab(a), B = oklab(b); return 100 * Math.hypot(A[0] - B[0], A[1] - B[1], A[2] - B[2]); };
+const STOPS = [-30, -15, -1, 0, 10, 25];
+/** quality.js qualityColor, replicated: OKLab interpolation between --q-0…--q-5 by score − threshold. */
+function q(vars, score, T) {
+  const S = STOPS.map((_, i) => oklab(solid(vars, `--q-${i}`))), d = score - T;
+  if (!(d > STOPS[0])) return rgbOf(S[0]);
+  for (let i = 1; i < STOPS.length; i++) if (d <= STOPS[i]) { const t = (d - STOPS[i - 1]) / (STOPS[i] - STOPS[i - 1]); return rgbOf(S[i - 1].map((v, k) => v + (S[i][k] - v) * t)); }
+  return rgbOf(S[5]);
+}
+/** The chip a score renders: { band, fill, ink } (fill composited on --surface-solid). */
+function chip(vars, score, T = 55) {
+  const surf = solid(vars, '--surface-solid'), d = Math.round(score) - T, qd = Math.max(-30, Math.min(30, d)), qc = q(vars, score, T);
+  if (d >= 15) return { band: 'top', fill: qc, ink: solid(vars, '--q-on5') };
+  if (d >= 0) return { band: 'clears', fill: mixOk(qc, surf, (14 + qd * 1.4) / 100), ink: solid(vars, '--text-1') };
+  if (d >= -15) return { band: 'near', fill: mixOk(qc, surf, .10), ink: solid(vars, '--text-1') };
+  return { band: 'below', fill: surf, ink: solid(vars, '--text-3') };
+}
+for (const [theme, vars] of Object.entries(THEMES)) {
+  test(`contrast · ${theme}: every score chip 0–100 at T=55 is AA (4.5:1)`, { skip: SKIP }, () => {
+    const fails = [];
+    for (let s = 0; s <= 100; s++) { const c = chip(vars, s, 55); const r = contrast(c.ink, c.fill); if (r < 4.5) fails.push(`${s} (${c.band}) ${r.toFixed(2)}`); }
+    assert.deepEqual(fails, [], `${theme}: chips below AA → ${fails.join('; ')}`);
+  });
+  test(`contrast · ${theme}: score chips ramp within a band (ΔE 56↔62 ≥ 4, 56↔64 ≥ 6, 72↔78 ≥ 4; 44 ≠ 7)`, { skip: SKIP }, () => {
+    const f = (s) => chip(vars, s, 55);
+    assert.ok(dE(f(56).fill, f(62).fill) >= 4, `56↔62 ΔE ${dE(f(56).fill, f(62).fill).toFixed(1)}`);
+    assert.ok(dE(f(56).fill, f(64).fill) >= 6, `56↔64 ΔE ${dE(f(56).fill, f(64).fill).toFixed(1)}`);
+    assert.ok(dE(f(72).fill, f(78).fill) >= 4, `72↔78 ΔE ${dE(f(72).fill, f(78).fill).toFixed(1)}`);
+    const a = f(44), b = f(7);
+    assert.notEqual(a.band, b.band);
+    assert.ok(dE(a.fill, b.fill) >= 2 || dE(a.ink, b.ink) >= 10, `44 vs 7: fill ΔE ${dE(a.fill, b.fill).toFixed(1)}, ink ΔE ${dE(a.ink, b.ink).toFixed(1)}`);
+  });
+}

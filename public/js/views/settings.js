@@ -34,6 +34,12 @@ const sign = (v) => (Number(v) > 0 ? 'pos' : Number(v) < 0 ? 'neg' : 'zero');
 const fillVars = (v) => { const p = ((Number(v) + 2) / 4) * 100; return `--a:${Math.min(50, p).toFixed(1)}%;--b:${Math.max(50, p).toFixed(1)}%`; };
 const weightLabel = (v) => (Number(v) < 0 ? `−${Math.abs(Number(v)).toFixed(1)}` : Number(v).toFixed(1));
 const weightText = (v) => (Number(v) < 0 ? `${Math.abs(Number(v)).toFixed(1)} below zero, de-emphasized` : Number(v) === 0 ? '0, ignored' : `${Number(v).toFixed(1)}`);
+// SS2: money always shows 2 decimals; a real but sub-cent amount reads "<$0.01" rather than a misleading $0.00.
+const money = (v) => { const n = Number(v) || 0; return n > 0 && n < 0.005 ? '<$0.01' : `$${n.toFixed(2)}`; };
+// SS1: one section per task AND per frame. A bare scheduler.yield() resumes before the next render, so two
+// chunks' style + layout would land in one long frame; waiting for the frame first, then yielding (front of the
+// queue in Chromium; a macrotask elsewhere), gives every section its own task and its own rendering update.
+const yieldTask = () => new Promise(r => requestAnimationFrame(() => (globalThis.scheduler?.yield ? globalThis.scheduler.yield().then(r) : setTimeout(r, 0))));
 const fmtTime12 = (hhmm) => { const [h, m] = String(hhmm || '07:00').split(':').map(Number); return `${((h + 11) % 12) + 1}:${String(m).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`; };
 
 /** F §2 Settings headline + one-liner, from settings, /api/today (cleared), watchlists and the source summary. */
@@ -119,6 +125,14 @@ export async function render(view, ctx = {}) {
   // G2: a section's Save stays secondary until something in it changes. G3: folded groups.
   const dirty = new Set();
   const openFolds = new Set();
+  const openDisc = new Set(); // SS3: Budget, Calendar feed & access and Media are closed disclosures until opened
+  // SS2: a $0 limit is a choice (paid AI off), not an error; "limit reached" only when a real limit is used up.
+  const budgetState = () => {
+    const lim = Number(s.budget?.monthly_usd) || 0, spent = Number(p.month_spend_usd) || 0;
+    if (!lim) return { sum: 'Paid AI off', tag: html`<span class="tag tag--neutral">Paid AI off · local engine only</span>` };
+    const hit = spent >= lim;
+    return { sum: `${money(spent)} of ${money(lim)} this month${hit ? ' · limit reached' : ''}`, tag: hit ? html`<span class="tag tag--warn">limit reached</span>` : '' };
+  };
   const themeName = () => ({ light: 'Proof', dark: 'Night', system: 'Match system' }[themePref()] || 'Proof');
   const clip = (t, n = 64) => { t = String(t || '').replace(/\s+/g, ' ').trim(); return t.length > n ? `${t.slice(0, n).replace(/\s+\S*$/, '')}…` : t; };
   // One line of real current values per folded section, so a closed group still says what it holds.
@@ -129,6 +143,7 @@ export async function render(view, ctx = {}) {
     'sg-posting': `${(s.posting_days || []).join(' ') || 'No days'} · roundup ${s.schedule?.weekly_roundup_day || 'Fri'} · outreach ${s.outreach_goal_per_week ?? 3} a week`,
     'sg-delivery': `Email ${s.delivery?.email ? 'on' : 'off'} · push ${s.delivery?.push ? 'on' : 'off'}`,
     'sg-media': s.synthetic_media_opt_in ? 'Synthetic narration allowed (labelled)' : 'Off: your own recordings only',
+    'sg-budget': budgetState().sum,
     'sg-access': st.auth ? 'Password sign-in on · calendar feed link' : 'No password: this computer only · calendar feed link',
     'sg-display': `${themeName()} in this browser`,
     'sg-security': sec ? `Password ${sec.password_set ? 'on' : 'not set'} · two-step ${sec.totp_enabled ? 'on' : 'off'}` : (st.auth ? 'Password on' : 'No password set'),
@@ -139,7 +154,7 @@ export async function render(view, ctx = {}) {
     const id = FOLDED[g], open = openFolds.has(g), items = TOC.find(t => t[0] === g)[1], f = facts();
     return html`<div class="sg-fold-t"><h2 class="sg-fold-h" id="${id}-h">${g}</h2>
         <button class="btn btn--secondary btn--sm sg-fold-btn" type="button" data-fold-toggle="${g}" aria-expanded="${open}" aria-controls="${id}-b">${open ? 'Hide' : `Show ${items.length} sections`}${icon('chevron-right')}</button></div>
-      ${open ? '' : html`<ul class="sg-fold-list">${items.map(([sid, t]) => html`<li><h3 class="sg-fold-i" data-for="${sid}"><button type="button" class="sg-fold-a" data-open-sec="${sid}">${t}</button></h3><span class="sg-fold-v" data-fact="${sid}">${f[sid]}</span></li>`)}</ul>`}`;
+      ${open ? '' : html`<ul class="sg-fold-list">${items.map(([sid, t]) => html`<li><h3 class="sg-fold-i" data-for="${sid}"><button type="button" class="sg-fold-a" data-open-sec="${sid}">${t}</button></h3><span class="sg-fold-v" data-fact="${sid}" title="${f[sid]}">${f[sid]}</span></li>`)}</ul>`}`;
   };
   // A closed fold's sections are kept as markup only and built on first open (no hidden DOM in the tab change).
   const foldBodies = {};
@@ -148,12 +163,26 @@ export async function render(view, ctx = {}) {
       <div class="sg-fold-b" id="${FOLDED[g]}-b"${openFolds.has(g) ? '' : raw(' hidden')}>${openFolds.has(g) ? body : ''}</div>
     </section>`; };
 
-  const section = (id, title, dek, body, { save = null, extra = '', wide = false } = {}) => html`
-    <section class="sg-sec tile tile--static${wide ? ' sg-sec--wide' : ''}" id="${id}" aria-labelledby="${id}-h" data-sg-sec>
-      <header class="sg-sec-head"><h2 class="sg-h" id="${id}-h">${title}</h2>${dek ? html`<p class="sg-dek">${dek}</p>` : ''}</header>
+  const saveBits = (save) => html`<span class="sg-dirty" data-dirty-note="${save}"${dirty.has(save) ? '' : raw(' hidden')}>Unsaved changes</span><button class="btn ${dirty.has(save) ? 'btn--primary' : 'btn--secondary'}" type="button" data-save="${save}">Save</button>`;
+  // headSave: a short section keeps its Save in the header row (no footer band). disc: a closed-by-default
+  // disclosure whose header carries a one-line summary of the current value (SS3).
+  const section = (id, title, dek, body, { save = null, extra = '', wide = false, headSave = false, disc = null, cls = '' } = {}) => {
+    const foot = !headSave && (save || extra) ? html`<footer class="sg-sec-foot">${extra}${save ? saveBits(save) : ''}</footer>` : '';
+    if (disc != null) {
+      const open = openDisc.has(id);
+      return html`<section class="sg-sec sg-disc tile tile--static${open ? ' is-open' : ''}${cls ? ` ${cls}` : ''}" id="${id}" aria-labelledby="${id}-h" data-sg-sec data-disc="${id}">
+        <header class="sg-sec-head sg-disc-head" data-disc-head="${id}"><h2 class="sg-h" id="${id}-h">${title}</h2><span class="sg-disc-sum" data-fact="${id}">${disc}</span>
+          <button class="btn btn--ghost btn--sm sg-disc-btn" type="button" data-disc-toggle="${id}" aria-expanded="${open}" aria-controls="${id}-b"><span data-disc-word>${open ? 'Hide' : 'Show'}</span><span class="sr-only"> ${title}</span>${icon('chevron-right')}</button></header>
+        <div class="sg-disc-b" id="${id}-b"${open ? '' : raw(' hidden')}>${dek ? html`<p class="sg-dek sg-disc-dek">${dek}</p>` : ''}<div class="sg-sec-body">${body}</div>${foot}</div>
+      </section>`;
+    }
+    return html`
+    <section class="sg-sec tile tile--static${wide ? ' sg-sec--wide' : ''}${headSave ? ' sg-sec--hsave' : ''}${cls ? ` ${cls}` : ''}" id="${id}" aria-labelledby="${id}-h" data-sg-sec>
+      <header class="sg-sec-head"><div class="sg-sec-ht"><h2 class="sg-h" id="${id}-h">${title}</h2>${dek ? html`<p class="sg-dek">${dek}</p>` : ''}</div>${headSave && (save || extra) ? html`<div class="sg-hsave">${extra}${save ? saveBits(save) : ''}</div>` : ''}</header>
       <div class="sg-sec-body">${body}</div>
-      ${save || extra ? html`<footer class="sg-sec-foot">${extra}${save ? html`<span class="sg-dirty" data-dirty-note="${save}"${dirty.has(save) ? '' : raw(' hidden')}>Unsaved changes</span><button class="btn ${dirty.has(save) ? 'btn--primary' : 'btn--secondary'}" type="button" data-save="${save}">Save</button>` : ''}</footer>` : ''}
+      ${foot}
     </section>`;
+  };
 
   const healthHtml = () => {
     if (!summary) return html`<p class="sg-help">Source health is unavailable right now.</p>`;
@@ -182,70 +211,56 @@ export async function render(view, ctx = {}) {
     </div>`;
   };
 
-  // E1: the tab-change frame carries the head, overview and ranking; Automation and the folded groups are
-  // appended right after the swap (one task later, before the ⌘K Index looks for a section heading).
-  let restHtml = '', restIn = true;
-  const paint = ({ rest = true } = {}) => {
-    const hd = headline(s, st, today, watch, summary);
-    restIn = rest;
-    const rankHtml = String(html`
-      <p class="sg-group" aria-hidden="true">Ranking</p>
-      ${section('sg-priorities', 'Priorities', html`Topics and the terms that signal them. Weight 0 ignores a topic, 1 is normal, 2 doubles it, below 0 de-emphasizes. Saving re-ranks the last 30 days of stories.`, html`
+  // SS1 (E1): the tab-change frame carries only the head, the section index and the overview. Every other
+  // section is its own chunk, appended one task at a time after the swap with scheduler.yield() in between
+  // (Priorities, Threshold, Schedule, AI provider, Budget, then the folded groups), so no task builds the page.
+  const CHUNKS = [
+    () => String(html`<p class="sg-group" aria-hidden="true">Ranking</p>
+      ${section('sg-priorities', 'Priorities', html`Weight 0 ignores a topic, 1 is normal, 2 doubles it, below 0 de-emphasizes. Saving re-ranks the last 30 days.`, html`
         <div class="sg-prio-head" aria-hidden="true"><span>Topic</span><span>Weight</span><span>Terms</span><span></span></div>
         <div data-prios>${s.priorities.map((x, i) => html`<div class="sg-prio">
-          <input class="input" data-p="topic" value="${x.topic}" placeholder="Topic" aria-label="Topic ${i + 1}">
+          <input class="input" data-p="topic" value="${x.topic}" title="${x.topic}" placeholder="Topic" aria-label="Topic ${i + 1}">
           <div class="sg-w" data-sign="${sign(x.weight)}"><input type="range" min="-2" max="2" step="0.1" data-p="weight" value="${x.weight}" style="${raw(fillVars(x.weight))}" aria-label="Weight for ${x.topic || `topic ${i + 1}`}" aria-valuetext="${weightText(x.weight)}"><output class="sg-wv" data-sign="${sign(x.weight)}">${weightLabel(x.weight)}</output></div>
-          <input class="input" data-p="terms" value="${(x.terms || []).join(', ')}" placeholder="comma-separated terms" aria-label="Terms for ${x.topic || `topic ${i + 1}`}">
+          <input class="input" data-p="terms" value="${(x.terms || []).join(', ')}" title="${(x.terms || []).join(', ')}" placeholder="comma-separated terms" aria-label="Terms for ${x.topic || `topic ${i + 1}`}">
           <button class="btn btn--ghost btn--icon btn--sm" type="button" data-act="rm-prio" data-i="${i}" aria-label="Remove ${x.topic || 'topic'}">${icon('x')}</button>
         </div>`)}</div>
         ${!s.priorities.length ? html`<div class="empty"><p>No priorities: every story will rank as a weak match.</p></div>` : ''}`,
-        { save: 'priorities', extra: html`<button class="btn btn--secondary" type="button" data-act="add-prio">${icon('plus')}Add topic</button>` })}
+        { save: 'priorities', headSave: true, extra: html`<button class="btn btn--secondary" type="button" data-act="add-prio">${icon('plus')}Add topic</button>` })}`),
 
-      ${section('sg-threshold', 'Publishing threshold & brief', 'A story must score at least the threshold to get an automatic draft. Below it, the day is “quiet” and nothing is drafted.', html`
-        <div class="sg-grid2">
+    () => String(section('sg-threshold', 'Publishing threshold & brief', '', html`
+        <div class="sg-thr">
           <label class="field">Publishing threshold (0–100)<input class="input" type="number" min="0" max="100" data-f="publish_threshold" value="${s.publish_threshold}"></label>
           <label class="field">Brief size (stories)<input class="input" type="number" min="1" max="20" data-f="brief_size" value="${s.brief_size}"></label>
-        </div>
-        ${today?.ranked != null ? html`<p class="sg-help">This week: <b>${today.cleared}</b> of ${today.ranked} ranked stories are at or above ${s.publish_threshold}.</p>` : ''}`, { save: 'threshold' })}`);
-    el.innerHTML = String(html`
-    <header class="page-head">
-      <p class="eyebrow">Control · each section saves on its own</p>
-      <h1>${hd.h}</h1>
-      <p class="lede">${hd.l}</p>
-    </header>
-    <div class="sg-layout">
-      <nav class="sg-toc" aria-label="Settings sections">${TOC.map(([g, items]) => html`<p class="sg-toc-g">${g}</p>${items.map(([id, t]) => html`<a href="#${id}" class="sg-toc-a" data-goto="${id}">${t}</a>`)}`)}</nav>
-      <div class="sg-main">
-      ${section('sg-overview', 'Source health & status', html`What feeds the ranking right now. Sources, watchlists and connectors live on the <a href="#/sources">Sources</a> page.`, healthHtml())}
+          <p class="sg-help sg-thr-n">A story at or above the threshold gets an automatic draft; below it the day is “quiet”.${today?.ranked != null ? html` This week: <b>${today.cleared}</b> of ${today.ranked} ranked stories clear ${s.publish_threshold}.` : ''}</p>
+        </div>`, { save: 'threshold', headSave: true })),
 
-      ${raw(rankHtml)}
-
-      <div class="sg-rest" data-sg-rest>${raw((restHtml = String(html`<p class="sg-group" aria-hidden="true">Automation</p>
-      ${section('sg-schedule', 'Schedule', 'The server checks every minute; a failed scheduled run is retried from its failed stage up to 3 times, 10 minutes apart. Any IANA zone name works.', html`
-        <label class="sg-toggle"><input type="checkbox" class="switch" data-f="schedule_enabled" ${s.schedule?.enabled ? raw('checked') : ''}><span>Run the daily workflow automatically</span></label>
-        <div class="sg-grid2">
+    () => String(html`<p class="sg-group" aria-hidden="true">Automation</p>
+      ${section('sg-schedule', 'Schedule', 'Checked every minute; a failed run retries from its failed stage up to 3 times, 10 minutes apart.', html`
+        <div class="sg-sched">
+          <label class="sg-toggle"><input type="checkbox" class="switch" data-f="schedule_enabled" ${s.schedule?.enabled ? raw('checked') : ''}><span>Run the daily workflow automatically</span></label>
           <label class="field">Time (HH:MM)<input class="input" type="time" data-f="schedule_time" value="${s.schedule?.time || '07:00'}"></label>
-          <label class="field">Time zone<input class="input" data-f="timezone" list="tz-list" value="${s.timezone}" placeholder="e.g. America/New_York"></label>
+          <label class="field">Time zone (any IANA name)<input class="input" data-f="timezone" list="tz-list" value="${s.timezone}" placeholder="e.g. America/New_York"></label>
         </div>
-        <datalist id="tz-list">${ZONES.map(z => html`<option value="${z}">`)}</datalist>`, { save: 'schedule' })}
+        <datalist id="tz-list">${ZONES.map(z => html`<option value="${z}">`)}</datalist>`, { save: 'schedule', headSave: true, cls: 'cv' })}`),
 
-      ${section('sg-ai', 'AI provider', html`The API key is never entered in this app. Set <span class="mono">ANTHROPIC_API_KEY</span> as an environment variable where the server runs, then restart it. Without a key (or over budget) Byline uses its free local engine.`, html`
+    () => String(section('sg-ai', 'AI provider', html`Set <span class="mono">ANTHROPIC_API_KEY</span> where the server runs (never in this app), then restart it.`, html`
         <p class="sg-status"><span class="dot ${p.has_key ? 'ok' : 'warn'}"></span>${p.has_key ? 'ANTHROPIC_API_KEY detected on the server' : 'ANTHROPIC_API_KEY not detected'} · active now: <b>${p.active === 'claude' ? 'Claude' : p.active === 'ollama' ? 'Ollama' : 'local engine'}</b></p>
-        <div class="sg-grid2">
+        <div class="sg-ai4">
           <label class="field">Provider<select class="select" data-f="ai_provider">${[['local', 'Template engine (free, instant)'], ['ollama', 'Ollama local LLM (free)'], ['auto', 'Auto (Claude if key present)'], ['claude', 'Claude (paid, post-v1)']].map(([v, l]) => html`<option value="${v}"${s.ai?.provider === v ? raw(' selected') : ''}>${l}</option>`)}</select></label>
           <label class="field">Effort<select class="select" data-f="ai_effort">${['auto', 'low', 'medium', 'high'].map(v => html`<option value="${v}"${s.ai?.effort === v ? raw(' selected') : ''}>${v === 'auto' ? 'auto (per task)' : v}</option>`)}</select></label>
           <label class="field">Model<input class="input" data-f="ai_model" value="${s.ai?.model || ''}" placeholder="claude-…"></label>
           <label class="field">Ollama model<input class="input" data-f="ai_ollama_model" list="ollama-models" value="${s.ai?.ollama_model || 'qwen2.5:7b'}" placeholder="qwen2.5:7b"></label>
         </div>
         <datalist id="ollama-models"></datalist>
-        <p class="sg-status" id="ollama-status"><span class="spinner"><i aria-hidden="true"></i>Checking for Ollama…</span></p>`, { save: 'ai' })}
+        <p class="sg-status" id="ollama-status"><span class="spinner"><i aria-hidden="true"></i>Checking for Ollama…</span></p>`, { save: 'ai', headSave: true, cls: 'cv' })),
 
-      ${section('sg-budget', 'Budget', html`When spending reaches the limit, Byline switches to the local engine automatically. Per-run usage is on the <a href="#/runs">Runs</a> page.`, html`
+    () => String(section('sg-budget', 'Budget', html`When spending reaches a limit above $0, Byline switches to the local engine automatically. A $0 limit keeps paid AI off. Per-run usage is on the <a href="#/runs">Runs</a> page.`, html`
         <div class="sg-grid2">
           <label class="field">Monthly spending limit (USD)<input class="input" type="number" min="0" step="0.5" data-f="budget" value="${s.budget?.monthly_usd ?? 0}"></label>
-          <div class="sg-spend"><span class="sg-spend-l">Spent this month</span><span class="sg-spend-v">$${(p.month_spend_usd || 0).toFixed(4)}</span>${p.over_budget ? html`<span class="tag tag--warn">limit reached</span>` : ''}</div>
-        </div>`, { save: 'budget' })}
+          <div class="sg-spend"><span class="sg-spend-l">Spent this month</span><span class="sg-spend-v">${money(p.month_spend_usd)}</span>${budgetState().tag}</div>
+        </div>`, { save: 'budget', disc: budgetState().sum })),
 
+    () => String(html`<div class="sg-folds cv">
       ${fold('Writing', html`
       ${section('sg-profile', 'Writing profile', 'Samples guide style only: Byline never invents experiences or opinions.', html`
         <div class="sg-grid4">
@@ -285,13 +300,13 @@ export async function render(view, ctx = {}) {
         <p class="sg-note"><span class="dot ${st.delivery?.push?.configured ? 'ok' : ''}"></span>${st.delivery?.push?.note || ''}</p>`, { save: 'delivery' })}
 
       ${section('sg-media', 'Media', 'Off by default. While off, Byline never generates a synthetic voice or a likeness of you: videos use your own recordings, on-screen text and captions. Turning it on only makes the option available; each video still needs its own approval, and generated media is always labelled.', html`
-        <label class="sg-toggle"><input type="checkbox" class="switch" data-f="synthetic" ${s.synthetic_media_opt_in ? raw('checked') : ''}><span>Allow synthetic narration and likeness in videos</span></label>`, { save: 'media' })}`)}
+        <label class="sg-toggle"><input type="checkbox" class="switch" data-f="synthetic" ${s.synthetic_media_opt_in ? raw('checked') : ''}><span>Allow synthetic narration and likeness in videos</span></label>`, { save: 'media', disc: facts()['sg-media'] })}`)}
 
       ${fold('System', html`
       ${section('sg-access', 'Calendar feed & access', 'Subscribe in Google Calendar (Other calendars → From URL) to see posting slots, planned posts, follow-ups and planned sends. Google must reach this address over the internet, so it works once Byline is behind your Cloudflare Tunnel (docs/DEPLOY.md). Treat the link like a password.', html`
         <div class="sg-inline"><input class="input mono" readonly id="ics" value="${location.origin}${st.ics_path}" aria-label="Calendar feed URL"><button class="btn btn--secondary" type="button" data-act="copy-ics">Copy</button></div>
         <p class="sg-status"><span class="dot ${st.auth ? 'ok' : 'warn'}"></span>${st.auth ? 'Password sign-in is on.' : 'No password set: fine on this computer. Set BYLINE_PASSWORD before reaching Byline from your phone or the internet; remote access is refused until you do.'}</p>
-        ${st.auth ? html`<div class="sg-actions"><button class="btn btn--ghost btn--sm" type="button" data-act="logout">Sign out</button></div>` : ''}`)}
+        ${st.auth ? html`<div class="sg-actions"><button class="btn btn--ghost btn--sm" type="button" data-act="logout">Sign out</button></div>` : ''}`, { disc: facts()['sg-access'] })}
 
       ${section('sg-display', 'Display', 'Saved in this browser only, so your phone and computer can differ. Also in the rail footer and the ⌘K Index.', html`
         <div class="sg-themes" role="radiogroup" aria-label="Theme">${[['light', 'Proof', 'Calm white. The default.'], ['dark', 'Night', 'Neutral graphite.'], ['system', 'Match system', 'Follow this device’s light or dark setting.']].map(([v, l, note]) => html`
@@ -303,21 +318,45 @@ export async function render(view, ctx = {}) {
         <p class="sg-status">${st.counts?.demo_articles ? html`<span class="tag tag--demo">Loaded</span> ${st.counts.demo_articles} demo articles present.` : 'Not loaded.'}</p>`,
         { extra: html`<button class="btn btn--secondary" type="button" data-act="demo-load">Load demo data</button><button class="btn btn--danger" type="button" data-act="demo-clear" ${st.counts?.demo_articles ? '' : raw('disabled')}>Remove demo data</button>` })}
 
-      ${section('sg-about', 'About', '', html`<p class="sg-help">Byline v4. Type: Newsreader, Geist and Geist Mono (SIL Open Font License), self-hosted. Zero runtime dependencies.</p>`)}`)}`), rest ? restHtml : ''))}</div>
+      ${section('sg-about', 'About', '', html`<p class="sg-help">Byline v4. Type: Newsreader, Geist and Geist Mono (SIL Open Font License), self-hosted. Zero runtime dependencies.</p>`)}`)}
+      </div>`)
+  ];
+  let restP = null, paintSeq = 0;
+  const paint = ({ rest = true } = {}) => {
+    const hd = headline(s, st, today, watch, summary);
+    paintSeq++;
+    restP = rest ? Promise.resolve() : null;
+    el.innerHTML = String(html`
+    <header class="page-head">
+      <p class="eyebrow">Control · each section saves on its own</p>
+      <h1>${hd.h}</h1>
+      <p class="lede">${hd.l}</p>
+    </header>
+    <div class="sg-layout">
+      <nav class="sg-toc" aria-label="Settings sections">${TOC.map(([g, items]) => html`<p class="sg-toc-g">${g}</p>${items.map(([id, t]) => html`<a href="#${id}" class="sg-toc-a" data-goto="${id}">${t}</a>`)}`)}</nav>
+      <div class="sg-main">
+      ${section('sg-overview', 'Source health & status', '', healthHtml())}
+      <div class="sg-rest" data-sg-rest>${raw(rest ? CHUNKS.map(c => c()).join('') : '')}</div>
       </div>
     </div>`);
     paintSecurity();
     spy();
   };
-  const paintRest = () => {
-    if (restIn) return;
-    restIn = true;
-    const box = el.querySelector('[data-sg-rest]');
-    box.innerHTML = restHtml;
-    enterItems([...box.children].filter(x => !x.matches('.sg-group')).slice(0, 2), { stagger: 40, y: 6, duration: 420 });
-    checkOllama();
+  // Append the remaining sections, one task each. A full repaint (save, add/remove) cancels a pump in flight.
+  const paintRest = () => restP ||= (async () => {
+    const seq = paintSeq, box = el.querySelector('[data-sg-rest]');
+    for (let i = 0; i < CHUNKS.length; i++) {
+      if (i) await yieldTask();
+      if (seq !== paintSeq || !box.isConnected) return;
+      const before = box.children.length;
+      box.insertAdjacentHTML('beforeend', CHUNKS[i]());
+      // the first two land in view on desktop: a short settle, never on the off-screen ones
+      if (i < 2) enterItems([...box.children].slice(before).filter(x => !x.matches('.sg-group')), { stagger: 40, y: 6, duration: 420 });
+      if (i === 3) checkOllama();
+    }
+    paintSecurity();
     spy();
-  };
+  })();
 
   // G4: section-nav highlight from one IntersectionObserver on .sg-sec (and closed folds, which stand in for
   // their sections): the topmost intersecting element inside the band 80 px below the top to 60% down wins.
@@ -367,12 +406,33 @@ export async function render(view, ctx = {}) {
     if (open && animate && !reduced()) body.animate([{ opacity: 0, transform: 'translateY(6px)' }, { opacity: 1, transform: 'none' }], { duration: 360, easing: EASE.fade });
     spy();
   };
-  // open the fold holding a section (from the nav, the ⌘K Index or the route), then go there
-  const reveal = (id, opts) => {
+  // SS3: open / close one disclosure section (Budget, Calendar feed & access, Media)
+  const setDisc = (id, open, { animate = true } = {}) => {
+    const sec = el.querySelector(`[data-disc="${id}"]`);
+    if (!sec || openDisc.has(id) === open) return;
+    if (open) openDisc.add(id); else openDisc.delete(id);
+    sec.classList.toggle('is-open', open);
+    const b = sec.querySelector('[data-disc-toggle]');
+    b.setAttribute('aria-expanded', String(open));
+    b.querySelector('[data-disc-word]').textContent = open ? 'Hide' : 'Show';
+    const body = sec.querySelector('.sg-disc-b');
+    body.hidden = !open;
+    if (open && animate && !reduced()) body.animate([{ opacity: 0, transform: 'translateY(4px)' }, { opacity: 1, transform: 'none' }], { duration: 280, easing: EASE.fade });
+  };
+  // open the fold (and disclosure) holding a section (from the nav, the ⌘K Index or the route), then go there
+  const reveal = async (id, opts) => {
+    await paintRest();
     const g = SEC_GROUP[id];
     if (FOLDED[g] && !openFolds.has(g)) setFold(g, true, { animate: false });
+    if (el.querySelector(`[data-disc="${id}"]`)) setDisc(id, true, { animate: false });
     scrollToSec(id, opts);
   };
+  on(el, 'click', '[data-disc-head]', (e, h) => {
+    if (e.target.closest('a, input, select, textarea') || (e.target.closest('button') && !e.target.closest('[data-disc-toggle]'))) return;
+    const id = h.dataset.discHead;
+    setDisc(id, !openDisc.has(id));
+    el.querySelector(`[data-disc-toggle="${id}"]`)?.focus({ preventScroll: true });
+  });
   on(el, 'click', '[data-goto]', (e, a) => { e.preventDefault(); reveal(a.dataset.goto); });
   on(el, 'click', '[data-open-sec]', (e, b) => reveal(b.dataset.openSec));
   on(el, 'click', '[data-fold-toggle]', (e, b) => {
@@ -383,7 +443,10 @@ export async function render(view, ctx = {}) {
   });
   // The ⌘K Index (app.js gotoSettings) scrolls to and focuses the first heading named like the section;
   // for a folded section that is the h3 in the fold head, so open the fold and continue to the section.
-  el.addEventListener('focusin', (e) => { const h = e.target.closest?.('.sg-fold-i'); if (h && e.target === h) requestAnimationFrame(() => reveal(h.dataset.for)); });
+  el.addEventListener('focusin', (e) => {
+    const h = e.target.closest?.('.sg-fold-i'); if (h && e.target === h) { requestAnimationFrame(() => reveal(h.dataset.for)); return; }
+    const d = e.target.matches?.('.sg-disc > .sg-disc-head > .sg-h') && e.target.closest('[data-disc]'); if (d) setDisc(d.dataset.disc, true);
+  });
 
   // Repaint while keeping unsaved edits in other sections.
   const repaint = () => {
@@ -406,14 +469,14 @@ export async function render(view, ctx = {}) {
   if (target) {
     const g = Object.keys(FOLDED).find(k => k.toLowerCase() === target.toLowerCase() || FOLDED[k] === target);
     const id = g ? null : (SEC_GROUP[target] ? target : SEC_GROUP[`sg-${target}`] ? `sg-${target}` : null);
-    const go = () => { paintRest(); if (g) { setFold(g, true, { animate: false }); el.querySelector(`[data-fold="${g}"]`)?.scrollIntoView({ block: 'start' }); } else if (id) reveal(id, { focus: false }); };
+    const go = async () => { await paintRest(); if (g) { setFold(g, true, { animate: false }); el.querySelector(`[data-fold="${g}"]`)?.scrollIntoView({ block: 'start' }); } else if (id) reveal(id, { focus: false }); };
     const onRouted = (e) => { if (e.detail?.page?.contains(el)) { document.removeEventListener('byline:routed', onRouted); requestAnimationFrame(() => setTimeout(go, 0)); } };
     if (g || id) { document.addEventListener('byline:routed', onRouted); setTimeout(() => document.removeEventListener('byline:routed', onRouted), 4000); }
   }
   const checkOllama = () => api.get('/ollama').then(o => {
     const box = el.querySelector('#ollama-status'); if (!box) return;
     box.innerHTML = o.reachable ? `<span class="dot ok"></span>Ollama is running · ${o.models.length} model(s): ${o.models.join(', ') || 'none; run “ollama pull qwen2.5:7b”'}`
-      : '<span class="dot"></span>Ollama not detected. Install it free from ollama.com, run <span class="mono">ollama pull qwen2.5:7b</span>, then pick “Ollama” above. Until then Byline uses the template engine.';
+      : '<span class="dot"></span>Ollama not detected: install it free from ollama.com, run <span class="mono">ollama pull qwen2.5:7b</span>, then pick “Ollama” above.';
     el.querySelector('#ollama-models').innerHTML = o.models.map(m => `<option value="${m}">`).join('');
   }).catch(() => { const box = el.querySelector('#ollama-status'); if (box) box.innerHTML = '<span class="dot"></span>Couldn’t check for Ollama.'; });
   checkOllama();

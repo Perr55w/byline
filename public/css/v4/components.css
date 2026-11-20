@@ -93,16 +93,18 @@ h2.t-h2, h3.t-title, h3.t-title-lg { margin: 0; }
   position: relative; isolation: isolate; contain: layout style;
   padding: 24px; border-radius: var(--r-tile); background: var(--surface); border: 1px solid var(--line);
   box-shadow: var(--shadow-1); color: var(--text-1);
-  transition: transform var(--dur-hover-out) var(--ease-settle), border-color var(--dur-hover-out) var(--ease-fade);
+  transition: transform var(--dur-hover-out) var(--ease-settle), border-color var(--dur-hover-out) var(--ease-fade), background-color var(--dur-hover-out) var(--ease-fade);
 }
 .tile::before { content: ""; position: absolute; inset: -1px; z-index: -1; border-radius: inherit; box-shadow: var(--shadow-hover); opacity: 0; pointer-events: none;
   transition: opacity var(--dur-hover-out) var(--ease-fade); }
 /* hover light: a fixed top-centre pool (SPEC: a light reaction, not a cursor trail; the moving light is #bg-light) */
 .tile::after { content: ""; position: absolute; inset: 0; z-index: -1; border-radius: inherit; pointer-events: none; opacity: 0;
-  background: radial-gradient(120% 90% at 50% 0%, var(--hover-spot), transparent 70%), linear-gradient(var(--hover-wash), var(--hover-wash));
+  /* R2 S10: the spot is 70% of the tile wide, so the edges stay near-white; the wash is a whisper */
+  background: radial-gradient(35% 70% at 50% 0%, var(--hover-spot), transparent 100%), linear-gradient(var(--hover-wash), var(--hover-wash));
   transition: opacity var(--dur-hover-out) var(--ease-fade); }
 .tile:not(.tile--static):hover, .tile:not(.tile--static):focus-within:has(:focus-visible) { transform: translateY(-2px); border-color: var(--hover-line);
-  transition: transform var(--dur-hover-in) var(--ease-settle), border-color var(--dur-hover-in) var(--ease-fade); }
+  background: var(--surface-hover, var(--surface)); /* R2 S10: ≥ .94 opaque, so the field's dash rows don't read through hovered text */
+  transition: transform var(--dur-hover-in) var(--ease-settle), border-color var(--dur-hover-in) var(--ease-fade), background-color var(--dur-hover-in) var(--ease-fade); }
 .tile:not(.tile--static):hover::before, .tile:not(.tile--static):hover::after { opacity: 1; transition-duration: var(--dur-hover-in); }
 a.tile { display: block; text-decoration: none; color: inherit; }
 a.tile:focus-visible { box-shadow: var(--focus); border-radius: var(--r-tile); }
@@ -163,9 +165,14 @@ a.tile:focus-visible { box-shadow: var(--focus); border-radius: var(--r-tile); }
 .score-chip { display: inline-grid; place-items: center; min-width: 44px; height: 28px; padding: 0 8px; border-radius: var(--r-ctl); flex: none;
   font: 600 var(--fs-score-chip)/20px var(--font-sans); font-variant-numeric: tabular-nums; color: var(--text-1);
   background: color-mix(in oklab, var(--q, var(--q-3)) 18%, var(--surface-solid)); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--q, var(--q-3)) 34%, transparent); }
-.score-chip[data-q=strong] { background: color-mix(in oklab, var(--q, var(--q-4)) 26%, var(--surface-solid)); }
-.score-chip[data-q=below] { background: transparent; color: var(--text-2); box-shadow: inset 0 0 0 1.5px var(--q, var(--q-1)); }
-.score-chip[data-q=top] { background: var(--q-5); color: var(--q-on5); box-shadow: var(--q-glow); }
+/* S8 (round-2 ruling R1): the fill ramps inside each band on --qd = round(score) − threshold (set inline by scoreChip),
+   so 56 / 62 and 72 / 78 read as different chips, not one flat tint per tier. Tab owners: don't restyle .score-chip. */
+.score-chip[data-band=top] { background: var(--q, var(--q-5)); color: var(--q-on5); box-shadow: var(--q-glow); }
+.score-chip[data-band=clears] { background: color-mix(in oklab, var(--q, var(--q-3)) calc(14% + var(--qd, 0) * 1.4%), var(--surface-solid));
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--q, var(--q-3)) 40%, transparent); }
+.score-chip[data-band=near] { background: color-mix(in oklab, var(--q, var(--q-2)) 10%, var(--surface-solid)); color: var(--text-1);
+  box-shadow: inset 0 0 0 1.5px var(--q, var(--q-2)); }
+.score-chip[data-band=below] { background: transparent; color: var(--text-3); box-shadow: inset 0 0 0 1px var(--q, var(--q-1)); }
 @media (forced-colors: active) { .score-chip, .score-ring .ring-arc { border: 1px solid CanvasText; stroke: CanvasText; } }
 .meter { position: relative; height: 4px; border-radius: 2px; background: var(--track); overflow: hidden; }
 .meter > i { position: absolute; inset: 0 auto 0 0; width: calc(var(--v, 0) * 100%); border-radius: inherit; background: var(--q, var(--accent)); }
@@ -226,6 +233,8 @@ a.tile:focus-visible { box-shadow: var(--focus); border-radius: var(--r-tile); }
   background: var(--tint-2); color: var(--text-2); font: 500 var(--fs-pill)/16px var(--font-sans); white-space: nowrap; text-decoration: none; }
 .chip--topic { background: var(--tint-2); color: var(--text-2); }
 .chip--main { background: var(--accent-soft); color: var(--accent-text); }
+/* S9: a below-bar story's lead topic: neutral inset fill, ink, weight 600 (blue only above the bar; ui.js topicPills) */
+.chip--lead { background: var(--inset); color: var(--text-1); font-weight: 600; box-shadow: inset 0 0 0 1px var(--line); }
 .chip--filter { height: 28px; background: transparent; box-shadow: inset 0 0 0 1px var(--line-2); color: var(--text-2); cursor: pointer;
   transition: background-color var(--dur-micro) var(--ease-fade), color var(--dur-micro) var(--ease-fade), box-shadow var(--dur-micro) var(--ease-fade); }
 .chip--filter:hover { color: var(--text-1); box-shadow: inset 0 0 0 1px var(--line-3); text-decoration: none; }
@@ -331,36 +340,69 @@ a.tile:focus-visible { box-shadow: var(--focus); border-radius: var(--r-tile); }
 
 /* ---------------------------------------------------------------- dossier frame (dossier.js) — overlay inset to the rail's top/bottom */
 .dossier { position: fixed; inset: 0; z-index: 50; pointer-events: none; }
-.dossier-scrim { position: absolute; inset: 0; background: var(--scrim); opacity: 0; pointer-events: auto; }
-.dossier-panel {
-  /* S6: the left edge rides --rail-w (its own copy, shell.css); width capped so ≥160px of page shows on the right */
+/* S11 (R7): a bottom band over the scrim in both themes, so the gap under the panel shows no half-cut page text */
+.dossier-scrim { position: absolute; inset: 0; opacity: 0; pointer-events: auto;
+  background: linear-gradient(to top, var(--bg) 0, var(--bg) 24px, transparent 64px), var(--scrim); }
+.dossier-panel, .dossier-shadow {
+  /* S6: the left edge rides --rail-w (its own copy, shell.css). R2 S4: the width is constant (it reads --rail-expanded,
+     not the animated --rail-w), so a rail collapse only moves the panel and never re-wraps the body; ≥160px of page
+     shows on the right, more when the rail is collapsed */
   position: absolute; top: var(--shell-inset); bottom: var(--shell-inset);
   left: calc(var(--shell-inset) + var(--rail-w) + var(--shell-inset));
-  width: min(1040px, calc(100vw - var(--rail-w) - 2 * var(--shell-inset) - 160px));
-  border-radius: var(--r-shell); pointer-events: auto; overflow: hidden; contain: layout paint style; isolation: isolate;
-  box-shadow: inset 0 0 0 1px var(--glass-border), var(--shadow-shell); outline: none;
+  width: min(1040px, calc(100vw - var(--rail-expanded) - 2 * var(--shell-inset) - 160px));
+  border-radius: var(--r-shell);
 }
+.dossier-panel {
+  pointer-events: auto; overflow: hidden; contain: layout paint style; isolation: isolate;
+  box-shadow: inset 0 0 0 1px var(--glass-border); outline: none; /* R2 S2: no soft shadow on the clipped layer */
+}
+/* R2 S2: the soft shell shadow lives on a sibling behind the panel and fades in over 200ms after landing, so the
+   flight's clip never re-renders a 60px blur; closing drops it at once */
+.dossier-shadow { pointer-events: none; box-shadow: var(--shadow-shell); opacity: 0; }
+.dossier.landed .dossier-shadow { opacity: 1; transition: opacity 200ms var(--ease-fade); }
+.dossier.closing .dossier-shadow { opacity: 0; transition: none; }
 .dossier-fill, .dossier-frost { position: absolute; inset: 0; z-index: -1; border-radius: inherit; pointer-events: none; }
-/* S4: the flight fill is opaque from frame 1 (independent of the scrim); the frost replaces it after landing */
+/* S4: the flight fill is opaque (R5: .98) from frame 1, independent of the scrim; the frost replaces it after landing */
 .dossier-fill { background: var(--surface-flight); opacity: 1; }
-/* the frost replaces the fill in one frame after landing (white .82 + blur vs white .94: the swap is not visible),
+/* the frost replaces the fill in one frame after landing (white .82 + blur vs white .98: the swap is not visible),
    so the backdrop blur is computed once, not on every frame of a fade */
 .dossier-frost { display: none; background: var(--surface-glass-strong); -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat)); backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat)); }
 .dossier.frosted .dossier-frost { display: block; }
 .dossier.frosted .dossier-fill { opacity: 0; transition: none; }
-/* S5: closing drops the backdrop-filter layer at once and puts the opaque fill straight back */
+/* R2 S3/S4: closing and a rail reflow drop the backdrop-filter layer at once (no transition, no layout) and put the
+   opaque flight fill straight back; it is never faded out visibly */
 .dossier.closing .dossier-frost, .dossier.is-reflowing .dossier-frost { display: none; }
 .dossier.closing .dossier-fill, .dossier.is-reflowing .dossier-fill { opacity: 1; transition: none; }
+.dossier.closing .dossier-scroll.is-gone { display: none; }
+/* R2 S3: the close's body cover (dossier.js fades its opacity in over 140ms, then the scroller goes) */
+.dossier.closing .dossier-panel::after { content: ""; position: absolute; inset: 0; z-index: 4; border-radius: inherit; pointer-events: none; background: var(--surface-flight); opacity: 0; }
 /* S3: an idle prebuild, attached only while it is rendered and measured */
 .dossier.is-prebuild { visibility: hidden; contain: strict; pointer-events: none; }
+/* R2 S12: the close button is a solid pill, and a top fade backs it once the body scrolls (class from a passive listener) */
 .dossier-bar { position: absolute; z-index: 3; top: 12px; right: 12px; display: flex; gap: 4px; }
-.dossier-bar .btn { background: var(--surface-solid); }
+.dossier-bar .btn { background: var(--surface-solid); border-radius: 999px; box-shadow: inset 0 0 0 1px var(--line), var(--shadow-1); }
 .dossier-scroll { position: absolute; inset: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+.dossier-scroll::before { content: ""; position: sticky; z-index: 2; top: 0; display: block; height: 56px; margin-bottom: -56px; pointer-events: none;
+  background: linear-gradient(var(--surface-flight) 55%, transparent); opacity: 0; transition: opacity 160ms var(--ease-fade); }
+.dossier-scroll.is-scrolled::before { opacity: 1; }
+/* no inherited custom property switches on .dossier: toggling one restyled every node of the body (R2 S3) */
+.dossier.frosted .dossier-scroll::before { background: linear-gradient(var(--surface-solid) 55%, transparent); }
 .dossier-body { max-width: var(--content-max); margin: 0 auto; padding: 32px 36px 48px; }
 .dossier [data-dossier-section] { opacity: 1; }
+/* R2 S2 skeleton (C; DECISIONS: after 120ms, held ≥320ms, 1800ms sine breath .55↔.8, no shimmer) */
+.dz-sk { display: grid; gap: 28px; margin-top: 22px; }
+.dz-sk i { display: block; height: 12px; border-radius: 5px; background: var(--surface-2, var(--inset)); animation: dz-breathe 1800ms var(--ease-ambient) infinite alternate; }
+.dz-sk .dz-sk-lede { display: grid; gap: 10px; } .dz-sk .dz-sk-lede i { height: 16px; }
+.dz-sk .dz-sk-acts { display: flex; gap: 10px; } .dz-sk .dz-sk-acts i { width: 112px; height: 34px; border-radius: 999px; }
+.dz-sk .dz-sk-cols { display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); gap: 32px; }
+.dz-sk .dz-sk-cols > div { display: grid; gap: 14px; align-content: start; }
+@keyframes dz-breathe { from { opacity: .55; } to { opacity: .8; } }
+@media (prefers-reduced-motion: reduce) { .dz-sk i { animation: none; opacity: .7; } }
+@media (max-width: 760px) { .dz-sk .dz-sk-cols { grid-template-columns: 1fr; } }
 .dossier-grab { display: none; }
 @media (max-width: 760px) {
   .dossier-panel { left: 0; right: 0; bottom: 0; top: 8px; width: auto; border-radius: var(--r-sheet) var(--r-sheet) 0 0; }
+  .dossier-shadow { display: none; }
   .dossier-body { padding: 28px 16px calc(32px + env(safe-area-inset-bottom, 0px)); }
   .dossier-grab { display: block; position: absolute; z-index: 4; left: 0; right: 0; top: 0; height: 28px; touch-action: none; }
   .dossier-grab::before { content: ""; position: absolute; left: 50%; top: 8px; width: 36px; height: 4px; margin-left: -18px; border-radius: 2px; background: var(--line-3); }

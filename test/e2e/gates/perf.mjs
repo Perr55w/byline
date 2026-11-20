@@ -13,6 +13,23 @@ async function tracedForcedLayouts(browser, page, action, waitMs) {
   return forcedLayoutsFromTrace(buf);
 }
 
+/** The Layout of the rendering frame that follows the byline:routed dispatch (the swap frame). */
+function swapFrameLayout(buf) {
+  let ev; try { const j = JSON.parse(buf.toString()); ev = Array.isArray(j) ? j : j.traceEvents; } catch { return null; }
+  const d = ev.filter(e => e.ph === 'X' && e.name === 'EventDispatch' && e.args?.data?.type === 'byline:routed').sort((a, b) => a.ts - b.ts).pop();
+  if (!d) return null;
+  const main = ev.filter(e => e.pid === d.pid && e.tid === d.tid && e.ph === 'X');
+  const end = d.ts + (d.dur || 0);
+  // the swap task itself ends at the next RunTask boundary; the frame's Layout is the first one after that without a JS stack
+  const task = main.filter(e => e.name === 'RunTask' && e.ts <= d.ts && e.ts + e.dur >= end).pop();
+  const after = task ? task.ts + task.dur : end;
+  const frame = main.filter(e => e.name === 'RunTask' && e.ts >= after).sort((a, b) => a.ts - b.ts).find(t => main.some(x => (x.name === 'Paint' || x.name === 'Layout' || x.name === 'UpdateLayoutTree') && x.ts >= t.ts && x.ts < t.ts + t.dur));
+  if (!frame) return { found: false, ms: 0 };
+  const lay = main.filter(e => e.name === 'Layout' && e.ts >= frame.ts && e.ts < frame.ts + frame.dur && !(e.args?.beginData?.stackTrace || []).length);
+  if (!lay.length) return { found: false, ms: 0 };
+  return { found: true, ms: +(lay.reduce((s, e) => s + e.dur, 0) / 1000).toFixed(1), partial: lay.every(e => e.args?.beginData?.partialLayout), dirty: lay.reduce((s, e) => s + (e.args?.beginData?.dirtyObjects || 0), 0) };
+}
+
 // ------------------------------------------------------------------ gate 1
 export async function e1(ctx) {
   const g = newGate('E1', 'Tab change, phone 4× CPU', 'perf', 'E §5.1: longest LoAF < 50 ms, Σ blocking < 100 ms, forced style+layout per LoAF < 4 ms; DECISIONS: ≤ 1 forced layout per transition');
@@ -33,6 +50,17 @@ export async function e1(ctx) {
       check(g, 'Σ blockingDuration', s.blocking, '<', 100, { unit: 'ms', scope: key });
       check(g, 'forced style+layout / LoAF', s.forcedMax, '<', 4, { unit: 'ms', scope: key });
     }
+    // round 2 S1 / S17: the swap frame (the rendering frame right after the task that fires byline:routed) at 4×:
+    // its Layout must be small. Blink reports partialLayout only for relayout boundaries, which a grid item (.page in
+    // #view) can never be, so the flag is reported, and the bound is on time and dirty objects.
+    for (const [a, b] of [['today', 'feed'], ['feed', 'settings']]) {
+      if (!routes.includes(b) && !routes.includes(a)) continue;
+      const t0 = await setHash(P.page, `#/${a}`); await waitRouted(P.page, a, t0); await sleep(1500);
+      await ctx.browser.startTracing(P.page, { categories: TRACE_CATS });
+      await setHash(P.page, `#/${b}`); await sleep(1800);
+      const sw = swapFrameLayout(await ctx.browser.stopTracing());
+      check(g, 'swap-frame Layout', sw ? sw.ms : null, '<', 15, { unit: 'ms', scope: `${a}→${b} (4×)`, detail: sw ? `${sw.found ? `partialLayout ${sw.partial}, ${sw.dirty} dirty objects` : 'no Layout in the swap frame'}` : 'trace unreadable or no byline:routed dispatch' });
+    }
     // forced layout count per transition (trace; throttle off so the trace overhead does not skew anything)
     await setThrottle(P.cdp, 1);
     let prev = seq[seq.length - 1];
@@ -48,7 +76,7 @@ export async function e1(ctx) {
 
 // ------------------------------------------------------------------ gate 2
 export async function e2(ctx) {
-  const g = newGate('E2', 'Dossier open/close + rail collapse with dossier open', 'perf', 'E §5.2: longest LoAF < 50 ms (phone + desktop, 4×), ≤ 1 forced layout per open, dossier.left − rail.right constant ±1 px per frame; C §6.6: dossier.left ≥ rail.right every frame');
+  const g = newGate('E2', 'Dossier open/close + rail collapse with dossier open', 'perf', 'E §5.2: longest LoAF < 50 ms (phone + desktop, 4×), ≤ 1 forced layout per open, dossier.left − rail.right constant ±1 px per frame; C §6.6: dossier.left ≥ rail.right every frame; round 2: open + close frame p95 ≤ 20 ms at 1×, collapse p95 ≤ 33 ms at 4×');
   for (const [label, profile] of [['desktop', DESKTOP], ['phone', PHONE]]) {
     const P = await openPage(ctx.browser, { profile, throttle: 4 });
     ctx.track(P);
@@ -95,7 +123,7 @@ export async function e2(ctx) {
           // round 1 S18: the collapse itself must not drop frames (it used to restyle the whole document)
           const iv = s.slice(1).map((x, i) => x.t - s[i].t).filter(v => v > 0 && v < 1000).sort((a, b) => a - b);
           const p95 = iv.length ? iv[Math.floor(iv.length * 0.95)] : null;
-          check(g, 'rail collapse frame p95 (dossier open, 4×)', p95 === null ? null : +p95.toFixed(1), '<=', 50, { unit: 'ms', scope: label, detail: `${iv.length} intervals, max ${iv.length ? iv[iv.length - 1].toFixed(1) : '—'} ms` });
+          check(g, 'rail collapse frame p95 (dossier open, 4×)', p95 === null ? null : +p95.toFixed(1), '<=', 33, { unit: 'ms', scope: label, detail: `${iv.length} intervals, max ${iv.length ? iv[iv.length - 1].toFixed(1) : '—'} ms` });
         }
       }
       // round 1 S18 / S5: the close at 1× (frost layer dropped synchronously; body fade + clip in one frame)
@@ -109,6 +137,19 @@ export async function e2(ctx) {
         const p95 = iv.length ? iv[Math.floor(iv.length * 0.95)] : null;
         check(g, 'close: frame p95 (1×)', p95 === null ? null : +p95.toFixed(1), '<=', 20, { unit: 'ms', scope: label, detail: `${iv.length} intervals, max ${iv.length ? iv[iv.length - 1].toFixed(1) : '—'} ms` });
         await sleep(500);
+      }
+      // round 2 S2 / S17: the desktop open itself at 1× (flight + landing), frame p95 ≤ 20 ms
+      if (label === 'desktop' && !(await P.page.locator(SEL.dossierPanel).count())) {
+        await sleep(2700); // past the idle-prebuild quiet window after the close
+        const fr = P.page.evaluate(() => window.__e2e.everyFrame((i, t) => t, 900));
+        const o2 = await openDossier(P.page, ctx.storyId, { settle: 0 });
+        const ts = await fr;
+        const iv = ts.slice(1).map((t, i) => t - ts[i]).sort((a, b) => a - b);
+        const p95 = iv.length ? iv[Math.floor(iv.length * 0.95)] : null;
+        check(g, 'open: frame p95 (1×)', o2.ok && p95 !== null ? +p95.toFixed(1) : null, '<=', 20, { unit: 'ms', scope: `${label} (${o2.via})`, detail: `${iv.length} intervals, max ${iv.length ? iv[iv.length - 1].toFixed(1) : '—'} ms` });
+        await sleep(1200);
+        await P.page.keyboard.press('Escape');
+        await sleep(700);
       }
       await setThrottle(P.cdp, 1);
     } finally { await P.close(); }
@@ -151,6 +192,15 @@ export async function e4(ctx) {
     check(g, 'rAF callbacks in 5 s', r1 - r0, '==', 0, { detail: (st ? `bg renderer ${st.renderer}, frozen ${st.frozen}, running ${st.running}` : 'window.__byline.bg.stats() missing') + (callers.length ? `; requested by: ${callers.join(' | ')}` : '') });
     check(g, 'TaskDuration Δ', d.TaskDuration, '<', 50, { unit: 'ms' });
     check(g, 'LayoutCount Δ', d.LayoutCount, '==', 0, { detail: `RecalcStyle Δ ${d.RecalcStyleCount}` });
+    // round 2 S17: #/search idle (its input focused, nothing typed): < 6 ms of task time per 3 s, no layouts
+    const ts = await setHash(P.page, '#/search');
+    await waitRouted(P.page, 'search', ts);
+    await sleep(3000);
+    const s0 = await metrics(P.cdp);
+    await sleep(3000);
+    const s1 = await metrics(P.cdp), ds = delta(s0, s1);
+    check(g, 'TaskDuration Δ per 3 s', ds.TaskDuration, '<', 6, { unit: 'ms', scope: 'search' });
+    check(g, 'LayoutCount Δ', ds.LayoutCount, '==', 0, { scope: 'search', detail: `RecalcStyle Δ ${ds.RecalcStyleCount}` });
   } finally { await P.close(); }
   return g;
 }

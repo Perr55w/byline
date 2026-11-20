@@ -177,7 +177,7 @@ const CONTRAST_PROBE = (max = 160) => {
   return { min: Number.isFinite(min) ? +min.toFixed(2) : null, worst, n: els.length };
 };
 export async function cTheme(ctx) {
-  const g = newGate('C-theme', 'Theme switch: contrast frames and pacing', 'motion', 'Round 1 S7: text/surface contrast ≥ 3:1 at 100, 300 and 500 ms after the switch (both directions); frame p95 ≤ 33 ms at 1×');
+  const g = newGate('C-theme', 'Theme switch: contrast frames and pacing', 'motion', 'Round 2 S6: text/surface contrast ≥ 3:1 at 60, 150, 300, 450 and 600 ms after the switch (both directions); frame p95 ≤ 33 ms at 1×');
   const P = await openPage(ctx.browser, { profile: DESKTOP });
   ctx.track(P);
   try {
@@ -185,7 +185,7 @@ export async function cTheme(ctx) {
     for (const to of ['night', 'proof']) {
       const res = await P.page.evaluate(async ({ to, probe }) => {
         const fn = new Function(`return (${probe})`)();
-        const at = [100, 300, 500], shots = {}, all = [];
+        const at = [60, 150, 300, 450, 600], shots = {}, all = [];
         const t0 = performance.now();
         window.__byline.setTheme(to);
         const ts = await window.__e2e.everyFrame((i, t) => {
@@ -196,7 +196,7 @@ export async function cTheme(ctx) {
         }, 700);
         return { shots, all, ts };
       }, { to, probe: CONTRAST_PROBE.toString() });
-      for (const a of [100, 300, 500]) {
+      for (const a of [60, 150, 300, 450, 600]) {
         const s = res.shots[a];
         check(g, `contrast at ${a} ms`, s ? s.min : null, '>=', 3, { scope: `→ ${to}`, detail: s ? `sampled at ${s.dt} ms over ${s.n} text elements; worst ${s.worst}` : 'no frame' });
       }
@@ -271,4 +271,91 @@ export async function cFlight(ctx) {
   return g;
 }
 
-export const MOTION_GATES = { 'C-entrance': cEntrance, 'C-pacing': cPacing, 'C-rules': cRules, 'C-theme': cTheme, 'C-flight': cFlight };
+
+// ------------------------------------------------------------------ round 2 S17: tab swap, ring revisit, Feed filter persistence
+const EFF_OPACITY = `(el, stop) => { let o = 1; for (let n = el; n && n !== stop && n !== document.body; n = n.parentElement) o *= +getComputedStyle(n).opacity; return o; }`;
+/** S1: per frame, scrollY keeps its value until the old h1 is < .05, and the old h1 and line 1 of the new h1 are never both > .08. */
+export async function cTabswap(ctx) {
+  const g = newGate('C-tabswap', 'Tab switch: no scroll jump, no double exposure', 'motion', 'Round 2 S1: scrollY holds until the old h1 is below .05; no frame has the old h1 and the new h1 line 1 both above .08');
+  const P = await openPage(ctx.browser, { profile: DESKTOP });
+  ctx.track(P);
+  try {
+    for (const [from, to, y] of [['today', 'feed', 900], ['feed', 'settings', 0], ['settings', 'today', 0]]) {
+      await gotoRoute(P.page, ctx.base, from, { settle: 2500 });
+      if (y) { await P.page.evaluate((y) => scrollTo(0, y), y); await sleep(500); }
+      const r = await P.page.evaluate(async ({ to, eff }) => {
+        const op = new Function(`return (${eff})`)();
+        const oldPage = document.querySelector('#view .page.current'); const oldH1 = oldPage?.querySelector('.page-head h1') || oldPage?.querySelector('h1');
+        if (!oldH1) return { error: 'no h1 on the old page' };
+        const y0 = scrollY; const t0 = performance.now(); location.hash = '#/' + to;
+        const out = [];
+        await new Promise(res => { const f = () => { const t = performance.now() - t0;
+          const np = [...document.querySelectorAll('#view .page')].find(p => p !== oldPage && p.dataset.route === to);
+          const nh = np && (np.querySelector('.page-head h1') || np.querySelector('h1')); const l1 = nh && (nh.querySelector('.ln') || nh);
+          out.push({ t: Math.round(t), y: scrollY, old: oldH1.isConnected ? op(oldH1) : 0, nw: l1 && l1.isConnected ? op(l1) : 0 });
+          if (t < 1200) requestAnimationFrame(f); else res(); }; requestAnimationFrame(f); });
+        return { y0, out };
+      }, { to, eff: EFF_OPACITY });
+      if (r.error) { check(g, 'tab switch sampled', null, 'true', true, { scope: `${from}→${to}`, detail: r.error }); continue; }
+      const both = r.out.filter(x => x.old > .08 && x.nw > .08);
+      const jump = r.out.filter(x => x.y !== r.y0 && x.old >= .05);
+      check(g, 'frames with both h1s > .08', both.length, '==', 0, { scope: `${from}→${to}`, detail: both.length ? `first at ${both[0].t} ms (old ${both[0].old.toFixed(2)}, new ${both[0].nw.toFixed(2)})` : `${r.out.length} frames` });
+      if (r.y0 > 0) check(g, 'frames where scroll moved before the old h1 < .05', jump.length, '==', 0, { scope: `${from}→${to} (scrollY ${r.y0})`, detail: jump.length ? `first at ${jump[0].t} ms: scrollY ${jump[0].y}, old h1 ${jump[0].old.toFixed(2)}` : 'scroll reset after the old page left' });
+    }
+  } finally { await P.close(); }
+  return g;
+}
+/** S7: on a revisit (Today → Feed → Today) no ring ever shows a value other than its final one. */
+export async function cRings(ctx) {
+  const g = newGate('C-rings', 'Score rings on revisit', 'motion', 'Round 2 S7: an rAF log of Feed→Today shows no frame with a ring value other than its final value');
+  const P = await openPage(ctx.browser, { profile: DESKTOP });
+  ctx.track(P);
+  try {
+    await gotoRoute(P.page, ctx.base, 'today', { settle: 3500 }); // first visit: the count-up runs once
+    let t0 = await setHash(P.page, '#/feed'); await waitRouted(P.page, 'feed', t0); await sleep(1500);
+    const r = await P.page.evaluate(async () => {
+      const bad = []; let frames = 0, seen = 0; const t0 = performance.now(); location.hash = '#/today';
+      await new Promise(res => { const f = () => { const t = performance.now() - t0; frames++;
+        const page = document.querySelector('#view .page[data-route="today"]');
+        for (const ring of page ? page.querySelectorAll('.score-ring[data-q-score]') : []) {
+          const num = ring.querySelector('.ring-num'); if (!num) continue; seen++;
+          const want = Number(ring.dataset.qScore), shown = Number(num.textContent.trim());
+          const dec = (num.dataset.decimals | 0) || 0, fin = dec ? +want.toFixed(dec) : Math.round(want);
+          if (shown !== fin && bad.length < 5) bad.push(`${Math.round(t)} ms: ${shown} (final ${fin})`);
+        }
+        if (t < 1400) requestAnimationFrame(f); else res(); }; requestAnimationFrame(f); });
+      return { bad, frames, seen };
+    });
+    check(g, 'ring frames showing a non-final value', r.bad.length, '==', 0, { scope: 'feed→today', detail: r.bad.length ? r.bad.join(' | ') : `${r.seen} ring samples over ${r.frames} frames` });
+  } finally { await P.close(); }
+  return g;
+}
+/** S17 (E): rows that persist through a Feed filter change keep opacity ≥ .9 on every frame. */
+export async function cFilter(ctx) {
+  const g = newGate('C-filter', 'Feed filter: persisting rows stay put', 'motion', 'Round 2 S17: persisting rows keep opacity ≥ .9 through a filter change');
+  const P = await openPage(ctx.browser, { profile: DESKTOP });
+  ctx.track(P);
+  try {
+    await gotoRoute(P.page, ctx.base, 'feed', { settle: 2500 });
+    const r = await P.page.evaluate(async ({ eff }) => {
+      const op = new Function(`return (${eff})`)();
+      const btn = document.querySelector('#view .page.current .chip--filter[data-fd="topic"]:not([aria-pressed="true"])') || document.querySelector('#view .page.current .fd-seg-btn[data-fd="sort"]:not([aria-checked="true"])');
+      if (!btn) return { error: 'no filter control' };
+      const ids = () => new Set([...document.querySelectorAll('#view .page.current .fd-row[data-id]')].map(r => r.dataset.id));
+      const before = ids(); const mins = new Map();
+      btn.click(); const t0 = performance.now();
+      await new Promise(res => { const f = () => {
+        for (const row of document.querySelectorAll('#view .page.current .fd-row[data-id]')) { const b = row.getBoundingClientRect(); if (b.bottom < 0 || b.top > innerHeight) continue; const o = op(row, document.querySelector('#view')); const k = row.dataset.id; mins.set(k, Math.min(mins.get(k) ?? 1, o)); }
+        if (performance.now() - t0 < 900) requestAnimationFrame(f); else res(); }; requestAnimationFrame(f); });
+      const after = ids(); const keep = [...before].filter(k => after.has(k) && mins.has(k));
+      const worst = keep.map(k => [k, mins.get(k)]).sort((a, b) => a[1] - b[1])[0];
+      btn.click(); // put the filter back
+      return { control: `${btn.dataset.fd}=${btn.dataset.v || ''}`, keep: keep.length, worst };
+    }, { eff: EFF_OPACITY });
+    if (r.error) check(g, 'filter control found', null, 'true', true, { detail: r.error });
+    else check(g, 'min opacity of persisting rows', r.worst ? +r.worst[1].toFixed(2) : null, '>=', 0.9, { scope: r.control, detail: `${r.keep} persisting rows on screen${r.worst ? `; lowest: row ${r.worst[0]}` : ''}` });
+  } finally { await P.close(); }
+  return g;
+}
+
+export const MOTION_GATES = { 'C-entrance': cEntrance, 'C-pacing': cPacing, 'C-rules': cRules, 'C-theme': cTheme, 'C-flight': cFlight, 'C-tabswap': cTabswap, 'C-rings': cRings, 'C-filter': cFilter };

@@ -76,11 +76,13 @@ a.pp-name:hover { color: var(--accent-text); text-decoration: underline; text-un
 #view .pp-table th:last-child, #view .pp-table td:last-child { padding-right: 24px; }
 .pp-card .pp-table { margin-top: 6px; }
 #view .pp-table--people { table-layout: fixed; }
-#view .pp-table--people th.pp-c-person { width: 34%; } #view .pp-table--people th.pp-c-stage { width: 20%; }
-#view .pp-table--people th.pp-c-emp { width: 12%; } #view .pp-table--people th.pp-c-last { width: 15%; }
+/* CP5: Person 36% (2-line cells), a narrower Stage, and LAST CONTACT given its own 112 px + 24 px right pad. */
+#view .pp-table--people th.pp-c-person { width: 36%; } #view .pp-table--people th.pp-c-stage { width: 16%; }
+#view .pp-table--people th.pp-c-emp { width: 12%; } #view .pp-table--people th.pp-c-last { width: 136px; min-width: 112px; }
+#view .pp-table--people th.pp-c-last, #view .pp-table--people td.pp-c-last { padding-right: 24px; white-space: nowrap; }
 .pp-stagecell .tag { display: flex; width: max-content; }
 .pp-stagecell .tag + .tag { margin-top: 6px; }
-.pp-aside--sticky { position: sticky; top: 72px; align-self: start; }
+.pp-aside--sticky { position: sticky; top: calc(var(--topbar-h) + 16px); align-self: start; }
 #view .pp-table--people td:first-child { padding-right: 8px; }
 #view .pp-table--people .pp-namerow { column-gap: 6px; }
 .pp-h4 { margin: 16px 0 6px; padding-top: 14px; border-top: 1px solid var(--line); color: var(--text-1); font: 500 13.5px/20px var(--font-sans); }
@@ -98,7 +100,9 @@ a.pp-name:hover { color: var(--accent-text); text-decoration: underline; text-un
 .pp-big { display: flex; align-items: baseline; gap: 10px; margin: 0 0 12px; }
 .pp-big-n { color: var(--text-1); font: 320 48px/1 var(--font-sans); letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
 .pp-big-of { color: var(--text-2); font: 450 14px/20px var(--font-sans); }
-.pp-meter { height: 6px; margin: 0 0 12px; border-radius: 3px; }
+.pp-meter { height: 6px; margin: 0 0 12px; border-radius: 3px; background: var(--track); }
+/* Neutral ink like the pipeline bars: blue is reserved for quality (B amendment 2). */
+.pp-meter > i { background: var(--text-3); }
 .pp-stages { display: flex; flex-direction: column; gap: 9px; margin: 0; padding: 0; list-style: none; }
 .pp-stages li { display: grid; grid-template-columns: 96px minmax(0, 1fr) 24px; align-items: center; gap: 10px; }
 .pp-stage-l { color: var(--text-1); font: 450 13px/18px var(--font-sans); text-transform: capitalize; }
@@ -217,4 +221,5 @@ mark.pp-pd { padding: 0 2px; border-radius: 3px; background: var(--accent-soft);
 }
 @media (max-width: 1340px) { #view .pp-table .pp-hide-md { display: none; } }
 #view .pp-table--people th { white-space: nowrap; }
+#view .pp-table td.pp-nowrap { white-space: nowrap; }
 

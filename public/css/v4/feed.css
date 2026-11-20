@@ -26,7 +26,7 @@
 .fd-legend span { display: inline-flex; align-items: center; gap: 6px; }
 .fd-n { margin-left: 2px; color: var(--text-3); font: 500 11.5px/1 var(--font-mono); font-variant-numeric: tabular-nums; }
 .chip--filter[aria-pressed=true] .fd-n { color: inherit; opacity: .8; }
-.fd-arch { margin-left: 8px; }
+.fd-arch { height: 30px; } /* a state filter, so it sits with the time and sort controls (FD12), not with the topics */
 .fd-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .fd-ctl { display: inline-flex; align-items: center; gap: 8px; color: var(--text-3); font: 450 12.5px/1 var(--font-sans); }
 .fd-ctl .select { width: auto; height: 30px; padding: 0 28px 0 10px; font-size: 13px; }
@@ -37,17 +37,19 @@
 .fd-seg-btn[aria-checked=true] { background: var(--hl-fill); color: var(--text-1); box-shadow: inset 0 0 0 1px var(--line), var(--shadow-hl); }
 
 /* ---------------------------------------------------------------- list + rows */
-.fd-list { contain: layout paint; }
+.fd-list { position: relative; contain: layout paint; }
 .fd-row {
   position: relative; display: grid; align-items: center; gap: 0 22px;
-  grid-template-columns: 52px minmax(0, 1fr) minmax(220px, 300px) 64px;
+  grid-template-columns: 52px minmax(0, 1fr) minmax(220px, 300px) 56px;
   padding: 16px 20px; border-top: 1px solid var(--line); cursor: pointer;
   transition: background-color var(--dur-hover-out) var(--ease-fade);
 }
-/* below-fold rows skip layout until scrolled to (shared .cv-row; the size estimate is a Feed row's) */
+/* rows after the 8th skip layout until scrolled to (shared .cv-row). The estimate is the measured Feed row:
+   median 105 / mean 108 px at 1440, 130 px at 1061–1279, about 200 px on phone (FD3). */
 .fd-row.cv-row { content-visibility: auto; contain-intrinsic-size: auto 106px; }
 .fd-list > .fd-row:first-child { border-top: 0; }
-.fd-rest:empty { display: none; }
+/* a row leaving through a filter change: lifted out of flow at its old place while it fades (feed.js reconcile) */
+.fd-row.fd-leaving { position: absolute; left: 0; right: 0; z-index: 0; pointer-events: none; }
 .fd-row:hover, .fd-row:focus-within { background: var(--hover-row); transition-duration: var(--dur-hover-in); }
 .fd-row.kfocus { box-shadow: inset 2px 0 0 var(--accent); background: var(--hover-row); }
 .fd-row.struck { opacity: .45; }
@@ -85,10 +87,10 @@
 .fd .mk--com { box-shadow: inset 0 0 0 1.5px var(--text-3); border-radius: 50%; }
 .fd-age-m { display: none; color: var(--text-3); }
 
-.fd-end { position: relative; display: grid; justify-items: end; align-items: center; height: 100%; }
+.fd-end { position: relative; display: grid; justify-items: start; align-items: center; height: 100%; } /* FD12: the date sits right after the meta block */
 .fd-end > * { grid-area: 1 / 1; }
 .fd-age { color: var(--text-3); font: 450 12px/1 var(--font-mono); font-variant-numeric: tabular-nums; white-space: nowrap; transition: opacity var(--dur-hover-out) var(--ease-fade); }
-/* the hover toolbar overlays the end of the row (the date column is a tight 64 px, F3) */
+/* the hover toolbar overlays the end of the row (the date column is a fixed 56 px, F3 / FD12) */
 .fd-acts { position: absolute; right: -8px; top: 50%; margin-top: -17px; display: flex; gap: 2px; padding: 2px; border-radius: var(--r-ctl); opacity: 0; transform: translateX(4px); pointer-events: none;
   background: var(--surface-solid); box-shadow: inset 0 0 0 1px var(--line), var(--shadow-1, none);
   transition: opacity var(--dur-hover-out) var(--ease-fade), transform var(--dur-hover-out) var(--ease-settle); }
@@ -107,10 +109,11 @@
 
 /* ---------------------------------------------------------------- 1280 and narrower */
 @media (max-width: 1279px) {
-  .fd-row { grid-template-columns: 48px minmax(0, 1fr) minmax(200px, 240px) 64px; gap: 0 18px; }
+  .fd-row { grid-template-columns: 48px minmax(0, 1fr) minmax(200px, 240px) 56px; gap: 0 18px; }
+  .fd-row.cv-row { contain-intrinsic-size: auto 130px; }
 }
 @media (max-width: 1060px) {
-  .fd-row { grid-template-columns: 48px minmax(0, 1fr) 64px; grid-template-areas: "s m e" "s x e"; }
+  .fd-row { grid-template-columns: 48px minmax(0, 1fr) 56px; grid-template-areas: "s m e" "s x e"; }
   .fd-score { grid-area: s; align-self: start; } .fd-main { grid-area: m; } .fd-end { grid-area: e; }
   .fd-meta { grid-area: x; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin-top: 10px; }
 }
@@ -125,6 +128,7 @@
   .fd-controls { width: 100%; }
   .fd-ctl > span { display: none; }
   .fd-row { grid-template-columns: 44px minmax(0, 1fr); grid-template-areas: "s m" "x x"; gap: 0 12px; padding: 14px 16px; min-height: 0; }
+  .fd-row.cv-row { contain-intrinsic-size: auto 200px; }
   .fd-end { display: none; }
   .fd-age-m { display: inline; }
   .fd-meta { grid-area: x; margin-top: 10px; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 6px 10px; }

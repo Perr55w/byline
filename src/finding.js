@@ -89,12 +89,19 @@ export function shortTitle(title = '') {
 // ---------- boilerplate + claim cleanup ----------
 export const BOILERPLATE = /^(this article is adapted|learn about|read on|today, we are excited|we['’]re (excited|highlighting)|features\b|bug fixes|\w+ is an ai safety)|^today,? we(?:'|’)?re|^today,? we are (announcing|introducing|launching|excited)|^we are expanding our partnership/i;
 const wc = (s) => (String(s).match(/\S+/g) || []).length;
+// R2 S14: marketing filler that can sit anywhere in a sentence (story 16: "Since announcing …, we’ve heard helpful
+// feedback …", "Now, everybody finally gets what they want: …")
+export const FILLER = /we(?:'|’)ve heard (?:helpful )?feedback|^now,? everybody|finally gets what they want|^since announcing/i;
+/** A first-person-plural sentence ("we", "our", "us") with no number in it: a company talking about itself. */
+export const selfTalk = (text) => /\b(?:we|we(?:'|’)(?:ve|re|ll|d)|our|ours|us)\b/i.test(String(text || '')) && !/\d/.test(String(text || ''));
+/** May this sentence be shown as a story's Key claim or a post-worthy quote? */
+export const keyEligible = (text) => !!text && !FILLER.test(String(text).trim()) && !BOILERPLATE.test(String(text).trim()) && !selfTalk(text);
 
 /** True when a summary should never be used as a dek: F's regex, fewer than 8 words, or a newline list. */
 export function isBoilerplate(text) {
   const t = String(text || '').trim();
   if (!t) return true;
-  if (BOILERPLATE.test(t)) return true;
+  if (BOILERPLATE.test(t) || FILLER.test(t)) return true;
   if (wc(t) < 8) return true;
   if (/\n\s*([-*•·]|\d+[.)])\s/.test(t) || (t.match(/\n/g) || []).length >= 2) return true;
   if (/\s\.\s+[a-z]/.test(t) || (t.match(/(?:^|\s)[a-z]+: [a-z]/g) || []).length >= 2) return true;   // run-together release notes
@@ -117,7 +124,7 @@ export function cleanClaim(text) {
  * release-notes list (a mid-text " . " followed by lowercase, or two or more "label: lowercase" items).
  */
 export function usableClaim(text, raw = text) {
-  if (wc(text) < 6 || BOILERPLATE.test(text) || text.length > 360) return false;
+  if (wc(text) < 6 || BOILERPLATE.test(text) || FILLER.test(String(text).trim()) || text.length > 360) return false;
   if (/\s\.\s+[a-z]/.test(String(raw))) return false;
   if ((String(raw).match(/(?:^|\s)[a-z]+: [a-z]/g) || []).length >= 2) return false;
   return true;
@@ -237,7 +244,9 @@ const SIGNAL_MAP = { ga: 'general availability', 'general availability': 'genera
 export function mapSignals(hits = []) {
   const seen = new Set(), out = [];
   for (const h of hits) { const m = SIGNAL_MAP[h.toLowerCase()] || h.toLowerCase(); if (!seen.has(m)) { seen.add(m); out.push(m); } }
-  return out;
+  // R2 S14: drop a hit contained in another ('availability' inside 'general availability')
+  const has = (big, small) => big !== small && new RegExp(`(^|\\s)${small.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(\\s|$)`).test(big);
+  return out.filter(m => !out.some(o => has(o, m)));
 }
 export const listJoin = (xs) => xs.length <= 1 ? (xs[0] || '') : xs.length === 2 ? `${xs[0]} and ${xs[1]}` : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`;
 
@@ -282,11 +291,12 @@ export function findingLine(story = {}, articles = [], claims = []) {
     if (t && !isBoilerplate(t)) {
       const ss = sentences(t);
       let pick = '';
-      for (const x of (ss.length ? ss : [t])) { if (BOILERPLATE.test(x)) continue; pick = pick ? `${pick} ${x}` : x; if (wc(pick) >= 12 || pick.length >= 140) break; }
+      for (const x of (ss.length ? ss : [t])) { if (BOILERPLATE.test(x) || FILLER.test(x.trim())) continue; pick = pick ? `${pick} ${x}` : x; if (wc(pick) >= 12 || pick.length >= 140) break; }
       if (wc(pick) >= 8) return done(capLen(pick), 'summary', { article_id: cand === origin?.summary ? origin?.id : null });
     }
   }
-  // (d) signals phrase
+  // (d) R2 S14: a claim exists but none qualified above → the short title; "Mentions X, Y and Z." only when no claim
+  if (cleaned.length && story.title) { const st = shortTitle(story.title); if (st) return done(/[.!?]$/.test(st) ? st : `${st}.`, 'title'); }
   const b = story.breakdown || {};
   const sig = mapSignals(b.impact_hits || []);
   if (sig.length) return done(`Mentions ${listJoin(sig.slice(0, 3))}.`, 'signals');
@@ -311,7 +321,9 @@ export function groupClaims(articles = [], claims = [], { usedClaimIds = new Set
   const ordered = orderArticles(articles);
   const pos = new Map(ordered.map((a, i) => [a.id, i]));
   const cl = claims.map(c => ({ ...c, clean: cleanClaim(c.text) })).filter(c => usableClaim(c.clean, c.text))
-    .sort((x, y) => (pos.get(x.article_id) ?? 99) - (pos.get(y.article_id) ?? 99) || y.has_number - x.has_number || x.id - y.id);
+    .map(c => ({ ...c, key_ok: keyEligible(c.clean) }))
+    // R2 S14: within an article, a self-talk sentence with no number never leads (it can't be the Key claim)
+    .sort((x, y) => (pos.get(x.article_id) ?? 99) - (pos.get(y.article_id) ?? 99) || y.key_ok - x.key_ok || y.has_number - x.has_number || x.id - y.id);
   const toks = new Map(cl.map(c => [c.id, tokens(c.clean)]));
   const kept = [], dupOf = new Map();
   for (const c of cl) {
@@ -323,7 +335,7 @@ export function groupClaims(articles = [], claims = [], { usedClaimIds = new Set
   const groups = new Map(ordered.map(a => [a.id, []]));
   for (const c of kept) {
     const also = [...dupOf.entries()].filter(([, k]) => k === c.id).map(([d]) => domainOfArt.get(cl.find(x => x.id === d)?.article_id)).filter(Boolean);
-    groups.get(c.article_id)?.push({ id: c.id, text: c.clean, marks: numberMarks(c.clean), evidence_kind: c.evidence_kind, has_number: !!c.has_number, also_reported_by: [...new Set(also)], used_as_summary: usedClaimIds.has(c.id) });
+    groups.get(c.article_id)?.push({ id: c.id, text: c.clean, marks: numberMarks(c.clean), evidence_kind: c.evidence_kind, has_number: !!c.has_number, also_reported_by: [...new Set(also)], used_as_summary: usedClaimIds.has(c.id), key_eligible: c.key_ok });
   }
   const duplicates = [...dupOf.entries()].map(([id, of]) => ({ id, duplicate_of: of, article_id: cl.find(x => x.id === id)?.article_id }));
   return { groups, duplicates };

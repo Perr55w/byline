@@ -31,26 +31,58 @@
 #view .em-table th:last-child, #view .em-table td:last-child { padding-right: 24px; }
 .em-th-sub { margin-left: 4px; color: var(--text-3); text-transform: none; letter-spacing: 0; font: 450 11px/1 var(--font-sans); }
 .em-table tbody tr.is-pinned { box-shadow: inset 2px 0 0 var(--line-ctl); }
-.em-emp { width: 34%; }
-.em-name { color: var(--text-1); font: 500 15px/21px var(--font-sans); text-decoration: none; margin-right: 8px; }
+.em-table tbody tr:hover, .em-table tbody tr:focus-within, .em-table tbody tr.is-menu { background: var(--hover-row); }
+#view .em-table .em-emp { width: 32%; }
+.em-namerow { display: flex; align-items: center; gap: 4px; }
+.em-name { color: var(--text-1); font: 500 15px/21px var(--font-sans); text-decoration: none; }
 .em-name:hover { color: var(--accent-text); text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 1px; }
-.em-pintag { vertical-align: 1px; }
+/* Pin: a 24 px icon toggle beside the name (CP2). Outline at rest, filled ink when pressed; always visible. */
+.em-pin { display: inline-grid; place-items: center; flex: none; width: 24px; height: 24px; padding: 0; border: 0; border-radius: var(--r-tag); background: transparent; color: var(--text-3); cursor: pointer; }
+.em-pin:hover { background: var(--tint-2); color: var(--text-1); }
+.em-pin:focus-visible { outline: 2px solid var(--focus-c); outline-offset: 1px; }
+.em-pin-i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linejoin: round; stroke-linecap: round; }
+.em-pin[aria-pressed=true] { color: var(--text-1); }
+.em-pin[aria-pressed=true] .em-pin-i { fill: currentColor; }
 .em-topics { display: block; margin-top: 4px; color: var(--text-2); font: 400 13px/19px var(--font-sans); }
-.em-cov { width: 24%; padding-top: 16px !important; }
+#view .em-table .em-cov { width: 30%; }
+td.em-cov { padding-top: 16px !important; }
 .em-bar { display: grid; grid-template-columns: minmax(60px, 1fr) 24px; align-items: center; gap: 10px; }
 .em-bar .meter { height: 6px; border-radius: 3px; background: var(--track); }
 .em-bar .meter > i { background: color-mix(in oklab, var(--text-3) 60%, transparent); }
 .em-bar b { color: var(--text-1); font: 500 13px/1 var(--font-mono); text-align: right; font-variant-numeric: tabular-nums; }
-.em-bar.is-zero b { color: var(--text-3); }
-.em-teams { min-width: 180px; }
-.em-team { display: flex; flex-wrap: nowrap; align-items: center; gap: 6px; margin: -4px 0 2px; color: var(--text-1); font: 450 13.5px/20px var(--font-sans); white-space: nowrap; }
-.em-team-n { margin-right: 2px; overflow: hidden; text-overflow: ellipsis; }
-.em-team .btn--sm { padding-left: 8px; padding-right: 8px; }
-.em-addteam { margin-left: -10px; }
-.em-act { width: 1%; white-space: nowrap; }
-.em-act .cluster { flex-wrap: nowrap; gap: 6px; }
-.em-act [data-pin] { min-width: 64px; }
-.em-act .icon { width: 14px; height: 14px; }
+.em-zero { color: var(--text-3); font: 450 12.5px/18px var(--font-sans); }
+/* Which stories the count is made of (up to 2, highest score first), each opening the dossier. */
+.em-stories { display: flex; flex-direction: column; gap: 2px; margin: 8px 34px 0 0; padding: 0; list-style: none; }
+.em-story-l { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; color: var(--text-2); font: 400 13px/18px var(--font-serif); font-variation-settings: 'opsz' 14; text-decoration: none; text-wrap: pretty; }
+.em-story-l:hover { color: var(--accent-text); text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 1px; }
+.em-story-l:focus-visible { outline: 2px solid var(--focus-c); outline-offset: 2px; border-radius: 2px; }
+.em-more { display: inline-block; margin-top: 4px; color: var(--text-3); font: 450 12px/16px var(--font-sans); }
+.em-more:hover { color: var(--text-1); }
+.em-teams { min-width: 160px; }
+.em-team { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; color: var(--text-1); font: 450 13.5px/20px var(--font-sans); }
+.em-team + .em-team { margin-top: 6px; }
+.em-team-n { overflow: hidden; text-overflow: ellipsis; }
+/* "+ Team" only when the employer has no watchlist, shown on row hover / focus; its box is kept so nothing shifts. */
+.em-addteam { margin: -4px 0 0 -10px; opacity: 0; transition: opacity var(--dur-hover-out) var(--ease-fade); }
+.em-addteam .icon { width: 14px; height: 14px; }
+tr:hover .em-addteam, tr:focus-within .em-addteam, .em-addteam:focus-visible { opacity: 1; transition-duration: var(--dur-hover-in); }
+#view .em-table .em-act { width: 1%; white-space: nowrap; }
+.em-actrow { display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin-top: -4px; }
+.em-activity { display: inline-flex; align-items: center; gap: 4px; color: var(--text-2); font: 450 13px/20px var(--font-sans); text-decoration: none; }
+.em-activity:hover { color: var(--text-1); text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 1px; }
+.em-activity .icon { width: 13px; height: 13px; }
+.em-activity:focus-visible { outline: 2px solid var(--focus-c); outline-offset: 2px; border-radius: 2px; }
+/* Row menu (Edit, team Follow / Remove, Add team): the trigger fades in on hover / focus; keyboard reaches it. */
+.em-menu { position: relative; }
+.em-more-btn { opacity: 0; transition: opacity var(--dur-hover-out) var(--ease-fade); }
+.em-more-btn .icon { width: 16px; height: 16px; }
+tr:hover .em-more-btn, tr:focus-within .em-more-btn, .em-more-btn[aria-expanded=true] { opacity: 1; transition-duration: var(--dur-hover-in); }
+@media (hover: none) { .em-more-btn, .em-addteam { opacity: 1; } }
+.em-menu-pop { position: absolute; right: 0; top: calc(100% + 6px); z-index: 30; min-width: 232px; padding: 6px; border-radius: var(--r-tile); background: var(--raised); box-shadow: inset 0 0 0 1px var(--line-2), var(--shadow-2); text-align: left; white-space: nowrap; }
+.em-menu-pop [role=menuitem] { display: flex; align-items: center; width: 100%; height: 34px; padding: 0 10px; border: 0; border-radius: var(--r-ctl); background: transparent; color: var(--text-1); font: 450 14px/1 var(--font-sans); text-align: left; cursor: pointer; }
+.em-menu-pop [role=menuitem]:hover { background: var(--tint-2); }
+.em-menu-pop [role=menuitem]:focus-visible { background: var(--tint-2); outline: none; box-shadow: inset 0 0 0 1px var(--focus-c); }
+.em-menu-sep { height: 1px; margin: 6px 4px; background: var(--line); }
 
 /* ---------------------------------------------------------------- activity */
 .em-cols { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: var(--gap); align-items: start; }
@@ -86,7 +118,9 @@
   #view .em-table tbody tr { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; padding: 16px 18px; border-top: 1px solid var(--line); }
   #view .em-table tbody tr:first-child { border-top: 0; }
   #view .em-table tbody td { display: block; padding: 0 !important; border: 0; width: auto; }
-  .em-act .cluster { flex-wrap: wrap; }
+  #view .em-table tbody td.em-emp, #view .em-table tbody td.em-cov, #view .em-table tbody td.em-act { width: auto; }
+  .em-actrow { justify-content: space-between; flex-direction: row-reverse; margin: 0; }
+  .em-stories { margin-right: 0; }
   .em-evform { grid-template-columns: 1fr; }
   .em-tagrow { margin: -8px 0 18px; }
 }
@@ -95,4 +129,4 @@
    ink with color-mix (tokens only). Shared-file request: fix .tag--ok/--warn/--demo in components.css. */
 :is(.cp-ok, .pp-note--ok) { color: var(--ok-text); }
 :is(.pp-note--warn, .pp-dupnote, .pp-date.is-today) { color: var(--warn-text); }
-@media (max-width: 760px) { .em-teams:not(:has(.em-team)) .em-addteam { margin-left: -10px; } .em-teams { min-width: 0; } }
+@media (max-width: 760px) { .em-teams { min-width: 0; } #view .em-table tbody td.em-teams:not(:has(.em-team)) { display: none; } .em-menu-pop { right: auto; left: 0; } }

@@ -216,3 +216,60 @@ test('round 1 S17d: boilerplate openers, signal words, no "Independent check: In
   assert.deepEqual(mapSignals(['standard', 'cost', 'costs', 'GA']), ['a standard', 'cost or pricing', 'general availability']);
   assert.equal(isBoilerplate('Acme cut agent task failures by 21% across 60 workflows in an independent test last month'), false);
 });
+
+// ---------- round 2 S13 / S14 ----------
+import { FILLER, selfTalk, keyEligible } from '../src/finding.js';
+import { local, firstPartyEmployer } from '../src/ai/local.js';
+import { articlesView } from '../src/dossier.js';
+
+test('S14 · story-16 filler lines are boilerplate and never usable claims', () => {
+  for (const t of ['Since announcing Google Antigravity in Gemini Enterprise Agent Platform at I/O in May, we’ve heard helpful feedback from our customers.',
+    'Now, everybody finally gets what they want: Antigravity is available now as part of eligible plans.',
+    'We\'ve heard feedback from developers that they want more control over agents.']) {
+    assert.ok(FILLER.test(t), t);
+    assert.equal(usableClaim(cleanClaim(t)), false, t);
+    assert.equal(isBoilerplate(t), true, t);
+  }
+});
+
+test('S14 · first-person-plural sentences with no number are not Key-claim / quote eligible', () => {
+  assert.equal(selfTalk('We think this changes how teams ship agents in production.'), true);
+  assert.equal(keyEligible('We think this changes how teams ship agents in production.'), false);
+  assert.equal(keyEligible('Our customers ran 1.2 trillion tokens through the platform last year.'), true); // has a number
+  assert.equal(keyEligible('Independent testers found a 21% drop in task failures.'), true);
+  // the Key claim skips a self-talk claim even when it is listed first
+  const arts = [{ id: 1, domain: 'example.com', evidence_kind: 'announcement', title: 'T', summary: '' }];
+  const claims = [{ id: 10, article_id: 1, text: 'We are thrilled to bring agents to every team across the company today.', has_number: 0 },
+    { id: 11, article_id: 1, text: 'The agent cut ticket handling time by 30% in a pilot with 40 support staff.', has_number: 1 }];
+  const v = articlesView(arts, claims);
+  assert.equal(v.articles?.[0]?.says?.claim_id ?? v[0]?.says?.claim_id ?? (v.list || [])[0]?.says?.claim_id, 11);
+});
+
+test('S14 · "Mentions X, Y and Z." only when there is no claim; otherwise the short title', () => {
+  const story = { title: 'Northwind releases Relay: an agent runtime for teams', breakdown: { impact_hits: ['ga', 'api'] }, topics: ['Agents'] };
+  const arts = [{ id: 1, domain: 'acme.dev', evidence_kind: 'announcement', title: 'Relay', summary: '' }];
+  const claimNoNum = [{ id: 1, article_id: 1, text: 'Relay lets teams wire agents into existing workflows without new infrastructure.', has_number: 0 }];
+  assert.equal(findingLine(story, arts, claimNoNum).text, 'Northwind releases Relay.');
+  assert.match(findingLine(story, arts, []).text, /^Mentions general availability and an API\.$/);
+});
+
+test('S14 · signal hits contained in another hit are dropped', () => {
+  assert.deepEqual(mapSignals(['available', 'ga', 'enterprise']), ['general availability', 'enterprise']);
+});
+
+test('S13 · an employer named only in an article title is "named"; the origin employer is first-party', async () => {
+  const employers = [{ name: 'Google Cloud', terms: ['Vertex AI', 'adoption'], topics: [] }, { name: 'Google (other teams)', terms: ['Google'], topics: [] }, { name: 'IBM', terms: ['watsonx', 'governance'], topics: [] }];
+  const articles = [{ id: 1, domain: 'news.example.com', evidence_kind: 'reporting', title: 'IBM expands its agent tooling', summary: 'The release adds governance controls for agents in production.', url: 'https://news.example.com/a' }];
+  const out = await local.employerConnections({ story: { title: 'Agent tooling', companies: [] }, articles, claims: [], employers });
+  const ibm = out.find(c => c.employer === 'IBM');
+  assert.ok(ibm, 'IBM matched on governance');
+  assert.equal(ibm.mention_ok, true, 'named in a title counts as named');
+  // first-party: cloud.google.com → the most specific employer
+  assert.equal(firstPartyEmployer({ domain: 'cloud.google.com', evidence_kind: 'announcement' }, employers), 'Google Cloud');
+  assert.equal(firstPartyEmployer({ domain: 'cloud.google.com', evidence_kind: 'reporting' }, employers), null);
+  const gc = await local.employerConnections({ story: { title: 'Gemini at Work' }, articles: [{ id: 2, domain: 'cloud.google.com', evidence_kind: 'announcement', title: 'Gemini at Work 2026', summary: 'Customers adoption grew.', url: 'https://cloud.google.com/x' }], claims: [], employers });
+  const g = gc.find(c => c.employer === 'Google Cloud');
+  assert.equal(g.first_party, true);
+  assert.equal(g.mention_ok, true);
+  assert.equal(g.mention_note, 'First-party: this is Google Cloud’s own post.');
+});

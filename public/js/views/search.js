@@ -6,7 +6,7 @@
 // param #/search/<query> prefills and runs (the ⌘K fallback uses it). Story rows are dossier flight
 // sources (data-dossier-src + data-shared title / chip→ring / topic).
 import { api } from '../api.js';
-import { html, raw, esc, on, icon, scoreChip, channelLabel, status as statusTag, useStyle, inField, timeAgo, toast } from '../ui.js';
+import { html, raw, esc, on, icon, scoreChip, topicPills, channelLabel, status as statusTag, useStyle, inField, timeAgo, toast } from '../ui.js';
 import { enterItems, reduced, EASE } from '../motion.js';
 
 const TYPES = [['stories', 'Stories'], ['claims', 'Claims'], ['drafts', 'Drafts'], ['notes', 'Notes'], ['contacts', 'Contacts'], ['briefs', 'Briefs']];
@@ -74,13 +74,14 @@ const shiftMarks = (marks, offset) => (marks || []).map(([a, b]) => [a + offset,
  * run it on the next idle period.
  */
 function afterEnter(view, el, fn) {
-  let done = false;
-  const run = () => { if (done) return; done = true; document.removeEventListener('byline:routed', onRouted); if (el.isConnected) fn(); };
+  let done = false, fallback = 0;
+  // SS6: once the idle run has happened, the 2.5 s fallback is cancelled (no stray task on an idle Search tab)
+  const run = () => { clearTimeout(fallback); if (done) return; done = true; document.removeEventListener('byline:routed', onRouted); if (el.isConnected) fn(); };
   const idle = () => (window.requestIdleCallback ? requestIdleCallback(run, { timeout: 500 }) : setTimeout(run, 60));
   const onRouted = (e) => { if (e.detail?.page?.contains(el)) { document.removeEventListener('byline:routed', onRouted); requestAnimationFrame(() => setTimeout(idle, 0)); } };
   if (view.closest?.('.page.current') || view.classList?.contains('current')) { idle(); return; }
   document.addEventListener('byline:routed', onRouted);
-  setTimeout(run, 2500);
+  fallback = setTimeout(run, 2500);
 }
 
 // ------------------------------------------------------------------ data
@@ -180,6 +181,16 @@ function quickChips(S) {
 }
 
 // ------------------------------------------------------------------ rows (F §4 anatomy)
+/** SS5: a story's score shown on a claim or draft row: the shared ramp chip, labelled "story 59" (title "Story score 59"). */
+function storyScore(score, T) {
+  const n = Math.round(Number(score) || 0);
+  return raw(String(scoreChip(score, T)).replace(/title="[^"]*"/, `title="Story score ${n}"`).replace(/<span class="sr-only">Score <\/span>\d+/, `<span class="sr-story-l">story</span> ${n}`));
+}
+/** SS5: the story's topics through the shared helper: blue lead pill only above the bar, neutral below. */
+function storyTopics(s, T) {
+  const list = [s.main_topic, ...(s.topics || []).filter(t => t !== s.main_topic)].filter(Boolean);
+  return raw(String(topicPills(list, s.score, T, { max: 2 })).replace('<span class="chip ', '<span data-shared="topic" class="chip '));
+}
 function storyRow(s, S) {
   const q = S.f.q;
   const inTitle = q && s.title.toLowerCase().includes(q.toLowerCase());
@@ -191,7 +202,7 @@ function storyRow(s, S) {
     <span class="sr-main">
       <span class="sr-title" data-shared="title">${hl(s.title, q)}${s.is_demo ? html` <span class="tag tag--demo">Demo</span>` : ''}</span>
       ${snip && String(snip) ? html`<span class="sr-snip">${snip}</span>` : ''}
-      <span class="sr-meta">${s.main_topic ? html`<span class="chip chip--main" data-shared="topic">${s.main_topic}</span>` : ''}<span class="mono">${s.source_line || ''}</span><time datetime="${s.updated_at}">${fmtDay(s.updated_at, S.tz)}</time>${s.status === 'archived' ? html`<span class="tag tag--neutral">Archived</span>` : ''}</span>
+      <span class="sr-meta">${storyTopics(s, S.T)}<span class="mono">${s.source_line || ''}</span><time datetime="${s.updated_at}">${fmtDay(s.updated_at, S.tz)}</time>${s.status === 'archived' ? html`<span class="tag tag--neutral">Archived</span>` : ''}</span>
     </span>
   </a>`;
 }
@@ -202,7 +213,7 @@ function claimRow(c, S) {
     <span class="sr-lead"><span class="sr-glyph" aria-hidden="true">“</span></span>
     <span class="sr-main">
       <span class="sr-claim-text">${hl(text, q, c.text_clean ? c.marks : [])}</span>
-      <span class="sr-meta"><span class="mono">${c.domain}</span><span>${EV[c.evidence_kind] || c.evidence_kind}</span>${c.story_id ? html`<span class="sr-from">from <b>${c.story_short_title || c.story_title}</b></span>${c.story_score != null ? html`<span class="sr-mini">${scoreChip(c.story_score, S.T)}</span>` : ''}` : ''}</span>
+      <span class="sr-meta"><span class="mono">${c.domain}</span><span>${EV[c.evidence_kind] || c.evidence_kind}</span>${c.story_id ? html`<span class="sr-from">from <b>${c.story_short_title || c.story_title}</b></span>${c.story_score != null ? html`<span class="sr-mini">${storyScore(c.story_score, S.T)}</span>` : ''}` : ''}</span>
     </span>
   </a>`;
 }
@@ -212,7 +223,7 @@ function draftRow(d, S) {
     <span class="sr-lead"><span class="sr-ico">${icon('studio')}</span></span>
     <span class="sr-main">
       <span class="sr-title sr-title--sm">${hl(d.title || 'Untitled draft', q)}</span>
-      <span class="sr-meta"><span>${channelLabel(d.channel, d.format)}</span>${statusTag(d.status)}<span>edited ${timeAgo(d.updated_at)}</span>${d.planned_date ? html`<span>planned ${fmtLongDay(d.planned_date)}</span>` : ''}${d.story_score != null ? html`<span class="sr-mini" title="Story score">${scoreChip(d.story_score, S.T)}</span>` : ''}</span>
+      <span class="sr-meta"><span>${channelLabel(d.channel, d.format)}</span>${statusTag(d.status)}<span>edited ${timeAgo(d.updated_at)}</span>${d.planned_date ? html`<span>planned ${fmtLongDay(d.planned_date)}</span>` : ''}${d.story_score != null ? html`<span class="sr-mini">${storyScore(d.story_score, S.T)}</span>` : ''}</span>
     </span>
   </a>`;
 }
@@ -251,7 +262,7 @@ function draftGroupRow(ds, S) {
     <span class="sr-main">
       <a class="sr-title sr-title--sm sr-dlink" href="#/draft/${top.id}" data-sr-item title="Open the newest draft (${channelLabel(top.channel, top.format)})">${hl(top.title || 'Untitled draft', q)}</a>
       <span class="sr-chans" aria-label="${ds.length} drafts of this story, by channel">${byChannel(ds).map(c => html`<a class="sr-chan${c.review ? ' is-review' : ''}" href="#/draft/${c.top.id}" title="${c.label}: ${plural(c.n, 'draft')}${c.review ? `, ${c.review} in review` : ''} · newest edited ${timeAgo(c.top.updated_at)}">${c.label}${c.n > 1 ? html`<span class="sr-chan-n">×${c.n}</span>` : ''}${c.review ? html`<span class="sr-chan-st">in review</span>` : ''}</a>`)}</span>
-      <span class="sr-meta"><span><b class="sr-strong">${ds.length}</b> drafts · ${stLine}</span><span>newest edit ${timeAgo(top.updated_at)}</span>${top.story_score != null ? html`<span class="sr-mini" title="Story score">${scoreChip(top.story_score, S.T)}</span>` : ''}</span>
+      <span class="sr-meta"><span><b class="sr-strong">${ds.length}</b> drafts · ${stLine}</span><span>newest edit ${timeAgo(top.updated_at)}</span>${top.story_score != null ? html`<span class="sr-mini">${storyScore(top.story_score, S.T)}</span>` : ''}</span>
     </span>
   </div>`;
 }
@@ -321,7 +332,7 @@ function resultsHtml(S, { from = 0, to = Infinity } = {}) {
     const shown = f.type === 'all' ? list.slice(0, idle ? IDLE_PER_GROUP[k] : PER_GROUP) : list;
     const total = c[k] ?? r[k].length;
     const covered = k === 'drafts' ? shown.reduce((a, ds) => a + ds.length, 0) : k === 'notes' ? shown.reduce((a, n) => a + n.count, 0) : shown.length;
-    return html`<section class="sr-group${from + gi > 0 ? ' cv' : ''}" aria-labelledby="sr-g-${k}" data-group="${k}">
+    return html`<section class="sr-group${from + gi > 0 || S.first === 0 ? ' cv' : ''}" aria-labelledby="sr-g-${k}" data-group="${k}">
       <div class="sr-group-head">
         <h2 class="sr-gh" id="sr-g-${k}">${idle ? IDLE_TITLE[k] : label}<span class="sr-gn">${total}</span></h2>
         ${f.type === 'all' && total > covered ? html`<button type="button" class="btn btn--ghost btn--sm" data-sr-type="${k}">${idle ? `All ${total}` : `Show all ${total}`}${icon('arrow-right')}</button>` : ''}
@@ -481,19 +492,18 @@ export async function render(view, ctx = {}) {
     S.rest = true;
     const out = el.querySelector('[data-sr-results]');
     const res = S.res;
-    // one result group per idle slice (E1 at 4×); a newer search (repaint) replaces the list and stops this
+    // one result group per idle slice and per frame (E1 at 4×): the next group waits for the rendering update of
+    // the previous one, so two groups' style + layout never share a frame. A newer search (repaint) stops this.
     let at = S.first;
-    const pump = (dl) => {
+    const pump = () => {
       if (!out.isConnected || S.res !== res || S.repainted || S.error || !res?.counts?.total) return;
-      do {
-        const part = String(resultsHtml(S, { from: at, to: at + 1 }));
-        if (!part) return;
-        at++;
-        const before = out.children.length;
-        out.insertAdjacentHTML('beforeend', part);
-        enterItems([...out.children].slice(before), { y: 6, duration: 420, fadeDuration: 320 });
-      } while (dl && dl.timeRemaining() > 8);
-      (window.requestIdleCallback ? requestIdleCallback(pump, { timeout: 300 }) : setTimeout(pump, 16));
+      const part = String(resultsHtml(S, { from: at, to: at + 1 }));
+      if (!part) return;
+      at++;
+      const before = out.children.length;
+      out.insertAdjacentHTML('beforeend', part);
+      enterItems([...out.children].slice(before), { y: 6, duration: 420, fadeDuration: 320 });
+      requestAnimationFrame(() => (window.requestIdleCallback ? requestIdleCallback(pump, { timeout: 300 }) : setTimeout(pump, 16)));
     };
     pump(null);
   });

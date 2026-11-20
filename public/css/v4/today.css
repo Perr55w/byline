@@ -11,6 +11,14 @@
 .today-top { position: relative; z-index: 3; }
 .td-head h1 { max-width: 20ch; }
 .td-head .lede { max-width: 72ch; }
+/* T9 (D §3): the actions sit on the h1's last baseline, not on the lede's second line */
+/* the h1 has layout containment (it exports no baseline), so the actions align to its box bottom: the h1 ends about one
+   Newsreader descent below its last baseline (19 px at 68 px) and the 34 px button's label baseline sits 17 px above its
+   bottom, so 2 px lands them on the same baseline at 1440 (±3 px across the clamp) */
+@media (min-width: 761px) {
+  .td-head .page-head-actions { grid-row: 2; align-self: end; padding-bottom: 0; margin-bottom: 2px; }
+}
+
 
 /* ---------------------------------------------------------------- run strip (collection state + last run) */
 .td-strip {
@@ -52,9 +60,14 @@
 .td-side > .td-story--lg { flex-grow: 1.2; }
 .td-grid > .td-wx { grid-column: span 7; }
 .td-grid > .td-map { grid-column: span 5; }
-/* row 3 (T1): This week 7 | Waiting on you 5, each as tall as its content */
-.td-grid > .td-week { grid-column: span 7; align-self: start; }
-.td-grid > .td-desk { grid-column: span 5; align-self: start; }
+/* row 3: This week 7 | Waiting on you 5. T4: both stretch to the row; This week's day cells take the extra height */
+.td-grid > .td-week { grid-column: span 7; }
+.td-grid > .td-desk { grid-column: span 5; }
+/* T1: the deferred tiles skip style + layout while off screen (shared .cv); the estimates are the measured content
+   heights (content box: tile height − padding − border) at 1440 here and at 390 in the narrow block below */
+.td-wx.cv, .td-map.cv { contain-intrinsic-size: auto 477px; }
+.td-week.cv, .td-desk.cv { contain-intrinsic-size: auto 280px; }
+.td-rest.cv { contain-intrinsic-size: auto 336px; }
 .td-grid > .td-rest, .td-grid > .td-empty { grid-column: span 12; }
 
 /* shared tile type */
@@ -80,9 +93,10 @@
 .td-stretch:hover { color: inherit; }
 
 /* ---------------------------------------------------------------- lead tile */
-/* the lead and the side stack share a row: when the stack is taller, the lead spreads the difference across its
-   section gaps (space-between) instead of leaving one hole above the footer */
-.td-lead { display: flex; flex-direction: column; justify-content: space-between; min-height: 100%; }
+/* T3 (ruling R8): fixed 24 px gaps between the sections; nothing spreads. The source mix is real content that makes up
+   the height of the side column; when the lead is still > 32 px short, it stops stretching (.is-short, set by fitLead) */
+.td-lead { display: flex; flex-direction: column; gap: 24px; }
+.td-lead.is-short { align-self: start; }
 /* T2: pills / title / dek in column 1, the ring beside them; the last row takes any extra height the ring
    needs, so the dek always sits 12px under the title */
 .td-lead-top {
@@ -102,17 +116,26 @@
 .td-dek { margin: 12px 0 0; max-width: 58ch; color: var(--text-2); font: 400 16px/25px var(--font-sans); letter-spacing: -0.004em; text-wrap: pretty; }
 .td-dek b { color: var(--text-1); font-weight: 550; }
 .td-dek a { color: var(--text-1); }
-.td-why { margin: 22px 0 24px; padding-top: 18px; border-top: 1px solid var(--line); }
+.td-why { margin: 0; padding-top: 18px; border-top: 1px solid var(--line); }
 .td-why ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; }
 .td-why li { position: relative; padding-left: 20px; color: var(--text-1); font: 400 15px/22px var(--font-sans); text-wrap: pretty; }
 .td-why li::before { content: ""; position: absolute; left: 2px; top: 11px; width: 9px; height: 1.5px; border-radius: 1px; background: var(--accent); }
-.td-named { display: flex; align-items: center; gap: 10px 14px; flex-wrap: wrap; margin: -6px 0 24px; }
+.td-named { display: flex; align-items: center; gap: 10px 14px; flex-wrap: wrap; margin: 0; }
+.td-mix .td-label { margin-bottom: 6px; }
+.td-mix-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; margin: 0; }
+.td-mix-kinds { color: var(--text-2); font: 450 13.5px/20px var(--font-sans); font-variant-numeric: tabular-nums; }
+.td-mix-kinds b { color: var(--text-1); font-weight: 550; }
+.td-mix-extra { margin: 4px 0 0; color: var(--text-2); font: 400 14px/21px var(--font-sans); }
+.td-mix-extra b { color: var(--text-1); font-weight: 550; }
+/* compact: no origin line (the footer carries the origin domain) */
+.td-lead.mix-compact .td-mix-extra { display: none; }
 .td-named .td-label { margin: 0; }
 .td-named .cluster { gap: 6px; }
 .td-why--sm { margin: 4px 0 8px; padding-top: 14px; }
 .td-why--sm li { font-size: 13.5px; line-height: 20px; padding-left: 16px; }
 .td-why--sm li::before { top: 9.5px; width: 7px; }
 .td-lead-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding-top: 16px; border-top: 1px solid var(--line); }
+.td-lead-foot:not(:has(.td-domain)) .td-open { margin-left: auto; }
 .td-domain { display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: var(--r-tag); background: var(--tint-1); color: var(--text-2); font: 450 12px/1 var(--font-mono); }
 .td-open {
   position: relative; z-index: 2; display: inline-flex; align-items: center; gap: 6px; margin: -6px -8px -6px auto; padding: 6px 8px; border-radius: var(--r-ctl);
@@ -145,15 +168,21 @@
 /* ---------------------------------------------------------------- news weather (one dot per story, score axis, per topic) */
 .td-wx { display: flex; flex-direction: column; }
 .td-wx-toggle[aria-pressed=true] { background: var(--tint-2); color: var(--text-1); }
-.td-wx-chart { --name-w: 152px; --label-w: 44px; --col-gap: 14px; position: relative; display: flex; flex-direction: column; margin-top: 14px; }
+.td-wx-chart { --name-w: 152px; --label-w: 58px; --col-gap: 14px; position: relative; display: flex; flex-direction: column; margin-top: 14px; }
 .td-wx-axis, .td-wx-scale { position: relative; margin-left: calc(var(--name-w) + var(--col-gap)); margin-right: calc(var(--label-w) + var(--col-gap)); }
 .td-wx-axis { height: 18px; }
 .td-wx-bar-label { position: absolute; left: calc(var(--x) * 100%); bottom: 3px; transform: translateX(-50%); color: var(--text-3); font: 500 11.5px/1 var(--font-sans); white-space: nowrap; }
 .td-wx-scale { display: flex; justify-content: space-between; margin-top: 4px; color: var(--text-3); font: 450 11px/1 var(--font-mono); font-variant-numeric: tabular-nums; }
 .td-wx-scale span:nth-child(2) { position: absolute; left: 50%; transform: translateX(-50%); }
 .td-wx-row { display: grid; grid-template-columns: var(--name-w) minmax(0, 1fr) var(--label-w); align-items: center; column-gap: var(--col-gap); height: 30px; }
+/* when the map beside it is taller, the rows share the extra height (up to 44 px each) instead of a band over the caption */
+@container today (min-width: 900px) {
+  .td-wx-chart { flex: 1 1 auto; }
+  .td-wx-row { flex: 1 0 30px; height: auto; max-height: 44px; }
+}
 .td-wx-name { overflow: hidden; color: var(--text-1); font: 450 13.5px/18px var(--font-sans); white-space: nowrap; text-overflow: ellipsis; }
 .td-wx-row[data-label=calm] .td-wx-name { color: var(--text-2); }
+.td-wx-row[data-catchall] .td-wx-name { color: var(--text-3); } /* T8: weight ≤ 1, never leads */
 .td-wx-track { position: relative; height: 100%; }
 .td-wx-track::before { content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 1px; background: var(--line); }
 .td-wx-track::after { content: ""; position: absolute; left: calc(var(--th) * 100%); top: 3px; bottom: 3px; border-left: 1px dashed var(--line-ctl); opacity: .55; }
@@ -178,6 +207,7 @@
 .td-wx-label { color: var(--text-3); font: 500 12px/1 var(--font-sans); text-align: right; }
 .td-wx-row[data-label=hot] .td-wx-label { color: var(--accent-text); }
 .td-wx-row[data-label=warm] .td-wx-label { color: var(--text-2); }
+.td-wx-row[data-catchall] .td-wx-label { color: var(--text-3); }
 .td-wx .td-caption { margin-top: auto; padding-top: 14px; }
 .td-wx.show-table .td-wx-chart { display: none; }
 .td-wx-table.is-visible { position: static !important; width: 100% !important; height: auto !important; margin: 12px 0 0 !important; overflow: visible !important; clip: auto !important; clip-path: none !important; white-space: normal !important;
@@ -200,17 +230,21 @@
 }
 .td-map-canvas:hover { box-shadow: inset 0 0 0 1px var(--hover-line); text-decoration: none; }
 .td-map-canvas:focus-visible { outline: none; box-shadow: var(--focus); }
-.td-map-svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.td-map-svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; visibility: hidden; }
+.td-map-canvas.is-fit .td-map-svg { visibility: visible; } /* fitted in a ResizeObserver callback, before first paint */
 .td-map-regions circle { fill: var(--accent-soft); }
 .td-map-edges { fill: none; stroke: var(--line-3); stroke-width: 1; vector-effect: non-scaling-stroke; }
 .td-map-nodes { transform-box: fill-box; transform-origin: 50% 50%; }
 .td-map-nodes circle { fill: var(--q); stroke: var(--surface-solid); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
 .td-map-nodes circle[data-q=below] { fill: var(--surface-solid); stroke: var(--q); }
+.td-map-nodes circle.is-labelled { stroke: var(--text-1); stroke-width: 1.5; }
+.td-map-leaders { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.td-map-leaders path { fill: none; stroke: var(--line-ctl); stroke-width: 1; }
 .td-map-labels { position: absolute; inset: 0; pointer-events: none; visibility: hidden; } /* placed before the page shows (ResizeObserver) */
 .td-map-labels.is-placed { visibility: visible; }
 .td-map-label {
   position: absolute; left: 0; top: 0; padding: 2px 7px; border-radius: 999px; background: var(--surface-solid); box-shadow: inset 0 0 0 1px var(--line);
-  color: var(--text-1); font: 500 11px/16px var(--font-sans); white-space: nowrap;
+  color: var(--text-1); font: 500 11px/16px var(--font-sans); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .td-map-empty { position: absolute; inset: 0; display: grid; place-items: center; padding: 16px; color: var(--text-2); font: 450 13px/18px var(--font-sans); text-align: center; }
 .td-map-side { display: flex; flex-direction: column; min-width: 0; }
@@ -231,25 +265,39 @@ li:first-child > .td-hot-row { border-top: 0; }
 
 /* ---------------------------------------------------------------- this week (T1: strip | posts side by side) */
 .td-week, .td-desk { display: flex; flex-direction: column; }
-.td-week-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 4px 28px; align-items: start; margin-top: 14px; }
+.td-week-body { flex: 1; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 4px 28px; align-items: stretch; margin-top: 14px; }
+.td-week-strip { display: flex; flex-direction: column; min-width: 0; }
+.td-week-strip .td-cadence { flex: 1; } /* T4: the day cells take the row's extra height (content absorbs it, no band) */
 .td-week-side { min-width: 0; padding-left: 28px; border-left: 1px solid var(--line); }
 .td-cadence { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; margin: 0 0 8px; }
-.td-day { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 7px 0 9px; border-radius: var(--r-ctl); }
+/* T4: each day is a column (a week view): name and date at the top, the posting-day slot at the foot; when the row is
+   taller than the strip, the columns grow and the space reads as each day's body, not as a band */
+.td-day { display: flex; flex-direction: column; align-items: center; gap: 3px; min-height: 76px; padding: 8px 0 10px; border-radius: var(--r-ctl); background: var(--tint-1); }
+.td-day .td-day-slot { margin-top: auto; }
 .td-day-name { color: var(--text-3); font: 500 11.5px/14px var(--font-sans); }
 .td-day-num { color: var(--text-1); font: 450 15px/20px var(--font-sans); font-variant-numeric: tabular-nums; }
 .td-day.is-past .td-day-num { color: var(--text-3); }
 .td-day.is-today { background: var(--accent-soft); }
 .td-day.is-today .td-day-num { color: var(--accent-text); font-weight: 600; }
 .td-day.is-today .td-day-name { color: var(--accent-text); }
-.td-day-slot { display: block; width: 8px; height: 8px; margin-top: 3px; border-radius: 50%; background: transparent; }
+.td-day-slot { display: block; flex: none; width: 8px; height: 8px; margin-top: 3px; border-radius: 50%; background: transparent; }
 .td-day.is-posting .td-day-slot, .td-legend .td-day-slot { box-shadow: inset 0 0 0 1.5px var(--line-ctl); }
 .td-day.has-post .td-day-slot { background: var(--q, var(--accent)); box-shadow: none; }
 .td-legend { display: flex; align-items: center; gap: 6px; margin: 0; color: var(--text-3); font: 450 12px/16px var(--font-sans); }
 .td-legend .td-day-slot { margin: 0; flex: none; }
-.td-week-empty { margin: 14px 0 0; padding-top: 12px; border-top: 1px solid var(--line); color: var(--text-2); font: 400 14px/21px var(--font-sans); }
+.td-week-empty { margin: 10px 0 0; color: var(--text-2); font: 400 14px/21px var(--font-sans); } /* T4: right under the legend */
 .td-week-empty b { color: var(--text-1); font-weight: 550; }
 .td-week-label { margin-bottom: 0; }
 .td-row.td-row--sugg { padding-top: 6px; padding-bottom: 0; border-top: 0; }
+.td-num { color: var(--text-1); font-weight: 550; font-variant-numeric: tabular-nums; }
+.td-sugg-go { display: inline-flex; align-items: center; gap: 4px; color: var(--accent-text); font-weight: 500; }
+.td-sugg-go .icon { width: 13px; height: 13px; transition: transform var(--dur-hover-out) var(--ease-settle); }
+.td-row--sugg:hover .td-sugg-go .icon { transform: translateX(3px); transition-duration: var(--dur-hover-in); }
+.td-sugg-why { margin: 10px 0 14px; }
+.td-week-side { display: flex; flex-direction: column; }
+.td-row.td-week-next { margin-top: auto; padding: 12px 0 0; border-top: 1px solid var(--line); row-gap: 3px; }
+.td-week-side > :first-child.td-week-next { margin-top: 0; border-top: 0; }
+.td-week-next .td-label { margin: 0; }
 
 /* list rows shared by This week and Waiting on you: titles wrap (never ellipsised) */
 .td-list { margin: 0; padding: 0; list-style: none; }
@@ -297,6 +345,11 @@ li:first-child > .td-hot-row { border-top: 0; }
 }
 @container today (max-width: 619px) {
   .td-grid { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .td-wx.cv { contain-intrinsic-size: auto 630px; }
+  .td-map.cv { contain-intrinsic-size: auto 453px; }
+  .td-week.cv { contain-intrinsic-size: auto 399px; }
+  .td-desk.cv { contain-intrinsic-size: auto 383px; }
+  .td-rest.cv { contain-intrinsic-size: auto 777px; }
   .td-grid > * { grid-column: 1 / -1 !important; }
   .td-grid > .td-side { display: flex; flex-direction: column; gap: 12px; }
   .td-lead-top { column-gap: 14px; }
@@ -336,7 +389,7 @@ li:first-child > .td-hot-row { border-top: 0; }
 
 /* ---------------------------------------------------------------- accessibility */
 @media (prefers-reduced-motion: reduce) {
-  .td-open, .td-open .icon, .td-wx-tip, .td-row-title, .td-hot-name { transition: none !important; }
+  .td-open, .td-open .icon, .td-wx-tip, .td-row-title, .td-hot-name, .td-sugg-go .icon { transition: none !important; }
 }
 @media (forced-colors: active) {
   .td-wx-dot, .td-day.has-post .td-day-slot { forced-color-adjust: none; border: 1px solid CanvasText; }

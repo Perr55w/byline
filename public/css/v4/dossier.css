@@ -22,12 +22,17 @@
 /* ---------------------------------------------------------------- header: the same 7/5 grid as the body, so the fact card sits over the right column */
 .dx-head { display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); gap: 0 var(--dx-gap); align-items: start; }
 .dx-head-main { min-width: 0; }
-.dx-eyebrow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+.dx-eyebrow { display: block; }
+.dx-eb-part { white-space: nowrap; } /* the line wraps between its parts, never inside "updated 2d ago" */
+.dx-eyebrow .tag { display: inline-flex; margin-right: 8px; vertical-align: 1px; white-space: nowrap; } /* the Demo / Archived tag leads the line, inline, so it never wraps alone (FD10) */
 .dx-title {
   margin: 12px 0 0; max-width: 22ch; color: var(--text-1); text-wrap: balance;
   font: 400 40px/44px var(--font-serif); font-variation-settings: 'opsz' 72; letter-spacing: -0.02em;
 }
-.dx h1[tabindex="-1"]:focus, .dx h1[tabindex="-1"]:focus-visible { box-shadow: none; }
+/* FD9: a long headline (over 70 characters) steps down one size so the header columns stay level */
+.dx-title--long { font-size: 36px; line-height: 40px; max-width: 24ch; }
+.dx h1[tabindex="-1"]:focus, /* FD9: a long headline (over 70 characters) steps down one size so the header columns stay level */
+.dx h1[tabindex="-1"]:focus-visible { box-shadow: none; }
 .dx-dek { margin: 14px 0 0; max-width: 60ch; color: var(--text-2); font: 400 var(--fs-lede)/var(--lh-lede) var(--font-sans); letter-spacing: -0.006em; text-wrap: pretty; }
 .dx-dek mark.num-hl { font-weight: 500; }
 .dx-topics { margin-top: 18px; line-height: 0; }
@@ -35,7 +40,13 @@
 .dx-rest-topics { display: inline; }
 
 /* fact card (right): ring + labelled rows. Rows own their hairlines (nothing paints before it fades in). */
-.dx-head-side { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 0 20px; align-items: start; padding: 30px 0 0 var(--dx-rule); }
+.dx-head-side { display: flex; flex-direction: column; align-items: stretch; min-width: 0; padding: 30px 0 0 var(--dx-rule); }
+.dx-card { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 0 20px; align-items: start; }
+/* FD9: pills / actions moved under the score card when the left column runs longer (story-dossier.js headPlan) */
+.dx-head-side > .dx-topics { margin-top: 6px; }
+.dx-head-side > .dx-actions { margin-top: 16px; }
+.dx-head--stack .dx-card { grid-template-columns: minmax(0, 1fr); }
+.dx-head--stack .dx-ring { justify-self: start; }
 .dx-ring { display: grid; place-items: center; padding-bottom: 22px; }
 .dx-facts { margin: 0; display: flex; flex-direction: column; }
 .dx-fact { display: flex; flex-direction: column; gap: 3px; padding: 10px 0; border-top: 1px solid var(--line); }
@@ -107,10 +118,21 @@
   background: var(--warn-soft); box-shadow: inset 3px 0 0 var(--warn); color: var(--text-1); font: 400 14px/21px var(--font-sans); }
 .dx-callout--disagreement { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
 .dx-callout-k { color: var(--text-2); font: 600 12.5px/16px var(--font-sans); }
+/* FD8: when the callout would repeat the dek, an attribution line instead (outlet, domain, the two figures) */
+.dx-callout--attr { display: block; margin: 4px 0; line-height: 22px; }
+.dx-callout--attr .dx-callout-k { font-size: 13.5px; }
+.dx-callout--attr a { color: var(--accent-text); font-weight: 500; }
+.dx-callout--attr .dx-dom { color: var(--text-2); }
+.dx-sep { margin: 0 8px; color: var(--text-3); }
 .dx-arts { margin-top: 10px; }
 .dx-art { padding: 18px 0; border-top: 1px solid var(--line); }
 .dx-arts > .dx-art:first-child, .dx-arts > .dx-group:first-child > .dx-group-head + .dx-art { border-top: 0; }
 .dx-art-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; color: var(--text-3); font: 450 12.5px/16px var(--font-sans); }
+.dx-art-meta > * { white-space: nowrap; }
+.dx-dom-link { display: inline-flex; align-items: center; gap: 4px; text-decoration: none; }
+.dx-dom-link:hover { color: var(--accent-text); }
+.dx-dom-link .dx-out { margin-top: 0; }
+.dx-dom-link:hover .dx-out { color: var(--accent-text); }
 .dx-dom { color: var(--text-2); font: 450 12.5px/16px var(--font-mono); }
 .dx-srcname { color: var(--text-3); }
 .dx-srcname::before { content: "·"; margin-right: 10px; color: var(--line-3); }
@@ -121,6 +143,8 @@
 .dx-says { margin: 8px 0 0; max-width: 64ch; color: var(--text-1); font: 400 var(--fs-reading)/var(--lh-reading) var(--font-serif); font-variation-settings: 'opsz' 16; }
 .dx-says--none { color: var(--text-3); font: 400 14px/21px var(--font-sans); }
 .dx-says-k { display: block; margin-bottom: 2px; color: var(--text-3); font: 500 12px/16px var(--font-sans); }
+.dx-says-n { font-weight: 450; }
+.dx-art-meta + .dx-says { margin-top: 10px; }
 .dx-claims { margin: 10px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
 .dx-claims li { position: relative; padding-left: 16px; color: var(--text-2); font: 400 14px/21px var(--font-sans); }
 .dx-claims li::before { content: ""; position: absolute; left: 2px; top: 9px; width: 5px; height: 1.5px; background: var(--line-ctl); }
@@ -138,7 +162,8 @@
 .dx-compact li::before { content: counter(dxc, decimal-leading-zero); position: absolute; left: 0; top: 11px; color: var(--text-3); font: 450 11.5px/16px var(--font-mono); }
 .dx-compact-t { color: var(--text-1); font: 500 14px/20px var(--font-sans); text-decoration: none; }
 .dx-compact-t:hover { color: var(--accent-text); }
-.dx-compact-s { color: var(--text-2); font: 400 13.5px/20px var(--font-sans); overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 1; line-clamp: 1; }
+.dx-compact-s { color: var(--text-2); font: 400 13.5px/20px var(--font-sans); overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; } /* FD5: two lines, not one */
+.dx-compact-s--none { color: var(--text-3); }
 .dx-compact[hidden], .dx-rest-full[hidden], .dx-claims [hidden], .dx-conn-list [hidden], .dx-pieces [hidden] { display: none; }
 
 /* ---------------------------------------------------------------- B. Evidence (label column + plain sentences) */
@@ -157,7 +182,7 @@
 .dx-watch-q { color: var(--text-1); font: 400 16px/23px var(--font-serif); font-variation-settings: 'opsz' 16; }
 .dx-watch-m { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 13px; line-height: 22px; }
 .dx-pw li { display: flex; flex-direction: column; align-items: stretch; gap: 3px; }
-.dx-pw .dx-quote { overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; }
+ /* FD6: quotes show whole up to 240 characters; longer ones are cut at a word boundary in JS (clip), never by a clamp */
 .dx-pw b { color: var(--text-1); font-weight: 600; font-size: 13.5px; }
 .dx-quote { display: block; padding-left: 12px; box-shadow: inset 2px 0 0 var(--line-2); color: var(--text-2); font: 400 14.5px/21px var(--font-serif); font-variation-settings: 'opsz' 16; quotes: "“" "”"; }
 .dx-nums { margin: 2px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
@@ -249,6 +274,8 @@ mark.num-hl { background: var(--accent-soft); color: var(--text-1); border-radiu
 @media (max-width: 1100px) {
   .dx-cols, .dx-head { grid-template-columns: minmax(0, 1fr); }
   .dx-head-side { padding: 24px 0 0; }
+  .dx-head-side > .dx-topics { margin-top: 0; }
+  .dx-head--stack .dx-card { grid-template-columns: auto minmax(0, 1fr); }
   .dx-right { position: static; padding-left: 0; border-left: 0; }
 }
 
@@ -257,11 +284,12 @@ mark.num-hl { background: var(--accent-soft); color: var(--text-1); border-radiu
   .dx-body { padding-top: 26px; }
   .dx-body::after { display: none; } /* the sticky action bar is the sheet's foot */
   .dx { display: flex; flex-direction: column; }
-  .dx-head, .dx-head-main, .dx-cols, .dx-left, .dx-right { display: contents; }
+  .dx-head, .dx-head-main, .dx-head-side, .dx-cols, .dx-left, .dx-right { display: contents; }
   .dx-eyebrow { order: 0; padding-right: 44px; }
   .dx-title { order: 1; font-size: 32px; line-height: 36px; margin-top: 10px; }
+  .dx-title--long { font-size: 28px; line-height: 32px; }
   .dx-dek { order: 2; font-size: 16px; line-height: 24px; }
-  .dx-head-side { order: 3; padding: 20px 0 0; gap: 0 18px; }
+  .dx-card { order: 3; padding: 20px 0 0; gap: 0 18px; grid-template-columns: auto minmax(0, 1fr) !important; }
   .dx-topics { order: 4; margin-top: 4px; }
   .dx-why { order: 5; } .dx-sources { order: 6; } .dx-evidence { order: 7; } .dx-score { order: 8; } .dx-lens { order: 9; }
   .dx-conn { order: 10; } .dx-make { order: 11; } .dx-tune { order: 12; }
@@ -271,6 +299,8 @@ mark.num-hl { background: var(--accent-soft); color: var(--text-1); border-radiu
     background: var(--surface-solid); box-shadow: 0 -1px 0 var(--line); flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
   .dx-actions .btn { flex: none; }
   .dx-menu { top: auto; bottom: calc(100% + 6px); }
+  .dx-callout--attr .dx-sep:last-of-type { display: none; }
+  .dx-callout--attr .dx-sep:last-of-type + span { display: block; }
   .dx-ev { grid-template-columns: 1fr; }
   .dx-bar { grid-template-columns: 84px minmax(0, 1fr) 72px; }
   .dx-mults li { grid-template-columns: 56px 84px minmax(0, 1fr); }
@@ -279,11 +309,29 @@ mark.num-hl { background: var(--accent-soft); color: var(--text-1); border-radiu
   .dx-sources .section-head { flex-wrap: wrap; gap: 6px; }
   .dx-legend { justify-content: flex-start; }
 }
+/* FD11 / R14: the phone action bar in two rows, every action visible: the Draft split button full width, then
+   Save, Dismiss and Source in three equal columns. No horizontal scroll. */
+.dx-open-s { display: none; }
+@media (max-width: 480px) {
+  .dx-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; overflow: visible; }
+  .dx-actions > .dx-split:first-child { grid-column: 1 / -1; display: flex; }
+  .dx-actions > .dx-split:first-child > .btn:first-child { flex: 1 1 auto; justify-content: center; }
+  .dx-actions > .dx-split:not(:first-child) { display: flex; min-width: 0; }
+  .dx-actions .btn { min-width: 0; justify-content: center; padding-left: 8px; padding-right: 8px; }
+  .dx-actions > .dx-split:not(:first-child) > .btn, .dx-actions > .btn { flex: 1 1 auto; width: 100%; }
+  .dx-actions .btn .icon { flex: none; }
+  .dx-open-l { display: none; }
+  .dx-open-s { display: inline; }
+  .dx-actions > .dx-split:nth-child(2) .dx-menu { left: 0; }
+}
 @media (prefers-reduced-motion: reduce) { .dx-menu { animation: none; } .dx-chev { transition: none; } }
 @media (forced-colors: active) { .dx-bar-track { border: 1px solid CanvasText; } .dx-bar-track i { background: CanvasText; } .mk { border: 1px solid CanvasText; } }
 
-/* layout cost (E2): only what the flight shows is rendered up front; the rest arrives in idle chunks, so no
-   content-visibility estimates (they skewed the scroll height). The collapsed rest of a group stays lazy. */
+/* layout cost (E2 / FD1): only what the flight shows is rendered up front. Each deferred section arrives in its own
+   task with content-visibility:auto at its measured height (--cis, story-dossier.js CIS), then drops it one per task
+   once all have arrived, so the scroll height ends exact. overflow-clip-margin keeps focus rings unclipped meanwhile.
+   The collapsed rest of a group stays lazy. */
+.dx-cv { content-visibility: auto; contain-intrinsic-size: auto var(--cis, 320px); overflow-clip-margin: 8px; }
 .dx-rest-full { content-visibility: auto; contain-intrinsic-size: auto 600px; }
 /* local fixes for shared components (requested upstream): AA demo tag; visible focus on .btn */
 .dx .btn:focus-visible, .dx-menu-item:focus-visible { box-shadow: var(--focus); }

@@ -13,8 +13,8 @@
 // lede + 200 ms. It starts on the router's `byline:routed` event, the moment the page becomes visible.
 
 import { api } from '../api.js';
-import { html, raw, esc, on, act, toast, modal, icon, scoreRing, scoreChip, demoFlag, channelLabel, status as statusTag, useStyle, reducedMotion } from '../ui.js';
-import { EASE, countTo } from '../motion.js';
+import { html, raw, esc, on, act, toast, modal, icon, scoreRing, scoreChip, topicPills, demoFlag, channelLabel, status as statusTag, useStyle, reducedMotion } from '../ui.js';
+import { EASE, countTo, hasCounted } from '../motion.js';
 import { qualityColor, qualityTier, qualityLabel } from '../quality.js';
 import bg from '../bg.js';
 
@@ -70,13 +70,36 @@ function headline(t, items) {
 }
 
 // ------------------------------------------------------------------ tiles
-const pills = (it, max = 3) => {
+// T10: shared topicPills() (blue main pill only above the bar, neutral .chip--lead below); the first pill keeps
+// data-shared="topic" so it still flies into the dossier
+const pills = (it, T, max = 3) => {
   const topics = it.topics || [];
   const main = it.main_topic || topics[0];
-  const rest = topics.filter(x => x !== main).slice(0, max - 1);
-  return main ? html`<div class="td-pills cluster">${html`<span class="chip chip--main" data-shared="topic">${main}</span>`}${rest.map(x => html`<span class="chip chip--topic">${x}</span>`)}</div>` : '';
+  if (!main) return '';
+  const list = [main, ...topics.filter(x => x !== main)];
+  const inner = String(topicPills(list, it.score, T, { max })).replace('<span class="chip ', '<span data-shared="topic" class="chip ');
+  return html`<div class="td-pills cluster">${raw(inner)}</div>`;
 };
 const storyHref = (it) => `#/story/${it.story_id ?? it.id}`;
+
+/**
+ * T3 (ruling R8): the lead's source mix, all from /api/today item fields. It is real content that makes up the
+ * height difference with the side column (fixed 24 px gaps; nothing spreads).
+ */
+function mixBlock(it) {
+  if (!it.source_line) return '';
+  const n = (v) => (Number.isFinite(v) ? v : null);
+  const kinds = [[n(it.first_party), 'first-party'], [n(it.primary), 'primary research'], [n(it.commentary), 'commentary']].filter(([v]) => v != null); // independent is in the line itself
+  const seen = it.first_seen ? fmtDay(String(it.first_seen).slice(0, 10)) : '';
+  const origin = it.origin_domain ? html`From <b>${it.origin_domain}</b>${seen ? html`, first seen ${seen}` : ''}.` : seen ? html`First seen ${seen}.` : '';
+  // two layouts of the same facts: with or without the origin line (the footer keeps the origin domain); fitLead
+  // picks the one that brings the lead closest to the side column's height without passing it
+  return html`<div class="td-mix">
+    <h3 class="td-label">Source mix</h3>
+    <p class="td-mix-line"><span class="td-src">${it.source_line}</span>${kinds.length ? html`<span class="td-mix-kinds">${kinds.map(([v, k], i) => html`${i ? ' · ' : ''}<b>${v}</b> ${k}`)}</span>` : ''}</p>
+    ${origin ? html`<p class="td-mix-extra">${origin}</p>` : ''}
+  </div>`;
+}
 
 function leadTile(it, T) {
   const why = whyOf(it);
@@ -85,7 +108,7 @@ function leadTile(it, T) {
   return html`
   <article class="tile tile--lead td-lead" data-dossier-src data-tile="lead" aria-labelledby="td-lead-title">
     <div class="td-lead-top">
-      ${pills(it, 3)}
+      ${pills(it, T, 3)}
       <h2 class="td-title-lg" id="td-lead-title"><a class="td-stretch" href="${storyHref(it)}" data-shared="title">${it.title}</a>${demoFlag(it.is_demo)}</h2>
       ${it.finding ? html`<p class="td-dek">${marked(it.finding, it.finding_marks)}</p>` : ''}
       <div class="td-lead-ring">${scoreRing(it.score, T, { size: 108, count: true, key: `today-lead-${it.story_id}` })}</div>
@@ -95,9 +118,9 @@ function leadTile(it, T) {
       <ul>${why.map(w => html`<li>${w}</li>`)}</ul>
     </div>` : ''}
     ${(it.companies || []).length ? html`<div class="td-named"><h3 class="td-label">Named</h3><span class="cluster">${it.companies.slice(0, 4).map(c => html`<span class="td-domain">${c}</span>`)}${it.companies.length > 4 ? html`<span class="td-meta">+${it.companies.length - 4}</span>` : ''}</span></div>` : ''}
+    ${mixBlock(it)}
     <footer class="td-lead-foot">
-      <span class="td-src" title="Posts are articles; outlets are distinct sites; independent means reporting or research from a site other than the origin’s.">${it.source_line || ''}</span>
-      ${it.origin_domain ? html`<span class="td-domain">${it.origin_domain}</span>` : ''}
+      ${it.origin_domain ? html`<span class="td-domain" title="The origin: the site the story first came from">${it.origin_domain}</span>` : ''}
       <span class="td-open" data-act="open-lead" aria-hidden="true">Open dossier ${icon('arrow-right')}</span>
     </footer>
   </article>`;
@@ -108,7 +131,7 @@ function storyTile(it, T, { rank, size = 'md', why = false, maxPills = 2 }) {
   return html`
   <article class="tile td-story td-story--${size}" data-dossier-src data-tile="s${rank}" aria-labelledby="td-s${rank}">
     <div class="td-story-top">
-      ${pills(it, maxPills)}
+      ${pills(it, T, maxPills)}
       ${scoreRing(it.score, T, { size: size === 'lg' ? 64 : 52, label: false, count: true, key: `today-s-${it.story_id}` })}
     </div>
     <h2 class="td-title ${size === 'lg' ? 'td-title--lg' : ''}" id="td-s${rank}"><a class="td-stretch" href="${storyHref(it)}" data-shared="title">${it.title}</a>${demoFlag(it.is_demo)}</h2>
@@ -160,6 +183,9 @@ function weatherSentence(m) {
   return html`No topic is in half of the <b>${n}</b> ${n === 1 ? 'story' : 'stories'} above your bar${lead ? html`; <b>${lead.topic}</b> is in <b>${lead.above}</b>` : ''}${calmTail}.`;
 }
 
+/** T8: a priority weight ≤ 1 topic (Machine learning) keeps its dots but reads as the catch-all it is. */
+const catchAll = (r) => r.weight != null && r.weight <= 1;
+
 function weatherTile(stories, t, weights) {
   const m = weatherModel(stories, t, weights);
   if (!m.total) return html`<section class="tile tile--static td-wx" data-tile="weather" aria-labelledby="td-wx-h"><div class="td-tile-head"><h2 class="td-h2" id="td-wx-h">News weather</h2></div>
@@ -170,13 +196,13 @@ function weatherTile(stories, t, weights) {
   <section class="tile td-wx" data-tile="weather" aria-labelledby="td-wx-h">
     <div class="td-tile-head">
       <h2 class="td-h2" id="td-wx-h">News weather</h2>
-      <button type="button" class="btn btn--ghost btn--sm td-wx-toggle" aria-pressed="false" aria-controls="td-wx-table">Show as table</button>
+      <button type="button" class="btn btn--ghost btn--sm td-wx-toggle" data-act="wx-table" aria-pressed="false" aria-controls="td-wx-table">Show as table</button>
     </div>
     <p class="td-sub">${weatherSentence(m)}</p>
     <div class="td-wx-chart" aria-hidden="true" style="--th:${th / 100}">
       <div class="td-wx-axis"><span class="td-wx-bar-label" style="--x:${th / 100}">Your bar, ${m.T}</span></div>
       ${m.rows.map((r) => html`
-      <div class="td-wx-row" data-label="${r.label}">
+      <div class="td-wx-row" data-label="${r.label}"${catchAll(r) ? raw(' data-catchall') : ''}>
         <span class="td-wx-name">${r.topic}</span>
         <span class="td-wx-track">
           ${r.stories.map((s, k) => {
@@ -186,21 +212,22 @@ function weatherTile(stories, t, weights) {
             return html`<a class="td-wx-dot" href="#/story/${s.id}" tabindex="-1" data-dossier-src data-s="${s.id}" data-q="${qualityTier(s.score, m.T)}" data-q-score="${s.score}" data-q-threshold="${m.T}" style="--x:${Math.max(0, Math.min(100, s.score)) / 100};--lift:${lift}px;--q:${qualityColor(s.score, m.T)}"><span class="td-wx-tip">${s.short_title || s.title} · ${round(s.score)}</span></a>`;
           })}
         </span>
-        <span class="td-wx-label">${LABEL[r.label]}</span>
+        <span class="td-wx-label">${catchAll(r) ? 'catch-all' : LABEL[r.label]}</span>
       </div>`)}
       <div class="td-wx-scale"><span>0</span><span>50</span><span>100</span></div>
     </div>
     <table class="td-wx-table sr-only" id="td-wx-table">
       <caption>News weather: ${m.total} ranked stories from the last ${t.window_days || 7} days by topic. Threshold ${m.T}.</caption>
       <thead><tr><th scope="col">Topic</th><th scope="col">Stories</th><th scope="col">Above ${m.T}</th><th scope="col">Scores</th><th scope="col">Weather</th></tr></thead>
-      <tbody>${m.rows.map(r => html`<tr><th scope="row">${r.topic}</th><td class="num">${r.stories.length}</td><td class="num">${r.above}</td><td>${r.stories.slice().reverse().map(s => round(s.score)).join(', ')}</td><td>${LABEL[r.label]}</td></tr>`)}</tbody>
+      <tbody>${m.rows.map(r => html`<tr><th scope="row">${r.topic}</th><td class="num">${r.stories.length}</td><td class="num">${r.above}</td><td>${r.stories.slice().reverse().map(s => round(s.score)).join(', ')}</td><td>${catchAll(r) ? `Catch-all (${LABEL[r.label]})` : LABEL[r.label]}</td></tr>`)}</tbody>
     </table>
-    <p class="td-caption">Each dot is one of the <b>${m.total}</b> stories ranked in the last ${t.window_days || 7} days, placed by score; filled dots cleared your bar. <b>Hot</b>: in half or more of the ${m.nCleared} above it · <b>Warm</b>: in at least one · <b>Calm</b>: in none.${m.more ? ` ${plural(m.more, 'smaller topic')} not shown.` : ''}</p>
+    <p class="td-caption">Each dot is one of the <b>${m.total}</b> stories ranked in the last ${t.window_days || 7} days, placed by score; filled dots cleared your bar. <b>Hot</b>: in half or more of the ${m.nCleared} above it · <b>Warm</b>: in at least one · <b>Calm</b>: in none.${m.rows.some(catchAll) ? html` <b>Catch-all</b>: priority weight 1 or less, so it never leads.` : ''}${m.more ? ` ${plural(m.more, 'smaller topic')} not shown.` : ''}</p>
   </section>`;
 }
 
-// News map: a static drawing of the Map tab's own /api/map layout (same seeded positions), fitted to the node
-// bounds with 12% padding, with at most three collision-free region labels placed once the size is known.
+// News map: a static drawing of the Map tab's own /api/map layout (same seeded positions). The geometry is fitted
+// once the canvas size is known (T7): node bounds fill the box with 12% padding, nodes are 6–9 px by score, the
+// cluster discs enclose their own nodes, and the top 3 nodes carry their short title outside the discs.
 // The top-3 hot regions sit beside it: "leads" = stories whose main topic it is, "in" = stories carrying it at all.
 function mapTile(map, t) {
   const hot = map?.hot_topics || [];
@@ -212,7 +239,7 @@ function mapTile(map, t) {
       <li><a href="#/map" class="td-hot-row"><span class="td-hot-rank">${i + 1}</span><span class="td-hot-name">${h.topic}</span><span class="td-hot-meta">leads ${h.count}${inN != null ? html`, in ${inN}` : ''}${recent}</span></a></li>`;
     })}</ol>`
     : html`<p class="td-sub">No topic regions yet.</p>`;
-  const fit = mapFit(map);
+  const ar = mapAspect(map);
   return html`
   <section class="tile td-map" data-tile="map" aria-labelledby="td-map-h">
     <div class="td-tile-head">
@@ -220,75 +247,139 @@ function mapTile(map, t) {
       <a class="btn btn--ghost btn--sm" href="#/map">Open map ${icon('arrow-right')}</a>
     </div>
     <div class="td-map-body">
-      <a class="td-map-canvas" href="#/map"${fit ? raw(` style="--ar:${fit.ar.toFixed(3)}"`) : ''} aria-label="Open the Map: ${n} stories in ${map?.clusters?.length || 0} topic regions">${staticMap(map, t.threshold, fit)}</a>
+      <a class="td-map-canvas" href="#/map"${ar ? raw(` style="--ar:${ar.toFixed(3)}"`) : ''} aria-label="Open the Map: ${n} stories in ${map?.clusters?.length || 0} topic regions">${staticMap(map, t.threshold)}</a>
       <div class="td-map-side">
         <h3 class="td-label" id="td-hot-h">Hottest regions</h3>
         ${list}
-        ${n ? html`<p class="td-caption">${plural(n, 'story', 'stories')}, ${plural(map.edges?.length || 0, 'connection')}. Ranked by heat: this week’s stories weighted by score. <b>Leads</b>: main topic · <b>in</b>: carries the topic.</p>` : ''}
+        ${n ? html`<p class="td-caption">${plural(n, 'story', 'stories')}, ${plural(map.edges?.length || 0, 'connection')}. Ranked by heat: this week’s stories weighted by score. <b>Leads</b>: main topic · <b>in</b>: carries the topic. Labels name the three top-scoring stories.</p>` : ''}
       </div>
     </div>
   </section>`;
 }
 
-/** Node bounds (x ± r) plus 12% padding; aspect ratio clamped so the canvas never turns into a strip or a tower. */
-function mapFit(map) {
+/** The canvas aspect: the node bounds' own, clamped 1.35–2.1 so the box never turns into a strip or a tower. */
+function mapAspect(map) {
   const nodes = map?.nodes || [];
   if (!nodes.length) return null;
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-  for (const nd of nodes) { const r = (nd.r || 6) * 0.62; x0 = Math.min(x0, nd.x - r); y0 = Math.min(y0, nd.y - r); x1 = Math.max(x1, nd.x + r); y1 = Math.max(y1, nd.y + r); }
-  let w = Math.max(40, x1 - x0), h = Math.max(40, y1 - y0);
-  const px = w * 0.12, py = h * 0.12;
-  x0 -= px; x1 += px; y0 -= py; y1 += py; w = x1 - x0; h = y1 - y0;
-  // widen the shorter side to the clamped aspect so the viewBox and the box agree (labels map 1:1)
-  const ar = Math.max(1.35, Math.min(2.1, w / h));
-  if (w / h < ar) { const d = h * ar - w; x0 -= d / 2; w += d; } else if (w / h > ar) { const d = w / ar - h; y0 -= d / 2; h += d; }
-  return { x0, y0, w, h, ar };
+  for (const nd of nodes) { x0 = Math.min(x0, nd.x); y0 = Math.min(y0, nd.y); x1 = Math.max(x1, nd.x); y1 = Math.max(y1, nd.y); }
+  return Math.max(1.35, Math.min(2.1, Math.max(40, x1 - x0) / Math.max(40, y1 - y0)));
 }
 
-function staticMap(map, T, fit) {
-  if (!fit) return html`<span class="td-map-empty">The map fills in as runs collect stories.</span>`;
-  const pos = new Map(map.nodes.map(nd => [nd.id, nd]));
+const nodeR = (score) => 6 + 3 * Math.max(0, Math.min(100, Number(score) || 0)) / 100; // T7: 6–9 px by score
+
+function staticMap(map, T) {
+  const nodes = map?.nodes || [];
+  if (!nodes.length) return html`<span class="td-map-empty">The map fills in as runs collect stories.</span>`;
+  const pos = new Map(nodes.map(nd => [nd.id, nd]));
   const hotTopics = (map.hot_topics || []).slice(0, 3).map(h => h.topic);
-  const hot = new Set(hotTopics);
   const edges = (map.edges || []).map(e => { const a = pos.get(e.a), c = pos.get(e.b); return a && c ? `M${a.x.toFixed(1)} ${a.y.toFixed(1)}L${c.x.toFixed(1)} ${c.y.toFixed(1)}` : ''; }).join('');
-  // label anchors: the cluster centre, normalised to the fitted box (placed collision-free after layout)
-  const labels = (map.clusters || []).filter(c => hot.has(c.topic)).sort((p, q) => hotTopics.indexOf(p.topic) - hotTopics.indexOf(q.topic))
-    .map(c => ({ label: c.label || c.topic, x: (c.x - fit.x0) / fit.w, y: (c.y - fit.y0) / fit.h }));
-  const regionR = Math.min(fit.w, fit.h) * 0.3;
-  return raw(`<svg class="td-map-svg" viewBox="${fit.x0.toFixed(1)} ${fit.y0.toFixed(1)} ${fit.w.toFixed(1)} ${fit.h.toFixed(1)}" preserveAspectRatio="xMidYMid meet" aria-hidden="true" focusable="false">
-    <g class="td-map-regions">${(map.clusters || []).filter(c => hot.has(c.topic)).map(c => `<circle cx="${c.x.toFixed(1)}" cy="${c.y.toFixed(1)}" r="${Math.max(regionR * 0.5, Math.min(c.radius * 0.8, regionR)).toFixed(1)}" style="opacity:${(0.35 + 0.65 * (c.heat || 0)).toFixed(2)}"/>`).join('')}</g>
+  const top = nodes.slice().sort((a, b) => b.score - a.score).slice(0, 3);
+  // geometry (viewBox, radii, discs, labels) is set by fitMap() once the box size is known; until then the layer is hidden
+  return raw(`<svg class="td-map-svg" preserveAspectRatio="xMidYMid meet" aria-hidden="true" focusable="false">
+    <g class="td-map-regions">${(map.clusters || []).filter(c => hotTopics.includes(c.topic)).map(c => `<circle cx="${c.x.toFixed(1)}" cy="${c.y.toFixed(1)}" r="0" data-topic="${esc(c.topic)}" style="opacity:${(0.35 + 0.65 * (c.heat || 0)).toFixed(2)}"/>`).join('')}</g>
     <path class="td-map-edges" d="${edges}"/>
-    <g class="td-map-nodes">${map.nodes.map(nd => `<circle cx="${nd.x.toFixed(1)}" cy="${nd.y.toFixed(1)}" r="${((nd.r || 6) * 0.62).toFixed(1)}" data-q="${qualityTier(nd.score, T)}" data-q-score="${nd.score}" data-q-threshold="${T}" style="--q:${qualityColor(nd.score, T)}"/>`).join('')}</g>
-  </svg><span class="td-map-labels" aria-hidden="true">${labels.map(l => `<span class="td-map-label" data-x="${l.x.toFixed(4)}" data-y="${l.y.toFixed(4)}">${esc(l.label)}</span>`).join('')}</span>`);
+    <g class="td-map-nodes">${nodes.map(nd => `<circle cx="${nd.x.toFixed(1)}" cy="${nd.y.toFixed(1)}" r="0" data-id="${nd.id}" data-q="${qualityTier(nd.score, T)}" data-q-score="${nd.score}" data-q-threshold="${T}" style="--q:${qualityColor(nd.score, T)}"/>`).join('')}</g>
+  </svg><span class="td-map-labels" aria-hidden="true"><svg class="td-map-leaders"></svg>${top.map(nd => `<span class="td-map-label" data-id="${nd.id}">${esc(nd.short_title || nd.title || '')}</span>`).join('')}</span>`);
 }
 
 /**
- * Place the region labels without overlaps once the canvas size is known. Sizes come from a ResizeObserver
- * entry (no forced layout); label widths are estimated from the text (11px Geist ≈ 6.1px per character).
+ * T7: fit the drawing to the canvas once its size is known (ResizeObserver entry: no forced layout), then place at most
+ * three labels outside the cluster discs, toward the nearest edge, never over a node. Label widths are estimated from
+ * the text (11px Geist ≈ 6.1px per character), capped at 46% of the canvas (the label ellipsises).
  */
-function placeMapLabels(host) {
+function fitMap(host, map) {
   const box = host?.querySelector('.td-map-labels');
-  if (!box || !('ResizeObserver' in window)) return;
-  const spans = [...box.children];
+  const svg = host?.querySelector('.td-map-svg');
+  const nodes = map?.nodes || [];
+  if (!box || !svg || !nodes.length || !('ResizeObserver' in window)) { box?.classList.add('is-placed'); host?.classList.add('is-fit'); return; }
+  const byId = new Map(nodes.map(nd => [String(nd.id), nd]));
+  const circles = [...svg.querySelectorAll('.td-map-nodes circle')];
+  const discs = [...svg.querySelectorAll('.td-map-regions circle')];
+  const labels = [...box.querySelectorAll('.td-map-label')];
+  const leaders = box.querySelector('.td-map-leaders');
+  let lastW = 0, lastH = 0;
   const place = (W, H) => {
-    if (!W || !H) return;
+    if (!W || !H || (W === lastW && H === lastH)) return;
+    lastW = W; lastH = H;
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const nd of nodes) { x0 = Math.min(x0, nd.x); y0 = Math.min(y0, nd.y); x1 = Math.max(x1, nd.x); y1 = Math.max(y1, nd.y); }
+    const bw = Math.max(1, x1 - x0), bh = Math.max(1, y1 - y0);
+    // 12% padding on each side, plus the largest node radius so no disc of a node touches the padding line
+    const k = Math.min((W * 0.76 - 18) / bw, (H * 0.76 - 18) / bh); // px per layout unit
+    const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+    const vw = W / k, vh = H / k, vx = cx - vw / 2, vy = cy - vh / 2;
+    svg.setAttribute('viewBox', `${vx.toFixed(2)} ${vy.toFixed(2)} ${vw.toFixed(2)} ${vh.toFixed(2)}`);
+    const px = (nd) => ({ x: (nd.x - vx) * k, y: (nd.y - vy) * k, r: nodeR(nd.score) });
+    const P = nodes.map(px);
+    const pOf = new Map(nodes.map((nd, i) => [String(nd.id), P[i]]));
+    circles.forEach((c) => { const nd = byId.get(c.dataset.id); if (nd) c.setAttribute('r', (nodeR(nd.score) / k).toFixed(2)); });
+    // discs: each covers the core of its own topic's nodes (median distance + 14 px), capped at a quarter of the short side
+    const D = discs.map((c) => {
+      const tp = c.dataset.topic;
+      const ccx = Number(c.getAttribute('cx')), ccy = Number(c.getAttribute('cy'));
+      const ds = nodes.filter(nd => nd.topic === tp).map(nd => Math.hypot(nd.x - ccx, nd.y - ccy) * k).sort((a, b) => a - b);
+      const med = ds.length ? ds[Math.floor(ds.length / 2)] : 0;
+      const r = Math.min(Math.max(med + 14, 26), Math.min(W, H) * 0.26);
+      c.setAttribute('r', (r / k).toFixed(2));
+      return { x: (ccx - vx) * k, y: (ccy - vy) * k, r };
+    });
     const placed = [];
-    for (const s of spans) {
-      const w = Math.round(s.textContent.length * 6.1 + 14), h = 20;
-      const cx = Number(s.dataset.x) * W, cy = Number(s.dataset.y) * H;
+    let lines = '';
+    const maxW = Math.round(W * 0.46);
+    for (const s of labels) {
+      const nd = byId.get(s.dataset.id);
+      if (!nd) { s.hidden = true; continue; }
+      const p = pOf.get(String(nd.id));
+      const w = Math.min(maxW, Math.round(s.textContent.length * 6.1 + 16)), h = 20;
+      s.style.maxWidth = `${w}px`;
+      // nearest edge first, then the other sides, then the corners
+      const dists = [['l', p.x], ['r', W - p.x], ['t', p.y], ['b', H - p.y]].sort((a, b) => a[1] - b[1]).map(d => d[0]);
+      const dirs = [...dists, `${dists.includes('t') && p.y < H / 2 ? 't' : 'b'}${p.x < W / 2 ? 'l' : 'r'}`, 'tl', 'tr', 'bl', 'br'].filter((d, i, a) => a.indexOf(d) === i);
       let best = null;
-      for (const dy of [0, -22, 22, -44, 44, -66, 66]) {
-        const x = Math.max(4, Math.min(W - w - 4, cx - w / 2)), y = Math.max(4, Math.min(H - h - 4, cy - h / 2 + dy));
-        if (!placed.some(q => x < q.x + q.w + 4 && x + w + 4 > q.x && y < q.y + q.h + 2 && y + h + 2 > q.y)) { best = { x, y, w, h }; break; }
-      }
+      for (const strict of [true, false]) { if (best) break; for (const [rank, dir] of dirs.entries()) for (let step = 0; step < 10; step++) {
+        const off = p.r + 6 + step * 10;
+        let x = p.x - w / 2, y = p.y - h / 2;
+        if (dir.includes('l')) x = p.x - off - w; else if (dir.includes('r')) x = p.x + off;
+        if (dir.includes('t')) y = p.y - off - h; else if (dir.includes('b')) y = p.y + off;
+        if (dir.length === 2) { x = dir.includes('l') ? p.x - off * 0.7 - w : p.x + off * 0.7; y = dir.includes('t') ? p.y - off * 0.7 - h : p.y + off * 0.7; }
+        x = Math.max(4, Math.min(W - w - 4, x)); y = Math.max(4, Math.min(H - h - 4, y));
+        const hitsNode = P.some(q => { const dx = Math.max(x - q.x, 0, q.x - (x + w)), dy = Math.max(y - q.y, 0, q.y - (y + h)); return dx * dx + dy * dy < (q.r + 2) ** 2; });
+        if (hitsNode) continue;
+        if (placed.some(q => x < q.x + q.w + 4 && x + w + 4 > q.x && y < q.y + q.h + 3 && y + h + 3 > q.y)) continue;
+        const inDisc = D.reduce((n, d) => { const dx = Math.max(x - d.x, 0, d.x - (x + w)), dy = Math.max(y - d.y, 0, d.y - (y + h)); return n + (dx * dx + dy * dy < d.r * d.r ? 1 : 0); }, 0);
+        const lx = Math.max(x, Math.min(p.x, x + w)), ly = Math.max(y, Math.min(p.y, y + h));
+        // a leader may not pass over another node
+        const crosses = P.some(q => { if (q === p) return false; const vx = lx - p.x, vy = ly - p.y, L2 = vx * vx + vy * vy || 1; const u = Math.max(0, Math.min(1, ((q.x - p.x) * vx + (q.y - p.y) * vy) / L2)); return Math.hypot(p.x + u * vx - q.x, p.y + u * vy - q.y) < q.r + 1.5; });
+        if (crosses && strict) continue; // second pass: a leader may cross an edge-dense core rather than lose the label
+        const cost = inDisc * 40 + Math.hypot(lx - p.x, ly - p.y) * 1.2 + rank * 8;
+        if (!best || cost < best.cost) best = { x, y, w, h, cost };
+        if (!inDisc) break; // outside every disc on this side: the nearest such spot wins
+      } }
       s.hidden = !best;
       if (!best) continue;
       placed.push(best);
       s.style.transform = `translate(${Math.round(best.x)}px, ${Math.round(best.y)}px)`;
+      // a hairline leader from the node's edge to the label's nearest point, when they are apart
+      const lx = Math.max(best.x, Math.min(p.x, best.x + best.w)), ly = Math.max(best.y, Math.min(p.y, best.y + best.h));
+      const d = Math.hypot(lx - p.x, ly - p.y);
+      if (d > p.r + 7) { const ux = (lx - p.x) / d, uy = (ly - p.y) / d; lines += `M${(p.x + ux * (p.r + 2)).toFixed(1)} ${(p.y + uy * (p.r + 2)).toFixed(1)}L${lx.toFixed(1)} ${ly.toFixed(1)}`; }
+      svg.querySelector(`.td-map-nodes circle[data-id="${CSS.escape(s.dataset.id)}"]`)?.classList.add('is-labelled');
     }
+    if (leaders) { leaders.setAttribute('viewBox', `0 0 ${W} ${H}`); leaders.innerHTML = lines ? `<path d="${lines}"/>` : ''; }
     box.classList.add('is-placed');
+    host.classList.add('is-fit');
   };
-  const ro = new ResizeObserver(([en]) => { const r = en.contentRect; place(r.width, r.height); if (!host.isConnected) ro.disconnect(); });
+  // the first fit runs in the observer callback (before first paint); later resizes (the rail's 420 ms width animation,
+  // a window resize) refit once they stop, so no frame of the animation rewrites the drawing (E12)
+  let first = true, timer = 0;
+  const ro = track(host, new ResizeObserver(([en]) => {
+    if (!host.isConnected) { ro.disconnect(); return; }
+    const W = Math.round(en.contentRect.width), H = Math.round(en.contentRect.height);
+    if (first) { first = false; place(W, H); return; }
+    clearTimeout(timer);
+    timer = setTimeout(() => { if (host.isConnected) place(W, H); }, 160);
+  }));
   ro.observe(box);
 }
 
@@ -312,18 +403,40 @@ function weekModel(t, settings, cals, slot) {
   return { today, days, posts, postingDays, goal, published: posts.filter(p => p.kind === 'published').length, planned: posts.filter(p => p.kind === 'planned').length, unplanned, next: slot?.date || null };
 }
 
-function weekTile(w, t, T) {
+/**
+ * T5: the suggested next post is the highest-scoring above-bar story in the brief with no draft yet (story ids from
+ * the calendar's drafts, tray and history). Only when every above-bar story already has a draft does it fall back to
+ * the draft in review. It links to the story's dossier, where Draft a post lives: nothing is created from here.
+ */
+function suggestion(items, T, cals, t) {
+  const drafted = new Set();
+  for (const c of cals) for (const d of [...(c.drafts || []), ...(c.unplanned || []), ...(c.history || [])]) if (d?.story_id != null) drafted.add(String(d.story_id));
+  const above = items.filter(it => Math.round(it.score) >= T).sort((a, b) => b.score - a.score);
+  const story = above.find(it => !drafted.has(String(it.story_id ?? it.id)));
+  if (story) return { kind: 'story', it: story };
+  if (t.draft) return { kind: 'draft', d: t.draft };
+  return null;
+}
+
+function weekTile(w, t, T, sugg) {
   const total = w.posts.length;
   const left = Math.max(0, w.goal - total);
   const headline = total >= w.goal ? 'This week is fully planned.' : `${total} of ${w.goal} posts planned this week.`;
-  // T1: the 7-day strip and the posts (or the suggested draft) sit side by side in the 7-column tile
+  const suggRow = !sugg ? html`<p class="td-sub">No story above your bar is waiting for a draft.</p>`
+    : sugg.kind === 'story' ? html`<h3 class="td-label td-week-label">Suggested next post</h3>
+      <a class="td-row td-row--sugg" href="${storyHref(sugg.it)}" data-dossier-src><span class="td-row-title">${sugg.it.short_title || sugg.it.title}</span><span class="td-row-meta"><span class="td-num">${round(sugg.it.score)}</span><span>no draft yet</span><span class="td-sugg-go">Draft a post ${icon('arrow-right')}</span></span></a>
+      <p class="td-caption td-sugg-why">The top story above your bar of <b>${T}</b> with no draft. Opens its dossier; nothing is drafted yet.</p>`
+    : html`<h3 class="td-label td-week-label">Suggested next post</h3>
+      <a class="td-row td-row--sugg" href="#/draft/${sugg.d.id}"><span class="td-row-title">${sugg.d.title}</span><span class="td-row-meta">${statusTag(sugg.d.status)}<span>${channelLabel(sugg.d.channel, sugg.d.format)}</span></span></a>
+      <p class="td-caption td-sugg-why">Every story above your bar already has a draft; this one is in review.</p>`;
+  // T1 (round 1): the 7-day strip and the posts (or the suggestion) side by side; T4: the tray line sits under the legend
   return html`
   <section class="tile td-week" data-tile="week" aria-labelledby="td-week-h">
     <div class="td-tile-head">
       <h2 class="td-h2" id="td-week-h">This week</h2>
       <a class="btn btn--ghost btn--sm" href="#/calendar">Calendar ${icon('arrow-right')}</a>
     </div>
-    <p class="td-sub"><b>${headline}</b> ${w.published ? `${w.published} published. ` : ''}${left && w.next ? html`Next open posting day: <b>${fmtDay(w.next)}</b>.` : ''}</p>
+    <p class="td-sub"><b>${headline}</b> ${w.published ? `${w.published} published.` : ''}</p>
     <div class="td-week-body">
       <div class="td-week-strip">
         <div class="td-cadence" role="img" aria-label="Posting cadence: ${total} of ${w.goal} posts this week (goal: one on each posting day${w.postingDays.length ? `, ${w.postingDays.join(', ')}` : ''})">
@@ -339,7 +452,8 @@ function weekTile(w, t, T) {
       </div>
       <div class="td-week-side">
         ${total ? html`<ul class="td-list">${w.posts.slice(0, 3).map(p => html`<li><a class="td-row" href="#/draft/${p.id}"><span class="td-row-day">${dowOf(p.day)}</span><span class="td-row-title">${p.title || p.story_title || 'Untitled draft'}</span><span class="td-row-meta">${statusTag(p.status)}<span>${channelLabel(p.channel)}</span></span></a></li>`)}</ul>${total > 3 ? html`<p class="td-more"><a href="#/calendar">All ${total} this week →</a></p>` : ''}`
-          : html`${t.draft ? html`<h3 class="td-label td-week-label">Suggested next post</h3><a class="td-row td-row--sugg" href="#/draft/${t.draft.id}"><span class="td-row-title">${t.draft.title}</span><span class="td-row-meta">${statusTag(t.draft.status)}<span>${channelLabel(t.draft.channel, t.draft.format)}</span></span></a>` : html`<p class="td-sub">No draft to suggest yet. Open a story and choose Draft a post.</p>`}`}
+          : suggRow}
+        ${left && w.next ? html`<a class="td-row td-week-next" href="#/calendar"><span class="td-label">Next open posting day</span><span class="td-row-title">${fmtDay(w.next)}</span></a>` : ''}
       </div>
     </div>
   </section>`;
@@ -408,7 +522,7 @@ function restTile(items, T) {
           <a class="td-rest-title td-stretch" href="${storyHref(it)}" data-shared="title">${it.title}</a>${demoFlag(it.is_demo)}
           ${it.finding ? html`<p class="td-finding">${marked(it.finding, it.finding_marks)}</p>` : ''}
         </div>
-        <div class="td-rest-side">${it.main_topic ? html`<span class="chip chip--main" data-shared="topic">${it.main_topic}</span>` : ''}<span class="td-src">${it.source_line || ''}</span></div>
+        <div class="td-rest-side">${it.main_topic ? raw(String(topicPills([it.main_topic], it.score, T, { max: 1 })).replace('<span class="chip ', '<span data-shared="topic" class="chip ')) : ''}<span class="td-src">${it.source_line || ''}</span></div>
       </li>`)}</ul>
   </section>`;
 }
@@ -450,7 +564,26 @@ function runStrip(t, s) {
   </div>`;
 }
 
+// T6: the eyebrow states the brief's age (the status pill already carries the date), in settings.timezone
+function eyebrowOf(t, s, settings, b) {
+  if (!b) return 'Today';
+  const n = s?.issue?.number;
+  let now = t.today || t.date;
+  try { now = new Intl.DateTimeFormat('en-CA', { timeZone: settings?.timezone || undefined, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date()); } catch (e) { /* unknown zone: the server's date */ }
+  const days = Math.round((Date.parse(`${now}T12:00:00Z`) - Date.parse(`${b.run_date}T12:00:00Z`)) / 864e5);
+  const age = !Number.isFinite(days) ? `from the ${fmtDay(b.run_date)} run` : days <= 0 ? 'from today’s run' : days === 1 ? 'from yesterday’s run' : `from the ${fmtDay(b.run_date)} run`;
+  return `Brief${n ? ` No. ${n}` : ''} · ${age}`;
+}
+
 // ------------------------------------------------------------------ render
+// T1 (E1): the render task builds only the head, the run strip and the three story tiles. News weather, the map, This
+// week, Waiting on you and Also in the brief are fetched in parallel and appended one tile per idle task once the page
+// is on screen (byline:routed → rAF → setTimeout), each a .cv tile so off-screen ones skip style and layout.
+// Today's layout observers stop when the router starts the page's exit, so they never run inside the next
+// route's swap frame (their callbacks read layout).
+function track(node, ro) { const page = node.closest('.page'); if (page) (page.__tdObs ||= []).push(ro); return ro; }
+export function destroy(page) { for (const ro of page?.__tdObs || []) ro.disconnect(); if (page) page.__tdObs = []; }
+
 export async function render(view) {
   await useStyle('/css/v4/today.css');
   const month = (d) => d.slice(0, 7);
@@ -459,22 +592,22 @@ export async function render(view) {
   const dow = (new Date(`${today}T12:00:00Z`).getUTCDay() + 6) % 7;
   const wkStart = ymdAdd(today, -dow), wkEnd = ymdAdd(wkStart, 6);
   const months = [...new Set([month(today), month(wkStart), month(wkEnd)])];
-  const [stories, map, slot, ...cals] = await Promise.all([
+  const restData = Promise.all([
     api.get(`/stories?days=${t.window_days || 7}&limit=200`).catch(() => []),
     api.get('/map').catch(() => null),
     api.get('/slots/next').catch(() => null),
     ...months.map(m => api.get(`/calendar?month=${m}`).catch(() => ({})))
-  ]);
-  // the calendar for today's month first (its unplanned tray is the one we report)
-  cals.sort((a, b) => (a.month === month(today) ? -1 : b.month === month(today) ? 1 : 0));
+  ]).then(([stories, map, slot, ...cals]) => {
+    // the calendar for today's month first (its unplanned tray is the one we report)
+    cals.sort((a, b) => (a.month === month(today) ? -1 : b.month === month(today) ? 1 : 0));
+    return { stories, map, slot, cals };
+  });
 
   const T = t.threshold;
   const b = t.brief;
   const items = b?.items || [];
   const { h, l } = headline(t, items);
-  const issue = s?.issue;
-  const eyebrow = !b ? 'Today' : t.is_today ? `${t.brief_date_label || fmtDay(today)}${issue?.number ? ` · No. ${issue.number}` : ''}` : `From ${t.brief_date_label || fmtDay(b.run_date)}’s run${issue?.number ? ` · No. ${issue.number}` : ''}`;
-  const w = weekModel(t, settings, cals, slot);
+  const eyebrow = eyebrowOf(t, s, settings, b);
   // quiet day: the lead slot explains the quiet day; the closest stories fill the secondary slots
   const pool = b?.quiet ? items : items.slice(1);
   const pick = { lead: b?.quiet ? null : items[0], s1: pool[0], s2: pool[1], rest: pool.slice(2) };
@@ -490,7 +623,7 @@ export async function render(view) {
       <p class="lede">${l}</p>
       <div class="page-head-actions">
         ${!items.length ? html`<button type="button" class="btn btn--primary" data-act="demo">Load demo data</button>` : ''}
-        <button type="button" class="btn ${items.length ? 'btn--secondary' : 'btn--secondary'}" data-act="run" data-key="R">Run today’s workflow</button>
+        <button type="button" class="btn btn--secondary" data-act="run" data-key="R">Run today’s workflow</button>
         ${b ? html`<div class="td-menu">
           <button type="button" class="btn btn--ghost btn--icon" data-act="menu" aria-haspopup="menu" aria-expanded="false" aria-controls="td-brief-menu" aria-label="Brief actions">${icon('more')}</button>
           <div class="td-menu-pop" id="td-brief-menu" role="menu" aria-label="Brief actions" hidden>
@@ -510,36 +643,121 @@ export async function render(view) {
       <p>Run today’s workflow to collect and rank stories${t.sources_total && t.sources_paused >= t.sources_total ? ` (all ${t.sources_total} sources are paused, so a run only re-ranks what is already stored)` : ''}, add a story URL in the Feed, or load the fictional demo data to try the full flow without credentials.</p>
       <div class="cluster"><button type="button" class="btn btn--primary" data-act="demo">Load demo data</button><a class="btn btn--secondary" href="#/feed">Add a story URL</a></div>
     </div>
-    ${weatherTile(stories, t, weights)}
-    ${mapTile(map, t)}
-    ${weekTile(w, t, T)}
-    ${deskTile(t, s)}
   </div>` : html`
   <div class="td-grid" data-no-count>
     ${b?.quiet ? quietLead(t, items) : leadTile(pick.lead, T)}
     ${pick.s1 ? html`<div class="td-side">${storyTile(pick.s1, T, { rank: 1, size: 'lg' })}${pick.s2 ? storyTile(pick.s2, T, { rank: 2 }) : ''}</div>` : ''}
-    ${weatherTile(stories, t, weights)}
-    ${mapTile(map, t)}
-    ${weekTile(w, t, T)}
-    ${deskTile(t, s)}
-    ${pick.rest.length ? restTile(pick.rest, T) : ''}
   </div>`}`);
   view.replaceChildren(el);
 
   wire(el, view, { t, b, items });
-  placeMapLabels(el.querySelector('.td-map-canvas'));
+  fitLead(el);
+
+  // the deferred tiles, in DOM (= phone) order; each builder returns markup from the resolved data
+  const later = [
+    ['weather', (d) => weatherTile(d.stories, t, weights)],
+    ['map', (d) => mapTile(d.map, t)],
+    ['week', (d) => weekTile(weekModel(t, settings, d.cals, d.slot), t, T, suggestion(items, T, d.cals, t))],
+    ['desk', () => deskTile(t, s)],
+    ...(pick.rest.length ? [['rest', () => restTile(pick.rest, T)]] : [])
+  ];
+  const ctl = choreographer(el, t, later.map(([k]) => k));
+  let started = false;
+  const go = (quick) => {
+    if (started || !el.isConnected) return;
+    started = true;
+    document.removeEventListener('byline:routed', onRouted);
+    ctl.start(quick);
+    buildLater(el, restData, later, ctl);
+  };
   // the shell fires byline:routed when this page swaps in; a re-render (after a run) plays a short entrance itself
-  if (view.classList.contains('current')) choreograph(el, { quick: true, t });
-  else {
-    const h2 = (e) => { if (e.detail?.page !== view) return; document.removeEventListener('byline:routed', h2); choreograph(el, { t }); };
-    document.addEventListener('byline:routed', h2);
-  }
+  const onRouted = (e) => { if (e.detail?.page === view || e.detail?.page?.contains?.(el)) go(false); };
+  if (view.classList.contains('current')) go(true);
+  else { document.addEventListener('byline:routed', onRouted); setTimeout(() => { if (!started && view.classList.contains('current')) go(true); }, 2500); }
+}
+
+/** Append the deferred tiles one per task: the first after the swap frame has painted, then one per idle period. */
+function buildLater(el, restData, later, ctl) {
+  const grid = el.querySelector('.td-grid');
+  let i = 0, data = null;
+  const idle = (fn) => (window.requestIdleCallback ? requestIdleCallback(fn, { timeout: 160 }) : setTimeout(fn, 16));
+  const step = () => {
+    if (!el.isConnected || !grid) return;
+    if (i >= later.length) { settle(); return; }
+    const [key, build] = later[i++];
+    grid.insertAdjacentHTML('beforeend', String(build(data)));
+    const tile = grid.lastElementChild;
+    tile.classList.add('cv');
+    if (key === 'map') fitMap(tile.querySelector('.td-map-canvas'), data.map);
+    ctl.enter(tile);
+    idle(step);
+  };
+  // once the entrance is over, the tiles leave content-visibility one per idle period (their estimates match, so
+  // nothing moves): scrolling and full-page captures then never meet a skipped tile
+  const settle = () => setTimeout(() => {
+    const cvs = [...grid.querySelectorAll(':scope > .cv')];
+    const next = () => { const c = cvs.shift(); if (!c || !el.isConnected) return; c.classList.remove('cv'); idle(next); };
+    idle(next);
+  }, Math.max(0, ctl.endsIn?.() ?? 0) + 400);
+  requestAnimationFrame(() => setTimeout(() => restData.then((d) => { data = d; setTimeout(step, 0); }, () => { data = { stories: [], map: null, slot: null, cals: [] }; setTimeout(step, 0); }), 0));
+}
+
+/**
+ * T3 (ruling R8): fixed 24 px gaps, never spread. When the lead is still more than 32 px shorter than the side column
+ * beside it, it stops stretching (align-self: start) instead of opening bands. Measured in a ResizeObserver callback,
+ * where layout is clean (no forced layout); toggling the class does not change the lead's own content height.
+ */
+function fitLead(el) {
+  const lead = el.querySelector('.td-lead'), side = el.querySelector('.td-side');
+  if (!lead || !side || !('ResizeObserver' in window)) return;
+  const mix = lead.querySelector('.td-mix');
+  // the stacked mix is taller than the compact one by its origin line (4 + 21 px, today.css)
+  const EXTRA = mix?.querySelector('.td-mix-extra') ? 25 : 0;
+  const check = () => {
+    if (!lead.isConnected) { ro.disconnect(); return; }
+    const last = lead.lastElementChild;
+    const pad = parseFloat(getComputedStyle(lead).paddingBottom) || 0;
+    const natural = last ? last.offsetTop + last.offsetHeight + pad : lead.offsetHeight;
+    const beside = side.offsetTop === lead.offsetTop;
+    const compact = lead.classList.contains('mix-compact');
+    let useCompact = false, nat = natural;
+    // the side column's own content height (its tiles stretch when the lead is the taller one)
+    const px = (v) => parseFloat(v) || 0;
+    const tiles = [...side.children];
+    const S = tiles.reduce((sum, tile) => {
+      const cs = getComputedStyle(tile), kids = [...tile.children];
+      return sum + px(cs.paddingTop) + px(cs.paddingBottom) + px(cs.borderTopWidth) + px(cs.borderBottomWidth)
+        + kids.reduce((h, k) => h + k.offsetHeight, 0) + px(cs.rowGap) * Math.max(0, kids.length - 1);
+    }, 0) + px(getComputedStyle(side).rowGap) * Math.max(0, tiles.length - 1);
+    if (beside && EXTRA) {
+      const nC = compact ? natural : natural - EXTRA, nF = nC + EXTRA;
+      useCompact = !(nF <= S + 4); // the stacked mix when it fits (4 px slack for the estimate), else the compact one
+      nat = useCompact ? nC : nF;
+    }
+    const short = beside && S - nat > 32;
+    apply(() => {
+      if (useCompact !== compact) lead.classList.toggle('mix-compact', useCompact);
+      lead.classList.toggle('is-short', short);
+    });
+  };
+  // reads happen in the observer callback (layout is clean there); while the column keeps resizing (the rail animation)
+  // the writes wait until it stops, so the decision never flips classes mid-animation (E12)
+  let lastAt = -1e9, timer = 0;
+  const apply = (fn) => {
+    const now = performance.now(), busy = now - lastAt < 120;
+    lastAt = now;
+    clearTimeout(timer);
+    if (busy) timer = setTimeout(fn, 160); else fn();
+  };
+  const ro = track(lead, new ResizeObserver(check));
+  ro.observe(lead); ro.observe(side);
 }
 
 // ------------------------------------------------------------------ choreography (C §2 + round 1 T4/T5)
-// One animation per element or group, opacity + transform in the same keyframes (≈20 Animation objects on load
-// besides the heading's own). Order: h1 lines → lede (line-2 start + 120 ms) with the actions and the run strip
-// (+90 ms) → tiles from lede + 200 ms (90 ms stagger) → chart rows / map groups inside their tiles.
+// One animation per element or group, opacity + transform in the same keyframes. Order: h1 lines → lede (line-2 start
+// + 120 ms) with the actions and the run strip (+90 ms) → tiles from lede + 200 ms (90 ms stagger) → chart rows / map
+// groups inside their tiles. The deferred tiles keep their slot in that schedule: each is timed against the moment
+// the page was routed, whenever its idle task appends it.
 const rise = (n, delay, { y = 10, duration = 700, easing = EASE.settle } = {}) => n?.animate(
   [{ opacity: 0, transform: `translateY(${y}px)` }, { opacity: 1, transform: 'none' }], { duration, delay, easing, fill: 'backwards' });
 
@@ -551,63 +769,79 @@ function headTiming(el) {
   return { start: delays[0] ?? 0, line2: delays[1] ?? delays[0] ?? 0, animated: delays.length > 0 };
 }
 
-function choreograph(el, { quick = false, t } = {}) {
+function choreographer(el, t, laterKeys) {
   const T = t?.threshold;
-  const rings = [...el.querySelectorAll('.td-grid .score-ring')];
-  const counts = (at = []) => rings.forEach((ring, i) => {
-    const num = ring.querySelector('.ring-num[data-count-to]');
-    if (!num || num.dataset.counted) return;
-    num.dataset.counted = '1';
-    const go = () => countTo(num, Number(num.dataset.countTo), { ring, threshold: Number(ring.dataset.qThreshold ?? T), duration: i === 0 ? 1400 : 1100, key: ring.dataset.countKey });
-    if (reducedMotion() || quick || at[i] == null) go(); else setTimeout(go, at[i]);
-  });
-  heat(t);
-  if (reducedMotion() || document.hidden) { counts(); return; }
-
-  // the head's actions and the run strip: take them off the shell's generic enter classes (which would show them
-  // before the h1) and bring them in with the lede
-  const head = el.querySelector('.td-head');
-  const actions = head?.querySelector('.page-head-actions');
-  const strip = el.querySelector('.td-strip');
-  for (const n of [actions, strip, ...(actions ? actions.querySelectorAll('.enter-head, .enter-item') : [])]) { n?.classList.remove('enter-item', 'enter-head'); n?.style.removeProperty('--i'); }
-
-  const tiles = [...el.querySelectorAll('.td-grid > .tile, .td-grid > .empty, .td-side > .tile')];
-  const order = ['lead', 'empty', 's1', 's2', 'weather', 'map', 'week', 'desk', 'rest'];
-  tiles.sort((a, b) => order.indexOf(a.dataset.tile) - order.indexOf(b.dataset.tile));
-
-  if (quick) { // a re-render after a run: one short cascade, no heading choreography
-    tiles.forEach((tile, i) => rise(tile, i * 40, { y: 8, duration: 500 }));
-    counts();
-    return;
-  }
-
-  const ht = headTiming(el);
-  const lede = head?.querySelector('.lede');
-  let ledeAt = ht.line2 + 120;
-  if (ht.animated && ht.start <= 80) ledeAt = Math.max(ledeAt, ht.start + 390); // first load: the long 'Settle' (≈450 ms)
-  // the lede: the shell's two lede animations become one (opacity + rise together), retimed after line 2
-  if (lede) { (ht.lede || lede.getAnimations()).forEach(a => a.cancel()); rise(lede, ledeAt, { y: 6, duration: 600, easing: EASE.fade }); }
-  const fadeIn = (n, d) => rise(n, d, { y: 6, duration: 450, easing: EASE.fade });
-  fadeIn(actions, ledeAt);
-  fadeIn(strip, ledeAt + 90);
-
-  const base = ledeAt + 200;
-  const stag = 90;
+  const ORDER = ['lead', 'empty', 's1', 's2', 'weather', 'map', 'week', 'desk', 'rest'];
+  let t0 = 0, base = 0, mode = 'still'; // still | quick | full
   const at = new Map();
-  tiles.forEach((tile, i) => { const d = base + i * stag; at.set(tile.dataset.tile, d); rise(tile, d, { y: 12, duration: 800 }); });
+  const since = () => performance.now() - t0;
 
-  const lead = el.querySelector('.td-lead');
-  // weather: one animation per row (40 ms stagger)
-  const wx0 = (at.get('weather') ?? base) + 160;
-  el.querySelectorAll('.td-wx-row').forEach((row, i) => rise(row, wx0 + i * 40, { y: 0, duration: 520, easing: EASE.fade }));
-  // map: edges then nodes, one animation per group
-  const mp0 = (at.get('map') ?? base) + 160;
-  const edgesEl = el.querySelector('.td-map-edges'); if (edgesEl) edgesEl.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 600, delay: mp0 + 120, easing: EASE.fade, fill: 'backwards' });
-  const nodesEl = el.querySelector('.td-map-nodes'); if (nodesEl) nodesEl.animate([{ opacity: 0, transform: 'scale(.97)' }, { opacity: 1, transform: 'none' }], { duration: 600, delay: mp0, easing: EASE.settle, fill: 'backwards' });
+  const counts = (delays = new Map()) => [...el.querySelectorAll('.td-grid .score-ring')].forEach((ring, i) => {
+    const num = ring.querySelector('.ring-num[data-count-to]');
+    if (!num || num.dataset.counted) return; // T2: scoreRing renders a counted (key, value) final, with no data-count-to
+    num.dataset.counted = '1';
+    const final = Number(num.dataset.countTo);
+    const go = () => countTo(num, final, { ring, threshold: Number(ring.dataset.qThreshold ?? T), duration: i === 0 ? 1400 : 1100, key: ring.dataset.countKey });
+    const d = delays.get(ring);
+    // T2: a ring that already counted this session (another render in between) paints its final value at once
+    if (mode !== 'full' || d == null || hasCounted(ring.dataset.countKey, String(Math.round(final)))) go(); else setTimeout(go, d);
+  });
 
-  // rings count up as their tiles land
-  counts(rings.map(r => (at.get(r.closest('[data-tile]')?.dataset.tile) ?? base) + 300));
-  pulseOn(lead, Math.max(0, (at.get('lead') ?? base) - 100));
+  return {
+    start(quick) {
+      t0 = performance.now();
+      heat(t);
+      mode = reducedMotion() || document.hidden ? 'still' : quick ? 'quick' : 'full';
+      if (mode === 'still') { counts(); return; }
+      const head = el.querySelector('.td-head');
+      const actions = head?.querySelector('.page-head-actions');
+      const strip = el.querySelector('.td-strip');
+      const tops = [...el.querySelectorAll('.td-grid > .tile, .td-grid > .empty, .td-side > .tile')];
+      const keys = [...tops.map(n => n.dataset.tile), ...laterKeys].sort((a, b) => ORDER.indexOf(a) - ORDER.indexOf(b));
+      if (mode === 'quick') { // a re-render after a run: one short cascade, no heading choreography
+        keys.forEach((k, i) => at.set(k, i * 40));
+        tops.forEach(tile => rise(tile, at.get(tile.dataset.tile), { y: 8, duration: 500 }));
+        counts();
+        return;
+      }
+      // the head's actions and the run strip: take them off the shell's generic enter classes (which would show them
+      // before the h1) and bring them in with the lede
+      for (const n of [actions, strip, ...(actions ? actions.querySelectorAll('.enter-head, .enter-item') : [])]) { n?.classList.remove('enter-item', 'enter-head'); n?.style.removeProperty('--i'); }
+      const ht = headTiming(el);
+      const lede = head?.querySelector('.lede');
+      let ledeAt = ht.line2 + 120;
+      if (ht.animated && ht.start <= 80) ledeAt = Math.max(ledeAt, ht.start + 390); // first load: the long 'Settle' (≈450 ms)
+      if (lede) { (ht.lede || lede.getAnimations()).forEach(a => a.cancel()); rise(lede, ledeAt, { y: 6, duration: 600, easing: EASE.fade }); }
+      const fadeIn = (n, d) => rise(n, d, { y: 6, duration: 450, easing: EASE.fade });
+      fadeIn(actions, ledeAt);
+      fadeIn(strip, ledeAt + 90);
+      base = ledeAt + 200;
+      keys.forEach((k, i) => at.set(k, base + i * 90));
+      tops.forEach(tile => rise(tile, at.get(tile.dataset.tile), { y: 12, duration: 800 }));
+      // rings count up as their tiles land
+      const delays = new Map([...el.querySelectorAll('.td-grid .score-ring')].map(r => [r, (at.get(r.closest('[data-tile]')?.dataset.tile) ?? base) + 300]));
+      counts(delays);
+      const lead = el.querySelector('.td-lead');
+      pulseOn(lead, Math.max(0, (at.get('lead') ?? base) - 100));
+    },
+    /** ms until the last tile's entrance has finished (0 when nothing is animating). */
+    endsIn() { if (mode === 'still') return 0; const last = Math.max(0, ...at.values()); return last + 900 - since(); },
+    /** A deferred tile was appended: run its slot of the cascade (late tiles come in at once, shorter). */
+    enter(tile) {
+      if (mode === 'still') return;
+      const k = tile.dataset.tile;
+      const d = (at.get(k) ?? base) - since();
+      if (mode === 'quick') { rise(tile, Math.max(0, d), { y: 8, duration: 500 }); return; }
+      const late = d < 0;
+      rise(tile, Math.max(0, d), late ? { y: 8, duration: 500 } : { y: 12, duration: 800 });
+      const inner = Math.max(0, d) + (late ? 60 : 160);
+      if (k === 'weather') tile.querySelectorAll('.td-wx-row').forEach((row, i) => rise(row, inner + i * 40, { y: 0, duration: 520, easing: EASE.fade }));
+      if (k === 'map') {
+        tile.querySelector('.td-map-edges')?.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 600, delay: inner + 120, easing: EASE.fade, fill: 'backwards' });
+        tile.querySelector('.td-map-nodes')?.animate([{ opacity: 0, transform: 'scale(.97)' }, { opacity: 1, transform: 'none' }], { duration: 600, delay: inner, easing: EASE.settle, fill: 'backwards' });
+      }
+    }
+  };
 }
 
 function pulseOn(tile, delay) {
@@ -660,9 +894,9 @@ function wire(el, view, { t, b, items }) {
   });
   pop?.addEventListener('click', (e) => { if (e.target.closest('a[role=menuitem]')) setMenu(false, false); });
 
-  // weather: chart ⇄ table (the text alternative, F §5)
-  el.querySelector('.td-wx-toggle')?.addEventListener('click', (e) => {
-    const btn = e.currentTarget, tile = btn.closest('.td-wx'), table = tile.querySelector('.td-wx-table');
+  // weather: chart ⇄ table (the text alternative, F §5). Delegated: the tile is appended after the page shows (T1).
+  const wxTable = (btn) => {
+    const tile = btn.closest('.td-wx'), table = tile.querySelector('.td-wx-table');
     const on = btn.getAttribute('aria-pressed') !== 'true';
     btn.setAttribute('aria-pressed', String(on));
     btn.textContent = on ? 'Show as chart' : 'Show as table';
@@ -670,25 +904,22 @@ function wire(el, view, { t, b, items }) {
     table.classList.toggle('is-visible', on);
     table.classList.toggle('sr-only', !on);
     if (!reducedMotion()) (on ? table : tile.querySelector('.td-wx-chart')).animate([{ opacity: 0 }, { opacity: 1 }], { duration: 240, easing: EASE.fade });
-  });
+  };
 
   // weather: hovering a dot echoes the same story in every topic row
-  const wx = el.querySelector('.td-wx-chart');
-  if (wx) {
-    let lit = null;
-    const light = (id) => {
-      if (lit === id) return;
-      wx.querySelectorAll('.td-wx-dot.is-echo').forEach(d => d.classList.remove('is-echo'));
-      lit = id;
-      if (id) wx.querySelectorAll(`.td-wx-dot[data-s="${CSS.escape(id)}"]`).forEach(d => d.classList.add('is-echo'));
-    };
-    wx.addEventListener('pointerover', (e) => light(e.target.closest('.td-wx-dot')?.dataset.s || null));
-    wx.addEventListener('pointerleave', () => light(null));
-  }
+  let lit = null;
+  const light = (wx, id) => {
+    if (lit === id) return;
+    wx.querySelectorAll('.td-wx-dot.is-echo').forEach(d => d.classList.remove('is-echo'));
+    lit = id;
+    if (id) wx.querySelectorAll(`.td-wx-dot[data-s="${CSS.escape(id)}"]`).forEach(d => d.classList.add('is-echo'));
+  };
+  el.addEventListener('pointerover', (e) => { const wx = e.target.closest?.('.td-wx-chart'); if (wx) light(wx, e.target.closest('.td-wx-dot')?.dataset.s || null); else if (lit) light(el, null); });
 
   on(el, 'click', '[data-act]', async (e, btn) => {
     const a = btn.dataset.act;
     if (a === 'menu') { setMenu(btn.getAttribute('aria-expanded') !== 'true'); return; }
+    if (a === 'wx-table') { wxTable(btn); return; }
     if (a === 'open-lead') { btn.closest('.td-lead')?.querySelector('.td-stretch')?.click(); return; } // same path as the title link
     if (a === 'run') await act(btn, async () => {
       const tc = window.__byline?.lattice?.(btn, { label: 'Running' });

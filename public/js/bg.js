@@ -310,8 +310,9 @@ function tick(now) {
   S.lastNow = now; S.frames++; S.sinceDraw++;
   let tweening = false;
 
-  // theme colour tween (500ms)
-  if (S.colTo) { const p = Math.min(1, (now - S.colT0) / 500); S.col0 = mixColors(S.colFrom, S.colTo, easeAmbient(p)); if (p >= 1) S.colTo = null; tweening = true; paintLightColor(); }
+  // theme colour tween: --dur-theme on --ease-move, the same curve as the CSS surfaces (R2 S6), so the field and the
+  // page surfaces pass through the mid-tones together while the ink is held strong (app.js applyTheme)
+  if (S.colTo) { const p = Math.min(1, (now - S.colT0) / (S.durTheme || 600)); S.col0 = mixColors(S.colFrom, S.colTo, easeMove(p)); if (p >= 1) S.colTo = null; tweening = true; paintLightColor(); }
   // rail rect tween (follows --rail-w)
   if (S.railTo) {
     const p = Math.min(1, (now - S.railT0) / Math.max(1, S.railDur)), e = easeMove(p);
@@ -435,7 +436,10 @@ function setMode(m) {
 }
 function applyMode() {
   const m = S.overlays > 0 ? 'still' : S.routeMode;
-  if (root.dataset.bg !== m) root.dataset.bg = m;
+  // R2 S2/S3: an overlay stills the engine but leaves the field's opacity (html[data-bg]) at the route's value: a 600ms
+  // full-screen opacity transition under the dossier flight made every flight frame a full-viewport redraw. The scrim
+  // already covers the field while the overlay is up.
+  if (root.dataset.bg !== S.routeMode) root.dataset.bg = S.routeMode;
   if (S.mode === m) return;
   S.mode = m; S.stillDrawn = false;
   if (m !== 'still') wake();
@@ -472,6 +476,7 @@ function stats() {
 function onTheme() {
   const to = readColors();
   if (!S.col0 || reduced() || !S.started) { S.col0 = to; requestDraw(); return; }
+  S.durTheme = parseFloat(getComputedStyle(root).getPropertyValue('--dur-theme')) || 600; // the CSS surfaces' duration
   S.colFrom = S.col0; S.colTo = to; S.colT0 = performance.now();
   wake();
 }

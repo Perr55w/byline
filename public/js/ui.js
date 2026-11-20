@@ -3,7 +3,7 @@
 // compatible no-ops or v4 equivalents. New in v4: icon, scoreRing, scoreChip, skeleton, sheet,
 // holdToPress, statusMark, lattice.
 
-import { countTo, reduced as motionReduced, EASE } from './motion.js';
+import { countTo, hasCounted, reduced as motionReduced, EASE } from './motion.js';
 import { qualityColor, qualityTier, qualityLabel, ringGradientLine, paintQuality } from './quality.js';
 
 const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
@@ -21,6 +21,7 @@ export function html(strings, ...vals) {
       const v = vals[i];
       if (v instanceof Raw) out += v.s;
       else if (Array.isArray(v)) out += v.map(x => (x instanceof Raw ? x.s : esc(x))).join('');
+      else if (v === false && /\saria-[a-z]+="$/.test(s)) out += 'false'; // ARIA states need an explicit "false", not ""
       else if (v === false || v === null || v === undefined) out += '';
       else out += esc(v);
     }
@@ -315,7 +316,10 @@ export function scoreRing(score, th = threshold(), { size = 96, label = true, co
   const tier = qualityTier(s, th), col = qualityColor(s, th);
   const shown = decimals ? s.toFixed(decimals) : String(Math.round(s));
   const above = s >= th ? 'above' : 'below';
-  const counting = count && !reducedMotion();
+  // S7: a ring whose (key, value) already counted this session renders final markup (same as count:false), so a
+  // revisit never shows '0' before snapping to the score
+  const already = !!(count && key && hasCounted(key, shown));
+  const counting = count && !already && !reducedMotion();
   const start = counting ? 0 : s;
   // S9: above the bar the arc runs from the threshold colour to the score colour (fill fraction stays the non-colour cue)
   const gid = `rg${++ringSeq}-${Math.random().toString(36).slice(2, 6)}`;
@@ -325,14 +329,27 @@ export function scoreRing(score, th = threshold(), { size = 96, label = true, co
   const arcStroke = s >= th && !counting ? ` stroke:url(#${gid});` : '';
   return html`<span class="score-ring${size < 64 ? ' ring--sm' : ''}${counting ? ' is-counting' : ''}" role="img" aria-label="Score ${shown} of 100, ${above} your bar of ${th}" data-q="${counting ? qualityTier(0, th) : tier}" data-q-score="${s}" data-q-threshold="${th}" style="--ring-size:${size}px;--q:${counting ? qualityColor(0, th) : col}"${key ? raw(` data-count-key="${esc(key)}"`) : ''}>
     <svg viewBox="0 0 100 100" aria-hidden="true">${grad}<circle class="ring-track" cx="50" cy="50" r="${r}"/><circle class="ring-halo" cx="50" cy="50" r="${r + 4}"/><circle class="ring-arc" cx="50" cy="50" r="${r}" data-c="${C.toFixed(2)}" stroke-dasharray="${C.toFixed(2)}" style="stroke-dashoffset:${(C * (1 - Math.min(100, start) / 100)).toFixed(2)};${arcStroke}"/></svg>
-    <span class="ring-num"${count ? raw(` data-count-to="${s}" data-decimals="${decimals}"`) : ''} aria-hidden="true">${counting ? '0' : shown}</span>
+    <span class="ring-num"${count && !already ? raw(` data-count-to="${s}" data-decimals="${decimals}"`) : ''} aria-hidden="true">${counting ? '0' : shown}</span>
     ${label ? html`<span class="ring-sub" aria-hidden="true">${qualityLabel(s, th)}</span>` : ''}
   </span>`;
 }
 /** Feed-style score chip with tiered non-colour cues (outline below the bar, solid at the top). Never counts. */
+// S8: inline --qd = round(score) − threshold (clamped ±30) lets components.css ramp the fill inside each band.
 export function scoreChip(score, th = threshold()) {
   const s = Number(score) || 0;
-  return html`<span class="score-chip" data-q="${qualityTier(s, th)}" data-q-score="${s}" data-q-threshold="${th}" style="--q:${qualityColor(s, th)}" title="${qualityLabel(s, th)}"><span class="sr-only">Score </span>${Math.round(s)}</span>`;
+  const d = Math.round(s) - Math.round(Number(th) || 0), qd = Math.max(-30, Math.min(30, d));
+  const band = d >= 15 ? 'top' : d >= 0 ? 'clears' : d >= -15 ? 'near' : 'below';
+  return html`<span class="score-chip" data-q="${qualityTier(s, th)}" data-band="${band}" data-q-score="${s}" data-q-threshold="${th}" style="--q:${qualityColor(s, th)};--qd:${qd}" title="${qualityLabel(s, th)}"><span class="sr-only">Score </span>${Math.round(s)}</span>`;
+}
+/**
+ * S9: topic pills for a story row. The first topic is blue (.chip--main) only when the story clears the bar;
+ * below it the lead topic is neutral (.chip--lead). The rest are .chip--topic. Blue budget: B amendment 2.
+ */
+export function topicPills(topics = [], score, th = threshold(), { max = 2 } = {}) {
+  const list = (topics || []).filter(Boolean).slice(0, max);
+  if (!list.length) return '';
+  const above = Math.round(Number(score) || 0) >= Number(th);
+  return html`${list.map((t, k) => html`<span class="chip ${k === 0 ? (above ? 'chip--main' : 'chip--lead') : 'chip--topic'}">${t}</span>`)}`;
 }
 /** v3 score numeral (still used by v3 views). Final value in the markup; countUp() may animate it once. */
 export function scoreNum(v, { dec = false, flap = false, from = null } = {}) {

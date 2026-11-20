@@ -118,3 +118,21 @@
 
 /* the aside skips layout while off screen (phone: far below the fold) — E1 */
 .rn-aside.cv { contain-intrinsic-size: auto 640px; }
+
+/* ---------------------------------------------------------------- SS10: repeated runs grouped into one expandable row */
+.rn-table tr[hidden] { display: none !important; }
+.rn-gbtn { display: inline-flex; align-items: baseline; gap: 10px; padding: 0; border: 0; background: none; color: var(--text-1); font: 500 14px/20px var(--font-sans); white-space: nowrap; cursor: pointer; }
+.rn-gbtn .icon { align-self: center; width: 14px; height: 14px; margin: 0 -4px 0 -2px; color: var(--text-3); transition: transform var(--dur-micro) var(--ease-move); }
+.rn-gbtn[aria-expanded=true] .icon { transform: rotate(90deg); }
+.rn-gbtn:hover .rn-gid { color: var(--accent-text); }
+.rn-gbtn:focus-visible { border-radius: 4px; box-shadow: var(--focus); outline: none; }
+.rn-gn { color: var(--text-2); font-weight: 450; }
+.rn-row-sub { display: block; color: var(--text-2); font: 450 12px/16px var(--font-sans); }
+.rn-grow.is-open { background: var(--tint-1); }
+.rn-member > td:nth-child(2) { padding-left: 34px !important; }
+.rn-member { background: var(--surface-nested); }
+.rn-member.is-selected { background: var(--accent-soft); }
+.rn-c-span .rn-span { display: inline; color: var(--text-1); font: inherit; }
+@media (prefers-reduced-motion: reduce) { .rn-gbtn .icon { transition: none; } }
+@media (max-width: 760px) { .rn-member > td:nth-child(2) { padding-left: 0 !important; } .rn-member { padding-left: 28px !important; } }
+#view .rn-table td.num { white-space: nowrap; }
