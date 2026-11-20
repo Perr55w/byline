@@ -189,16 +189,19 @@ export const local = {
       const shadow = e.parent ? employers.filter(o => o !== e && o.parent === e.parent).flatMap(o => [o.name, ...(o.terms || [])]) : [];
       let best = null, bestHits = [];
       for (const c of corpus) {
-        const hits = termHitsShadowed(c.text, terms, shadow);
+        const hits = [...new Map(termHitsShadowed(c.text, terms, shadow).map(h => [h.toLowerCase(), h])).values()]; // "adoption" / "Adoption" once
         if (hits.length > bestHits.length) { best = c; bestHits = hits; }
       }
       const isOrigin = firstParty === e.name;
       if ((!best || !bestHits.length) && !isOrigin) continue;
       const art = (best && articles.find(a => a.id === best.article_id)) || (isOrigin ? org : null) || articles[0];
       const nameHit = isOrigin || termHits(allText, [e.name]).length > 0 || companies.some(c => lc(c) === lc(e.name));
+      // R3 S12: a hit on the employer's own name or its parent's ("Google") is a mention, not public work on a topic
+      const topical = bestHits.filter(h => lc(h) !== lc(e.name) && lc(h) !== lc(e.parent));
+      const where = art ? `${art.domain}` : 'the source';
       out.push({
         employer: e.name, matched: bestHits,
-        why: best ? `${e.name} works publicly on ${bestHits.slice(0, 3).join(', ')}; ${art ? `${art.domain}` : 'the source'} says: “${truncate(best.text, 180)}”` : `${e.name} published this story itself (${org?.domain || 'its own site'}).`,
+        why: best ? (topical.length ? `${e.name} works publicly on ${topical.slice(0, 3).join(', ')}; ${where} says: “${truncate(best.text, 180)}”` : `${where} names ${bestHits[0]}: “${truncate(best.text, 180)}”`) : `${e.name} published this story itself (${org?.domain || 'its own site'}).`,
         source: art ? { url: art.url, title: art.title, domain: art.domain } : null,
         mention_ok: nameHit,
         first_party: isOrigin,

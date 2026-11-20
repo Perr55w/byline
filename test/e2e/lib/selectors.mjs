@@ -24,9 +24,10 @@ export const SEL = {
   primaryNav: 'nav[aria-label]',
   // dossier (overlay, DECISIONS "Router")
   storyLink: '#view .page.current a[href^="#/story/"], #view .page.current [data-href^="#/story/"], #view .page.current [data-story-id]',
-  dossierRoot: '.dossier',
-  dossierPanel: '.dossier-panel, .dossier [role="dialog"]',
-  dossierH1: '.dossier-panel h1, .dossier [role="dialog"] h1',
+  // R3 S2: the most recent idle prebuild stays attached as .dossier.is-prebuild (hidden, inert): never the open dossier
+  dossierRoot: '.dossier:not(.is-prebuild)',
+  dossierPanel: '.dossier:not(.is-prebuild) .dossier-panel',
+  dossierH1: '.dossier:not(.is-prebuild) .dossier-panel h1',
   // index (⌘K) — a modal that may stack over the dossier (glass budget 3)
   indexDialog: '.index, .index-menu, [role="dialog"][aria-label*="Index" i], .cmdk-dialog',
   // map

@@ -71,12 +71,12 @@ function schedulePrebuild(id, data) {
   if (performance.now() < quietUntil) return;
   const hit = PRE.get(id);
   if (hit && hit.key === geomKey()) { PRE.delete(id); PRE.set(id, hit); return; } // touch (LRU)
-  if (pending.has(id) || (S.open && S.id === id)) return;
+  if (pending.has(id) || S.open) return; // R3 S2: never park a second (attached) dossier beside an open one
   pending.add(id);
   ric(() => { pending.delete(id); prebuild(id, data).catch(() => {}); }, { timeout: 2000 });
 }
 async function prebuild(id, data) {
-  if ((S.open && S.id === id) || !data || data.error) return;
+  if (S.open || !data || data.error) return;
   const old = PRE.get(id);
   if (old) { if (old.key === geomKey()) return; PRE.delete(id); }
   const key = geomKey();
@@ -88,7 +88,7 @@ async function prebuild(id, data) {
   const panel = root.querySelector('.dossier-panel'), body = root.querySelector('.dossier-body');
   let after = {};
   try { after = await fill(body, panel, id, data, 'open'); } catch (e) { root.remove(); return; }
-  if (!root.isConnected || key !== geomKey() || (S.open && S.id === id)) { root.remove(); return; }
+  if (!root.isConnected || key !== geomKey() || S.open) { root.remove(); return; }
   // idle time: this read is the prebuild's only layout, off the click path
   const rects = {};
   if (!phone() && !reduced()) for (const n of ['title', 'ring', 'topic']) {
@@ -452,7 +452,7 @@ export function close({ instant = false } = {}) {
   r.classList.add('closing');
   // R3 S4 (R4): one beat. The top bar's children and the field start their 240ms fade back in this same first close
   // frame (named children, opacity only), alongside the panel and scrim, not after the teardown
-  chromeBack();
+  if (!window.__noChrome) chromeBack();
   // mid-flight: reverse what's running (works at any point of the flight)
   if (midFlight) {
     const list = S.anims;
@@ -521,7 +521,7 @@ const FRAME = 17; // R3 S4 (B): the scrim fade starts one frame after the clip /
 function chromeBack() {
   const h = document.documentElement;
   if (!h.classList.contains('dossier-open')) return;
-  h.classList.add('dz-back'); h.classList.remove('dossier-open');
+  h.classList.add('dz-back', 'dz-field-hold'); h.classList.remove('dossier-open');
   clearTimeout(chromeT); chromeT = setTimeout(() => h.classList.remove('dz-back'), 300);
 }
 function teardown() {
@@ -530,8 +530,8 @@ function teardown() {
   if (src) { src.style.visibility = ''; src.getAnimations?.().forEach(a => { if (a.effect?.getKeyframes?.().some(k => 'opacity' in k)) a.cancel(); }); }
   S.srcShared.forEach(e => { e.style.visibility = ''; });
   S.root?.remove();
-  // an animated close already swapped the class in its first frame (R3 S4); an instant one just drops it
-  document.documentElement.classList.remove('dossier-open');
+  if (window.__noChrome) chromeBack();
+  document.documentElement.classList.remove('dossier-open', 'dz-field-hold');
   busyN = 0;
   if (S.keyHandler) document.removeEventListener('keydown', S.keyHandler, true);
   const wasOpen = S.open;

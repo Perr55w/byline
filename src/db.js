@@ -191,9 +191,10 @@ export function hydrate(row) {
 }
 
 // R3 S12 (F, R14): stories.companies was stored by a matcher that let a bare sibling term ("Google") match inside a
-// longer sibling's name ("Google Cloud"). Read paths re-check such entries against the article text with the fixed
-// matcher (text.js matchEmployers: longest match wins among siblings sharing a parent). Rows are never rewritten
-// here; a story whose stored list names no parented employer costs nothing. Memoised per story + stored list.
+// longer sibling's name ("Google Cloud") and counted topic terms that merely start with a capital ("AI adoption") as
+// names. Read paths re-check the stored list against the article text with the fixed matcher (text.js
+// matchEmployers); entries it no longer finds are dropped, nothing is ever added. Rows are never rewritten here.
+// Memoised per story + stored list (one articles query per story, once).
 let empCache = { at: 0, list: [], sig: '' };
 function employersForMatch() {
   if (Date.now() - empCache.at > 5000) {
@@ -206,9 +207,8 @@ const fixMemo = new Map();
 function fixCompanies(row, list) {
   let emps;
   try { emps = employersForMatch(); } catch { return list; }
-  const byName = new Map(emps.list.map(e => [e.name, e]));
-  const family = (n) => { const e = byName.get(n); return e?.parent ? emps.list.filter(o => o.parent === e.parent).length > 1 : false; };
-  if (!list.some(family)) return list;
+  const known = new Set(emps.list.map(e => e.name));
+  if (!list.some(n => known.has(n))) return list;
   const key = `${row.id}|${row.companies}|${row.updated_at || ''}|${emps.sig.length}:${emps.sig.slice(0, 64)}`;
   let named = fixMemo.get(key);
   if (!named) {
@@ -220,7 +220,7 @@ function fixCompanies(row, list) {
     fixMemo.set(key, named);
     if (fixMemo.size > 2000) fixMemo.delete(fixMemo.keys().next().value);
   }
-  return list.filter(n => !family(n) || named.has(n));
+  return list.filter(n => !known.has(n) || named.has(n));
 }
 
 export const PRIORITIES = [

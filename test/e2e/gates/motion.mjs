@@ -247,13 +247,26 @@ export async function cFlight(ctx) {
     const pr = P.page.evaluate(() => {
       const t0 = performance.now(); let first = null;
       return window.__e2e.everyFrame((i, t) => {
-        const panel = document.querySelector('.dossier-panel'); if (!panel || panel.closest('.is-prebuild')) return { i, none: true };
+        const panel = document.querySelector('.dossier:not(.is-prebuild) .dossier-panel'); if (!panel) return { i, none: true };
         if (first === null) first = i;
         const cs = getComputedStyle(panel), fill = panel.querySelector('.dossier-fill'), frost = panel.querySelector('.dossier-frost');
         const fo = parseFloat(getComputedStyle(fill).opacity) * parseFloat(cs.opacity);
         const fr = frost && getComputedStyle(frost).display !== 'none' ? parseFloat(getComputedStyle(frost).opacity) : 0;
-        const scrim = parseFloat(getComputedStyle(document.querySelector('.dossier-scrim')).opacity);
-        return { i, dt: Math.round(performance.now() - t0), fill: +Math.max(fo, fr).toFixed(3), scrim: +scrim.toFixed(3), clip: cs.clipPath };
+        const scrim = parseFloat(getComputedStyle(panel.closest('.dossier').querySelector('.dossier-scrim')).opacity);
+        // R3 S3 / S15: the flying title against the dek and the action row (effective opacities inside the panel), and
+        // the ring against the clip's top inset
+        const eff = (el) => { let o = 1; for (let n = el; n && n !== panel.parentElement; n = n.parentElement) o *= +getComputedStyle(n).opacity; return o; };
+        const R = (el) => el && el.getBoundingClientRect();
+        const hit = (a, b) => !!a && !!b && a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom && a.width > 0 && b.width > 0;
+        const ttl = panel.querySelector('[data-shared="title"]'), dek = panel.querySelector('.dx-dek, .dz-dek'), act = panel.querySelector('.dx-actions, .dossier-actions');
+        const rt = R(ttl), oT = ttl ? eff(ttl) : 0;
+        const dekOp = dek ? eff(dek) : 0, actOp = act ? eff(act) : 0;
+        const xDek = hit(rt, R(dek)) && dekOp > .1 && oT > .15, xAct = hit(rt, R(act)) && actOp > .15 && oT > .15;
+        const ring = panel.querySelector('[data-shared="ring"]');
+        let ringCut = false;
+        const m = /inset\(\s*([\d.-]+)px/.exec(cs.clipPath || '');
+        if (ring && m) { const pr = panel.getBoundingClientRect(), rr = ring.getBoundingClientRect(); ringCut = eff(ring) > .05 && rr.top - pr.top < parseFloat(m[1]) - .5 && rr.bottom - pr.top > parseFloat(m[1]); }
+        return { i, dt: Math.round(performance.now() - t0), fill: +Math.max(fo, fr).toFixed(3), scrim: +scrim.toFixed(3), clip: cs.clipPath, xDek, xAct, dekOp: +dekOp.toFixed(2), ringCut };
       }, 900);
     });
     await P.page.evaluate(() => { window.__e2e.clickT = performance.now(); });
@@ -266,6 +279,10 @@ export async function cFlight(ctx) {
     const s120 = shown.find(f => f.dt - shown[0].dt >= 120);
     check(g, 'scrim opacity 120 ms after the panel appears', s120 ? s120.scrim : null, '>=', 0.6, { scope: 'feed → dossier', detail: s120 ? `at +${s120.dt - shown[0].dt} ms` : 'flight shorter than 120 ms?' });
     check(g, 'frames from the click to the first panel frame', firstIdx, 'info', null, { scope: 'feed → dossier', detail: `sampler frame index ${firstIdx} (click issued after the sampler started; ${clickIdx})` });
+    const xd = shown.filter(f => f.xDek), xa = shown.filter(f => f.xAct), rc = shown.filter(f => f.ringCut);
+    check(g, 'frames: flying title over the dek (dek > .1)', xd.length, '==', 0, { scope: 'feed → dossier (R3 S3)', detail: xd.length ? `at ${xd.map(f => `${f.dt - shown[0].dt} ms (dek ${f.dekOp})`).slice(0, 4).join(', ')}` : `${shown.length} frames` });
+    check(g, 'frames: flying title over the action row (both > .15)', xa.length, '==', 0, { scope: 'feed → dossier (R3 S3)', detail: xa.length ? `at ${xa.map(f => `${f.dt - shown[0].dt} ms`).slice(0, 4).join(', ')}` : `${shown.length} frames` });
+    check(g, 'frames: ring visible but cut by the clip', rc.length, '==', 0, { scope: 'feed → dossier (R3 S3)', detail: rc.length ? `at ${rc.map(f => `${f.dt - shown[0].dt} ms`).slice(0, 4).join(', ')}` : `${shown.length} frames` });
     await closeDossier(P.page, { settle: 400 });
   } finally { await P.close(); }
   return g;
@@ -307,11 +324,29 @@ export async function cTabswap(ctx) {
 }
 /** S7: on a revisit (Today → Feed → Today) no ring ever shows a value other than its final one. */
 export async function cRings(ctx) {
-  const g = newGate('C-rings', 'Score rings on revisit', 'motion', 'Round 2 S7: an rAF log of Feed→Today shows no frame with a ring value other than its final value');
+  const g = newGate('C-rings', 'Score rings on load and revisit', 'motion', 'Round 2 S7: an rAF log of Feed→Today shows no frame with a ring value other than its final value; R3 S9: on the first load no ring with a non-zero score ever reads "0" (a pending count is an empty box)');
   const P = await openPage(ctx.browser, { profile: DESKTOP });
   ctx.track(P);
   try {
+    // R3 S9 / S15: every frame of the first load, from document start, logs rings that read "0" on a score ≥ 1
+    await P.page.addInitScript(() => {
+      const log = window.__ringZero = { bad: [], seen: 0, frames: 0 };
+      const t0 = performance.now();
+      const f = () => {
+        log.frames++;
+        for (const ring of document.querySelectorAll('.score-ring[data-q-score]')) {
+          if (ring.closest('.is-prebuild')) continue;
+          const num = ring.querySelector('.ring-num'); if (!num) continue;
+          log.seen++;
+          if (num.textContent.trim() === '0' && Number(ring.dataset.qScore) >= 1 && log.bad.length < 6) log.bad.push(`${Math.round(performance.now() - t0)} ms: "0" on a ${ring.dataset.qScore} ring`);
+        }
+        if (performance.now() - t0 < 6000) requestAnimationFrame(f);
+      };
+      requestAnimationFrame(f);
+    });
     await gotoRoute(P.page, ctx.base, 'today', { settle: 3500 }); // first visit: the count-up runs once
+    const z = await P.page.evaluate(() => window.__ringZero);
+    check(g, 'load frames with a ring reading "0" on a non-zero score', z ? z.bad.length : null, '==', 0, { scope: 'first load of today', detail: z ? (z.bad.join(' | ') || `${z.seen} ring samples over ${z.frames} frames`) : 'no log' });
     let t0 = await setHash(P.page, '#/feed'); await waitRouted(P.page, 'feed', t0); await sleep(1500);
     const r = await P.page.evaluate(async () => {
       const bad = []; let frames = 0, seen = 0; const t0 = performance.now(); location.hash = '#/today';

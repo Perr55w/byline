@@ -40,16 +40,22 @@ export async function e1(ctx) {
     const routed = await gotoRoute(P.page, ctx.base, 'today', { settle: 2500 });
     if (!routed) g.notes.push('Today never emitted byline:routed within 8 s (app may be broken); measuring anyway');
     const seq = routes.filter(r => r !== 'today').concat(routes.includes('today') ? ['today'] : []);
-    for (const key of seq) {
+    // R3 S15: --laps N runs the whole sequence N times (E's 3-lap phone 4× run); every transition is its own check
+    const laps = ctx.laps || 1;
+    let over = 0, total = 0;
+    for (let lap = 1; lap <= laps; lap++) for (const key of seq) {
       const t0 = await setHash(P.page, `#/${key}`);
       await sleep(1500);
       const ok = await P.page.evaluate(({ key, t0 }) => window.__e2e.events.some(e => e.type === 'byline:routed' && e.key === key && e.t >= t0), { key, t0 });
       const s = summarizeLoaf(await loafSince(P.page, t0));
       const detail = (ok ? '' : 'not routed within 1.5 s; ') + (s.worst ? `worst: ${s.worst}` : '');
-      check(g, 'longest long frame', s.longest, '<', 50, { unit: 'ms', scope: key, detail });
-      check(g, 'Σ blockingDuration', s.blocking, '<', 100, { unit: 'ms', scope: key });
-      check(g, 'forced style+layout / LoAF', s.forcedMax, '<', 4, { unit: 'ms', scope: key });
+      const scope = laps > 1 ? `${key} · lap ${lap}` : key;
+      total++; if ((s.longest || 0) >= 50) over++;
+      check(g, 'longest long frame', s.longest, '<', 50, { unit: 'ms', scope, detail });
+      check(g, 'Σ blockingDuration', s.blocking, '<', 100, { unit: 'ms', scope });
+      check(g, 'forced style+layout / LoAF', s.forcedMax, '<', 4, { unit: 'ms', scope });
     }
+    if (laps > 1) check(g, 'transitions with a frame ≥ 50 ms', over, '==', 0, { scope: `${laps} laps`, detail: `${over} of ${total}` });
     // round 2 S1 / S17: the swap frame (the rendering frame right after the task that fires byline:routed) at 4×:
     // its Layout must be small. Blink reports partialLayout only for relayout boundaries, which a grid item (.page in
     // #view) can never be, so the flag is reported, and the bound is on time and dirty objects.
@@ -82,13 +88,22 @@ export async function e2(ctx) {
     ctx.track(P);
     try {
       await gotoRoute(P.page, ctx.base, 'feed', { settle: 2500 });
-      const o = await openDossier(P.page, ctx.storyId, { settle: 1000 });
-      if (!o.ok) { check(g, 'dossier opens', false, 'true', true, { scope: label, detail: `${o.reason} (via ${o.via})` }); continue; }
-      const so = summarizeLoaf(await loafSince(P.page, o.t0));
-      check(g, 'open: longest long frame', so.longest, '<', 50, { unit: 'ms', scope: `${label} (${o.via})`, detail: so.worst });
-      const c = await closeDossier(P.page);
-      const sc = summarizeLoaf(await loafSince(P.page, c.t0));
-      check(g, 'close: longest long frame', sc.longest, '<', 50, { unit: 'ms', scope: label, detail: (c.ok ? '' : 'panel still visible after Esc; ') + sc.worst });
+      // R3 S15: the open and the close at 4× are repeated ctx.runs times (default 3); the worst run is the result
+      const runs = ctx.runs || 1;
+      let so = null, sc = null, o = null, c = null, failed = false;
+      for (let r = 0; r < runs; r++) {
+        if (r) await sleep(2800); // past the idle-prebuild quiet window after a close
+        o = await openDossier(P.page, ctx.storyId, { settle: 1000 });
+        if (!o.ok) { check(g, 'dossier opens', false, 'true', true, { scope: label, detail: `${o.reason} (via ${o.via})` }); failed = true; break; }
+        const s1 = summarizeLoaf(await loafSince(P.page, o.t0));
+        if (!so || (s1.longest || 0) > (so.longest || 0)) so = s1;
+        c = await closeDossier(P.page);
+        const s2 = summarizeLoaf(await loafSince(P.page, c.t0));
+        if (!sc || (s2.longest || 0) > (sc.longest || 0)) sc = s2;
+      }
+      if (failed) continue;
+      check(g, `open: longest long frame (worst of ${runs})`, so.longest, '<', 50, { unit: 'ms', scope: `${label} (${o.via})`, detail: so.worst });
+      check(g, `close: longest long frame (worst of ${runs})`, sc.longest, '<', 50, { unit: 'ms', scope: label, detail: (c.ok ? '' : 'panel still visible after Esc; ') + sc.worst });
       // forced layouts per open (trace, throttle off)
       await setThrottle(P.cdp, 1);
       await sleep(300);
@@ -154,7 +169,51 @@ export async function e2(ctx) {
       await setThrottle(P.cdp, 1);
     } finally { await P.close(); }
   }
+  await openQuiet(ctx, g);
   return g;
+}
+
+/**
+ * R3 S1 / S15 (C, E): a desktop open at 1× from Feed and from Today has 0 frames over 34 ms in the 0–2400 ms after the
+ * click (the flight, the landing, afterFlight's sections and the frost going live), repeated ctx.runs times; the
+ * frost (backdrop blur) must not go live while the panel is still animating.
+ */
+async function openQuiet(ctx, g) {
+  const P = await openPage(ctx.browser, { profile: DESKTOP });
+  ctx.track(P);
+  try {
+    for (const route of ['feed', 'today']) {
+      await gotoRoute(P.page, ctx.base, route, { settle: 2500 });
+      let worst = null;
+      for (let r = 0; r < (ctx.runs || 1); r++) {
+        const link = P.page.locator(SEL.storyLink).first();
+        if (!(await link.count())) { g.notes.push(`no story link on ${route}`); break; }
+        await link.scrollIntoViewIfNeeded(); await link.hover(); await sleep(1500); // hover warms + prebuilds
+        const pr = P.page.evaluate(() => {
+          const t0 = performance.now(); let frostAt = null, busyAtFrost = null;
+          return window.__e2e.everyFrame((i, t) => {
+            const d = document.querySelector('.dossier:not(.is-prebuild)');
+            if (d && frostAt === null && d.classList.contains('frosted')) {
+              frostAt = Math.round(t - t0);
+              busyAtFrost = d.querySelector('.dossier-panel').getAnimations({ subtree: true }).filter(a => a.playState === 'running').length;
+            }
+            return t;
+          }, 2400).then(ts => ({ ts, frostAt, busyAtFrost }));
+        });
+        await link.click({ noWaitAfter: true });
+        const { ts, frostAt, busyAtFrost } = await pr;
+        const iv = ts.slice(1).map((t, i) => t - ts[i]);
+        const over = iv.filter(v => v > 34);
+        const res = { over: over.length, max: iv.length ? Math.max(...iv) : null, frostAt, busyAtFrost, n: iv.length };
+        if (!worst || res.over > worst.over || (res.over === worst.over && res.max > worst.max)) worst = res;
+        await P.page.keyboard.press('Escape');
+        await sleep(2800);
+      }
+      if (!worst) continue;
+      check(g, `open: frames > 34 ms in 0–2400 ms (1×, worst of ${ctx.runs || 1})`, worst.over, '==', 0, { scope: `desktop from ${route}`, detail: `${worst.n} frames, longest ${worst.max?.toFixed(1)} ms; frost live at ${worst.frostAt ?? '—'} ms` });
+      check(g, 'running animations in the panel when the frost goes live', worst.busyAtFrost ?? 0, '==', 0, { scope: `desktop from ${route}`, detail: worst.frostAt === null ? 'frost not live within 2400 ms (cap 2 s after landing)' : `at ${worst.frostAt} ms` });
+    }
+  } finally { await P.close(); }
 }
 
 // ------------------------------------------------------------------ gate 3

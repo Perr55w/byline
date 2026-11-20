@@ -6,6 +6,7 @@
 //   node test/e2e/run.mjs --route feed,today   limit route-iterating gates to these routes
 //   options: --port 4413  --reuse (test a server already on the port)  --gl (force WebGL2: ?bg=gl)
 //            --no-shots  --timeout 240 (s per gate)  --verbose  --list
+//            --laps 3 (E1: run the route sequence N times; R3 S15)  --runs 3 (E2: repeat the opens N times, keep the worst)
 //
 // Starts its own server.js on the port, waits for /api/status, runs the gates, prints a PASS/FAIL table,
 // writes test/e2e/results/latest.json, exits 1 if any gate fails (2 on harness error).
@@ -90,6 +91,7 @@ async function main() {
     const ctx = {
       browser, base: server.base, root: ROOT, storyId, shotDir,
       bgQuery: flag('gl') ? '&bg=gl' : '',
+      laps: Math.max(1, Number(opt('laps', 1)) || 1), runs: Math.max(1, Number(opt('runs', 3)) || 3),
       routes: (list) => { if (!routeFilter) return list; const hit = list.filter(r => routeFilter.includes(r)); return hit.length ? hit : routeFilter; },
       track: (P) => tracked.add(P)
     };

@@ -78,9 +78,14 @@ export const termHits = (text, terms) => {
  * share a `parent`, the longest match wins: a hit lying inside a longer sibling's hit ("Google" inside "Google Cloud"
  * or "Google DeepMind", "Gemini" inside "Gemini Enterprise") doesn't count for the shorter sibling.
  */
-export const employerTerms = (e) => [e.name, ...(e.terms || []).filter(t => /^[A-Z]/.test(t))];
+// a term names the company only when it is a proper-noun phrase (every word capitalised: "IBM Consulting",
+// "Kelley Blue Book"); "AI adoption" starts with a capital but is a topic, not a name
+// termHits' normalisation, plus a sentence-final period becomes a space ("on Google Cloud." still ends the name),
+// one char for one char so spans line up; "v2.7.0" and "1.2" keep their dots
+const spanText = (text) => ` ${String(text || '').toLowerCase().replace(/[^a-z0-9\-\. ]/g, ' ').replace(/\.(?=\s|$)/g, ' ')} `;
+export const employerTerms = (e) => [e.name, ...(e.terms || []).filter(t => String(t).split(/\s+/).every(w => /^[A-Z0-9]/.test(w)))];
 export function matchEmployers(text, employers, termsOf = employerTerms) {
-  const t = ` ${String(text || '').toLowerCase().replace(/[^a-z0-9\-\. ]/g, ' ')} `;
+  const t = spanText(text);
   const spansOf = (terms) => {
     const out = [];
     for (const term of terms) {
@@ -102,7 +107,7 @@ export function matchEmployers(text, employers, termsOf = employerTerms) {
 /** termHits, minus hits that lie inside a longer hit of any `shadow` term (R3 S12: sibling employers' terms). */
 export function termHitsShadowed(text, terms, shadow = []) {
   if (!shadow.length) return termHits(text, terms);
-  const t = ` ${String(text || '').toLowerCase().replace(/[^a-z0-9\-\. ]/g, ' ')} `;
+  const t = spanText(text);
   const spans = (k) => { const out = []; if (!k) return out; for (const pat of [` ${k} `, ` ${k}s `]) for (let i = t.indexOf(pat); i >= 0; i = t.indexOf(pat, i + 1)) out.push([i + 1, i + 1 + k.length]); return out; };
   const long = shadow.flatMap(s => spans(String(s || '').toLowerCase()));
   return terms.filter(term => spans(String(term || '').toLowerCase()).some(([s, e]) => !long.some(([s2, e2]) => s2 <= s && e2 >= e && e2 - s2 > e - s)));

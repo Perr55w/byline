@@ -55,7 +55,7 @@ html[data-bg=still] #bg { opacity: .28; }
    .72 scrim was the single most expensive quad of every flight frame. On dim / still routes (≤ 10% of a faint pattern
    shows through the scrim) it goes at once; on full routes it fades with the scrim (240ms). It fades back in over
    --dur-theme once the dossier has closed. */
-html.dossier-open #bg { opacity: 0; visibility: hidden; transition: none; }
+html.dossier-open #bg, html.dz-field-hold #bg { opacity: 0; visibility: hidden; transition: none; }
 html.dossier-open[data-bg=full] #bg { transition: opacity 240ms var(--ease-fade), visibility 0s linear 240ms; }
 #bg-light {
   position: fixed; left: 0; top: 0; z-index: 0; width: 720px; height: 720px; margin: -360px 0 0 -360px; border-radius: 50%;
@@ -219,6 +219,10 @@ html.scrolled .topbar::before { opacity: 1; }
 /* R2 S11 (R7): while the dossier is open the top bar's children fade out (240ms --ease-exit) and then leave the
    glass budget (visibility); on close they fade back over 240ms (html.dz-back, set for 300ms by dossier.js). */
 html.dz-back :is(.crumb, .topbar-right) { transition: opacity 240ms var(--ease-fade), visibility 0s linear 0s; } /* named children, never `> *` or :not(): those invalidate the whole document on a class flip */
+/* R3 S4: the chrome now fades back DURING the close (one beat), over a scrim and panel that are still moving: its glass
+   (the status pill and the ⌘K button) would re-blur that moving backdrop on every frame, so for the 300ms of html.dz-back
+   it is solid; the blur returns in one frame once the close has settled (no visible step: pill and button sit on --bg) */
+html.dz-back .topbar-right :is(.glass-pill, .cmdk) { -webkit-backdrop-filter: none; backdrop-filter: none; background: var(--surface-solid); }
 html.dossier-open :is(.crumb, .topbar-right) { opacity: 0; visibility: hidden; pointer-events: none; transition: opacity 240ms var(--ease-exit), visibility 0s linear 240ms; }
 .topbar-right { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .status-pill { margin: 0; }
