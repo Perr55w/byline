@@ -4,3 +4,5 @@ data/
 backups/
 docs/v4-shots/tabs/
 test/e2e/results/
+logs/
+.env

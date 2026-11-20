@@ -16,7 +16,7 @@ npm start            # http://127.0.0.1:4317
 
 Open the app and click **Load demo data** on Today, or run `npm run demo` in a second terminal. The demo loads fictional organizations and people, each labeled **DEMO**, and runs today's workflow so you can try every step without any credentials or network access. You can remove the demo data later under Settings.
 
-To use it from your phone and other devices (installable app, password sign-in, Cloudflare Tunnel, email/push delivery, Google Calendar feed), see **[docs/DEPLOY.md](docs/DEPLOY.md)**. Your questionnaire answers, and what each one changed, are recorded in **[docs/ALIGNMENT.md](docs/ALIGNMENT.md)**, along with the AI budget estimate.
+To run it every day on your PC and open it from your phone (autostart, a bookmarkable HTTPS link through Tailscale, password + two-step sign-in, daily backups, `npm run go-live`, the ntfy morning digest), see **[docs/DEPLOY.md](docs/DEPLOY.md)**. Your questionnaire answers, and what each one changed, are recorded in **[docs/ALIGNMENT.md](docs/ALIGNMENT.md)**, along with the AI budget estimate.
 
 Run the acceptance tests (they use a throwaway data directory):
 

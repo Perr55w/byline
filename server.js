@@ -60,7 +60,7 @@ function sendFile(res, file, download) {
 // Local use needs no password. Before exposing Byline (Cloudflare Tunnel, LAN, VPS), set BYLINE_PASSWORD.
 const PASSWORD = process.env.BYLINE_PASSWORD || '';
 const SECRET = crypto.createHash('sha256').update(`byline-session:${PASSWORD}`).digest();
-const PUBLIC_PATHS = new Set(['/login', '/login.html', '/api/login', '/manifest.webmanifest', '/sw.js', '/css/v4/tokens.css']);
+const PUBLIC_PATHS = new Set(['/login', '/login.html', '/api/login', '/api/health', '/manifest.webmanifest', '/sw.js', '/css/v4/tokens.css']);
 const attempts = new Map();
 const sign = (v) => crypto.createHmac('sha256', SECRET).update(v).digest('base64url');
 const cookieOf = (req) => Object.fromEntries((req.headers.cookie || '').split(';').map(c => c.trim().split('=')).filter(([k]) => k));
@@ -70,10 +70,15 @@ function validSession(req) {
   const good = sign(exp);
   return good.length === sig.length && crypto.timingSafeEqual(Buffer.from(good), Buffer.from(sig));
 }
-const proxied = (req) => !!(req.headers['cf-connecting-ip'] || req.headers['x-forwarded-for']);
+// Proxied = any sign of a reverse proxy in front (cloudflared, `tailscale serve`, nginx, Caddy...).
+const PROXY_HEADERS = ['cf-connecting-ip', 'x-forwarded-for', 'x-forwarded-host', 'x-forwarded-proto', 'forwarded', 'x-real-ip', 'tailscale-user-login'];
+const proxied = (req) => PROXY_HEADERS.some(h => req.headers[h]);
 const loopback = (addr = '') => addr === '::1' || addr.startsWith('127.') || addr.startsWith('::ffff:127.');
-// Remote = arrived through a proxy/tunnel, or from another machine on the network.
-const remote = (req) => proxied(req) || !loopback(req.socket.remoteAddress);
+const hostName = (req) => String(req.headers.host || '').replace(/:\d+$/, '').replace(/^\[|\]$/g, '').toLowerCase();
+const loopbackHost = (req) => !req.headers.host || ['localhost', '127.0.0.1', '::1'].includes(hostName(req)) || /^127\./.test(hostName(req));
+// Remote = arrived through a proxy/tunnel, from another machine on the network, or addressed to a non-local name
+// (a proxy that forwards the original Host, or a DNS-rebinding page).
+const remote = (req) => proxied(req) || !loopback(req.socket.remoteAddress) || !loopbackHost(req);
 
 // ----- cross-site request check (CSRF) -----
 // Every state-changing request that carries an Origin (or, failing that, a Referer) must come from Byline's own
@@ -132,6 +137,8 @@ const guardSettingsBody = (pathname, body) => {
 const fail = (msg, status = 400) => Object.assign(new Error(msg), { status });
 const notEnvManaged = () => { if (ENV_TOTP) throw fail('Two-step sign-in is set by BYLINE_TOTP_SECRET on the server. Change or remove it there.', 409); };
 
+// Liveness for update scripts and monitors: public, says nothing about the data.
+route('GET', '/api/health', () => ({ ok: true }));
 route('GET', '/api/security', ({ req }) => ({
   password_set: !!PASSWORD, totp_enabled: !!totpSecret(), totp_source: ENV_TOTP ? 'env' : (totpSecret() ? 'settings' : null),
   totp_always: TOTP_ALWAYS, totp_required_now: totpRequired(req), totp_pending: !!getSettings().totp_pending?.secret

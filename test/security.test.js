@@ -111,3 +111,14 @@ test('behind tailscale serve: login over the forwarded HTTPS origin, Secure cook
   const plain = await locked('POST', '/login', { body: { password: 'pw' } });
   assert.doesNotMatch(plain.headers.get('set-cookie'), /Secure/, 'plain loopback http gets no Secure flag');
 });
+
+test('a proxy that only sends X-Forwarded-Proto or the original Host still counts as remote', async () => {
+  assert.equal((await open('GET', '/status', { headers: { 'X-Forwarded-Proto': 'https' } })).status, 403);
+  // fetch() won't send a custom Host, so this one goes through node:http
+  const { request } = await import('node:http');
+  const viaHost = await new Promise((resolve, reject) => request({ host: '127.0.0.1', port: 4391, path: '/api/status', headers: { Host: 'pc-name.tailnet-abc.ts.net' } }, (r) => { r.resume(); resolve(r.statusCode); }).on('error', reject).end());
+  assert.equal(viaHost, 403);
+  assert.equal((await open('GET', '/status', { headers: { 'Tailscale-User-Login': 'me@example.com' } })).status, 403);
+  assert.equal((await open('GET', '/status')).status, 200, 'plain localhost without a password still works');
+  assert.deepEqual((await locked('GET', '/health')).data, { ok: true }, 'health is public');
+});
