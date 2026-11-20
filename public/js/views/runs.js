@@ -22,7 +22,8 @@ const dur = (a, b) => {
 };
 const tfmt = (iso, tz) => iso ? new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', ...(tz ? { timeZone: tz } : {}) }) : '';
 const dfmt = (iso, tz) => iso ? new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', ...(tz ? { timeZone: tz } : {}) }) : '';
-const dayLabel = (d) => d ? new Date(`${d}T12:00:00`).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', ...(d.slice(0, 4) !== String(new Date().getFullYear()) ? { year: 'numeric' } : {}) }) : '';
+// RU-1: the app's date style is "Thu 2 Jan 2020" (en-GB adds a comma after the weekday when a year is shown)
+const dayLabel = (d) => d ? new Date(`${d}T12:00:00`).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', ...(d.slice(0, 4) !== String(new Date().getFullYear()) ? { year: 'numeric' } : {}) }).replace(',', '') : '';
 
 /**
  * Run `fn` once the page holding `el` has been swapped in (byline:routed) and the main thread is idle, so
@@ -72,7 +73,7 @@ function headline(runs, S) {
     : `The last run added ${plural(f.fresh, 'article')}.`;
   const withRes = runs.find(r => (facts(r).fresh || 0) > 0);
   const wf = withRes ? facts(withRes) : null;
-  const l = html`<b>${week.length}</b> ${week.length === 1 ? 'run' : 'runs'} this week, <b>${failed}</b> failed. Last (${tfmt(last.started_at, tz)}, ${dfmt(last.started_at, tz)}): ${f.sources != null ? html`<b>${f.sources}</b> sources, <b>${f.fresh}</b> new, ` : 'no collect stage, '}${f.ranked != null ? html`<b>${f.ranked}</b> ranked, ` : ''}${usd(last.cost_usd)}.${withRes && withRes !== last ? html` Last with results: ${tfmt(withRes.started_at, tz)}${dfmt(withRes.started_at, tz) !== dfmt(last.started_at, tz) ? `, ${dfmt(withRes.started_at, tz)}` : ''}, <b>${wf.fresh}</b> articles from ${wf.sources} sources${wf.failed ? html`, <b>${wf.failed}</b> failed` : ''}.` : ''}${!withRes ? ' No run has collected new articles yet.' : ''}`;
+  const l = html`<b>${week.length}</b> ${week.length === 1 ? 'run' : 'runs'} this week, <b>${failed}</b> failed. Last (${tfmt(last.started_at, tz)}, ${dfmt(last.started_at, tz)}): ${f.sources != null ? html`<b>${f.sources}</b> sources, <b>${f.fresh}</b> new, ` : 'no collect stage, '}${f.ranked != null ? html`<b>${f.ranked}</b> ranked, ` : ''}${usd(last.cost_usd)}.${withRes && withRes !== last ? html` Last with results: ${tfmt(withRes.started_at, tz)}${dfmt(withRes.started_at, tz) !== dfmt(last.started_at, tz) ? `, ${dfmt(withRes.started_at, tz)}` : ''}, <b>${wf.fresh}</b> articles from ${wf.sources} sources${wf.failed ? html`, <b>${wf.failed}</b> ${wf.failed === 1 ? 'source' : 'sources'} failed` : ''}.` : ''}${!withRes ? ' No run has collected new articles yet.' : ''}`;
   return { h, l };
 }
 
@@ -270,7 +271,7 @@ export async function render(view, { params = [] } = {}) {
     <h1>${hd.h}</h1>
     <p class="lede">${hd.l}</p>
     <form class="page-head-actions rn-runform" data-form="run" aria-label="Run the workflow">
-      <label class="rn-inline"><span>Date</span><input class="input" type="date" name="date" value="${st.today}"></label>
+      <div class="rn-inline rn-date"><span id="rn-date-l">Date</span><span class="rn-date-box"><button type="button" class="btn btn--secondary rn-date-btn" data-rn-date aria-describedby="rn-date-l" aria-label="Run date: ${dayLabel(st.today)}. Change the date">${icon('calendar')}<span data-rn-date-v>${dayLabel(st.today)}</span></button><input class="rn-date-in" type="date" name="date" value="${st.today}" tabindex="-1" aria-hidden="true"></span></div>
       <label class="rn-inline"><span>Start at</span><select class="select" name="from_stage">${STAGES.map(s => html`<option value="${s}">${STAGE_LABEL[s]}</option>`)}</select></label>
       <button class="btn btn--primary" type="submit">Run now</button>
     </form>
@@ -315,10 +316,21 @@ export async function render(view, { params = [] } = {}) {
     tr.querySelector('[data-rn-group]').setAttribute('aria-expanded', String(open));
     el.querySelectorAll(`tr[data-in-g="${gi}"]`).forEach(m => { m.hidden = !open; });
   });
+  // RU-1: the run date shows "Fri 20 Nov" on a button; the native picker behind it holds the value the form sends
+  on(el, 'click', '[data-rn-date]', (e, b) => {
+    const i = b.parentElement.querySelector('.rn-date-in');
+    try { i.showPicker(); } catch { i.focus(); i.click(); }
+  });
+  on(el, 'change', '.rn-date-in', (e, i) => {
+    const b = i.parentElement.querySelector('[data-rn-date]'), v = i.value || st.today;
+    if (!i.value) i.value = st.today;
+    b.querySelector('[data-rn-date-v]').textContent = dayLabel(v);
+    b.setAttribute('aria-label', `Run date: ${dayLabel(v)}. Change the date`);
+  });
   on(el, 'submit', '[data-form="run"]', async (e, f) => {
     e.preventDefault();
     const d = Object.fromEntries(new FormData(f));
-    await act(f.querySelector('button'), async () => {
+    await act(f.querySelector('button[type=submit]'), async () => {
       const r = await stagedRun(api.post('/runs', { date: d.date || undefined, from_stage: d.from_stage === 'collect' ? undefined : d.from_stage }));
       toast(r.status === 'done' ? `Run #${r.run_id} finished` : `Run #${r.run_id} failed at ${r.failed_stage}: ${r.error}`, r.status === 'done' ? 'ok' : 'err');
       go(r.run_id);

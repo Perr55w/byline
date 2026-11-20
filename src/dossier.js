@@ -59,7 +59,7 @@ export function evidenceGroups(story) {
     rows: pr.map(p => ({ topic: p.topic, weight: p.weight, rank: p.rank, hits: p.hits, strong: p.weight >= 2,
       text: `${p.topic}: your #${p.rank} priority, matched ${listJoin(p.hits.slice(0, 4).map(q))}.` })),
     interest_points: pts.interest, interest_max: 35, maxed: b.interest >= 1,
-    summary: b.interest >= 1 ? 'Interest maxed: 35 of 35.' : null,
+    summary: b.interest >= 1 ? 'Full marks for interest, 35 of 35.' : null, // R3 S14 wording, same as why_ranked
     empty: pr.length ? null : `Barely touches your priorities (interest ${pts.interest} of 35).`
   };
   const wt = b.watch_terms || (b.watch || []).map(name => ({ name, kind: null, pinned: false, terms: [] }));

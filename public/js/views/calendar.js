@@ -12,7 +12,7 @@
 // Every draft also has a "Schedule…" menu (plan for a date; approved drafts can additionally use the
 // approval-gated POST /api/drafts/:id/schedule). The calendar feed (ICS) link from /api/status is kept.
 import { api } from '../api.js';
-import { html, raw, on, toast, modal, optimistic, copy, status as statusTag, scoreChip, channelLabel, icon, useStyle, inField } from '../ui.js';
+import { html, raw, on, toast, modal, optimistic, copy, status as statusTag, scoreChip, channelLabel, icon, useStyle, inField, threshold as liveThreshold } from '../ui.js';
 import { qualityColor, qualityTier, qualityLabel } from '../quality.js';
 import { enterItems, reduced, EASE } from '../motion.js';
 
@@ -46,7 +46,7 @@ function hookInfo(d) {
   const secs = (d.sections || []).filter(s => !['sources', 'caption'].includes(s.kind) && String(s.text || '').trim());
   const first = secs.find(s => ['hook', 'headline', 'title'].includes(s.kind)) || secs[0];
   const k = secs.reduce((m, s) => { m[s.kind] = (m[s.kind] || 0) + 1; return m; }, {});
-  return { hook: firstLine(first?.text), parts: k.scene ? plural(k.scene, 'scene') : k.slide ? plural(k.slide, 'slide') : plural(secs.length, 'section') };
+  return { hook: firstLine(first?.text), next: firstLine(secs[secs.indexOf(first) + 1]?.text), parts: k.scene ? plural(k.scene, 'scene') : k.slide ? plural(k.slide, 'slide') : plural(secs.length, 'section') };
 }
 const clip = (t, n = 64) => { const s = String(t || '').trim(); if (s.length <= n) return s; const cut = s.slice(0, n + 1).replace(/\s+\S*$/, '') || s.slice(0, n); return `${cut.replace(/[\s.,;:!?…\-–—]+$/, '')}…`; };
 const norm = (t) => String(t || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
@@ -58,8 +58,15 @@ async function loadHooks(list) {
   await Promise.all(Array.from({ length: Math.min(6, need.length) }, worker));
 }
 const hookOf = (d) => d.hook != null ? { hook: firstLine(d.hook) } : HOOKS.get(d.id) || null;
-/** The quiet second line of a tray row: the hook, or (when it only restates the story headline) the draft's shape. */
-const hookText = (d, groupTitle) => { const hi = hookOf(d); if (!hi?.hook) return ''; return sameOpening(hi.hook, groupTitle) ? `Headline hook${hi.parts ? ` · ${hi.parts}` : ''}` : clip(hi.hook); };
+/** The quiet second line of a tray row (R19, Studio's rule): the hook; when it only restates the story title, the next
+ *  section's first line clipped at a word to 60; else "Opens with the story title · N scenes" in text-3. */
+const hookText = (d, groupTitle) => {
+  const hi = hookOf(d);
+  if (!hi?.hook) return null;
+  if (!groupTitle || !sameOpening(hi.hook, groupTitle)) return { text: clip(hi.hook), title: `Hook: ${hi.hook}` };
+  if (hi.next) return { text: clip(hi.next, 60), title: `Opens with the story title, then: ${hi.next}` };
+  return { text: `Opens with the story title${hi.parts ? ` · ${hi.parts}` : ''}`, quiet: true, title: `Hook: ${hi.hook}` };
+};
 
 // ------------------------------------------------------------------ channel glyphs (12px, 1.5 stroke, currentColor)
 const GLYPH = {
@@ -84,7 +91,7 @@ export async function render(view, { params = [] } = {}) {
   const st = await api.get('/status').catch(() => ({}));
   const today = st.today || toYMD(new Date());
   const tz = st.timezone || 'America/New_York';
-  const th = st.threshold ?? window.__byline?.threshold ?? 55;
+  let th = st.threshold ?? liveThreshold(); // replaced by the saved setting once /settings arrives (never hard-coded)
   const tzDay = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' });
   const localDay = (iso) => !iso ? null : /^\d{4}-\d{2}-\d{2}$/.test(iso) ? iso
     : /T\d{2}:\d{2}(:\d{2})?$/.test(iso) ? iso.slice(0, 10) // naive local time (outreach send_at)
@@ -128,6 +135,9 @@ export async function render(view, { params = [] } = {}) {
   for (const x of found?.stories || []) { const day = localDay(x.first_seen); if (!day) continue; if (!news.has(day)) news.set(day, []); news.get(day).push(x); }
   for (const l of news.values()) l.sort((a, b) => b.score - a.score);
   S.settings = settings || {};
+  if (Number.isFinite(Number(S.settings.publish_threshold))) th = Number(S.settings.publish_threshold);
+  // "missed" needs something to have missed: posting days count from the first day Byline saw a story
+  const since = [...news.keys()].sort()[0] || today;
   S.followups = (fu?.due || []).map(c => ({ ...c, day: c.next_date?.slice(0, 10) }));
   S.nextSlot = slot?.date || null;
   const postingDays = (S.settings.posting_days?.length ? S.settings.posting_days : ['Mon', 'Wed', 'Fri']);
@@ -180,11 +190,13 @@ export async function render(view, { params = [] } = {}) {
   const draftLabel = (d) => `${shortTitle(d.title || 'Untitled')}: ${channelLabel(d.channel, d.format)}, ${STATE_WORD[chipState(d)]}${d.score != null ? `, story score ${Math.round(d.score)} (${qualityLabel(d.score, th)})` : ', no linked story'}`;
 
   const chip = (it, { wrap = false, time = false } = {}) => {
-    // month cells are narrow: the full name up to 14 characters, else "Priya N." (full name in the title, the side panel and the week view)
-    const nm = (n = '') => { const b = n.replace(/\s*\(demo\)\s*$/i, ''); if (wrap || b.length <= 14) return b; const p = b.split(/\s+/); return p.length > 1 ? `${p[0]} ${p[p.length - 1][0]}.` : b; };
+    // month cells are narrow: the full name up to 12 characters (11 beside a "×N"), else "Priya N." (full name in the
+    // title, the side panel and the week view). CA-4: the name ellipsizes on one line and the count sits outside it
+    const nm = (n = '', lim = 12) => { const b = n.replace(/\s*\(demo\)\s*$/i, ''); if (time || b.length <= lim) return b; const p = b.split(/\s+/); return p.length > 1 ? `${p[0]} ${p[p.length - 1][0]}.` : b; };
+    const lim = it.n > 1 ? 11 : 12;
     const times = it.n > 1 ? html`<span class="cal-x">×${it.n}</span>` : '';
-    if (it.kind === 'outreach') return html`<a class="cal-chip cal-chip--out${wrap ? ' cal-chip--wrap' : ''}" href="#/people" tabindex="-1" title="${it.n > 1 ? `${it.n} identical messages: ` : ''}Outreach to ${it.name} (${it.channel}, ${it.status})${it.time ? ` at ${it.time}` : ''}">${glyph('outreach')}<span class="cal-chip-t">${time && it.time ? html`<span class="cal-time">${it.time}</span> ` : ''}${nm(it.name)}${times ? html` ${times}` : ''}</span></a>`;
-    if (it.kind === 'followup') return html`<a class="cal-chip cal-chip--out${wrap ? ' cal-chip--wrap' : ''}" href="#/people" tabindex="-1" title="Follow up with ${it.name}: ${it.next_step || ''}">${glyph('followup')}<span class="cal-chip-t">${nm(it.name)}${times ? html` ${times}` : ''}</span></a>`;
+    if (it.kind === 'outreach') return html`<a class="cal-chip cal-chip--out${wrap ? ' cal-chip--wrap' : ''}" href="#/people" tabindex="-1" title="${it.n > 1 ? `${it.n} identical messages: ` : ''}Outreach to ${it.name} (${it.channel}, ${it.status})${it.time ? ` at ${it.time}` : ''}">${glyph('outreach')}<span class="cal-chip-t">${time && it.time ? html`<span class="cal-time">${it.time}</span> ` : ''}${nm(it.name, lim)}</span>${times}</a>`;
+    if (it.kind === 'followup') return html`<a class="cal-chip cal-chip--out${wrap ? ' cal-chip--wrap' : ''}" href="#/people" tabindex="-1" title="Follow up with ${it.name}: ${it.next_step || ''}">${glyph('followup')}<span class="cal-chip-t">${nm(it.name, lim)}</span>${times}</a>`;
     const movable = it.state !== 'published';
     return html`<div class="cal-chip${wrap ? ' cal-chip--wrap' : ''}" data-id="${it.id}" data-st="${it.state}" data-q="${qTier(it.score)}" style="${q(it.score)}" ${movable ? raw('data-movable') : ''}
       title="${it.title}\n${channelLabel(it.channel, it.format)} · ${it.status.replace('_', ' ')}${it.score != null ? ` · story ${Math.round(it.score)}` : ''}${movable ? ' · drag to move' : ''}">
@@ -192,7 +204,8 @@ export async function render(view, { params = [] } = {}) {
   };
 
   // a day's news: "2 stories" plus one dot per story (up to 5) in its quality colour; hollow dots are below your bar
-  const newsMark = (nw) => html`<span class="cal-news" aria-hidden="true" title="${plural(nw.length, 'story', 'stories')} first seen this day:
+  const newsSay = (nw) => { const up = nw.filter(x => x.score >= th).length; return `${plural(nw.length, 'story', 'stories')} first seen, ${up ? `${up} above your bar` : 'none above your bar'}`; };
+  const newsMark = (nw) => html`<span class="cal-news" aria-hidden="true" title="${newsSay(nw)} of ${th}${nw.length > 5 ? ' (dots show the top 5)' : ''}:
 ${nw.map(x => `${Math.round(x.score)}  ${x.short_title || x.title}`).join('\n')}">
     <span class="cal-news-n">${nw.length}<span class="cal-news-w"> ${nw.length === 1 ? 'story' : 'stories'}</span></span>
     <span class="cal-dots">${nw.slice(0, 5).map(x => html`<i data-q="${qTier(x.score)}" style="${q(x.score)}"></i>`)}</span></span>`;
@@ -200,36 +213,40 @@ ${nw.map(x => `${Math.round(x.score)}  ${x.short_title || x.title}`).join('\n')}
   const monthRows = () => { const first = `${S.month}-01`; const [y, m] = S.month.split('-').map(Number); return Math.ceil((dow(first) + new Date(Date.UTC(y, m, 0)).getUTCDate()) / 7); };
   const bodyCls = () => S.view === 'week' ? ' is-week' : monthRows() >= 6 ? ' is-6' : '';
 
-  function monthGrid(map, { defer = false } = {}) {
-    const first = `${S.month}-01`;
-    const start = mondayOf(first);
-    const [y, m] = S.month.split('-').map(Number);
-    const dim = new Date(Date.UTC(y, m, 0)).getUTCDate();
-    const rows = Math.ceil((dow(first) + dim) / 7);
-    const cap = rows >= 6 ? 2 : 3;
-    const cells = [];
-    for (let r = 0; r < rows; r++) {
-      const row = [];
-      for (let c = 0; c < 7; c++) {
-        const day = addDays(start, r * 7 + c);
-        const list = map.get(day) || [];
-        const drafts = list.filter(i => i.kind === 'draft').length;
-        const out = !day.startsWith(S.month);
-        const open = !out && day >= today && isPostingDay(day) && !drafts;
-        const shown = list.slice(0, list.length > cap ? cap - 1 : cap);
-        const more = list.length - shown.length;
-        const nw = news.get(day) || [];
-        const outN = list.reduce((n, i) => n + (i.kind === 'draft' ? 0 : (i.n || 1)), 0);
-        const label = `${dayLong(day)}${day === today ? ', today' : ''}, ${drafts ? plural(drafts, 'post') : 'no posts'}${outN ? `, ${plural(outN, 'outreach item')}` : ''}${open ? ', open posting day' : ''}${nw.length ? `, ${plural(nw.length, 'story', 'stories')} first seen, top score ${Math.round(nw[0].score)}` : ''}`;
-        row.push(html`<div class="cal-cell${out ? ' is-out' : ''}${c > 4 ? ' is-weekend' : ''}${day === today ? ' is-today' : ''}${day === S.selected ? ' is-selected' : ''}" role="gridcell" data-cell="${day}" data-drop="${day}"
-          tabindex="${day === S.selected ? 0 : -1}" aria-selected="${day === S.selected}" aria-label="${label}">
-          <span class="cal-num" aria-hidden="true">${Number(day.slice(8))}${day.slice(8) === '01' ? html`<span class="cal-mon"> ${fmt(day, { month: 'short' })}</span>` : ''}</span>
-          ${nw.length ? newsMark(nw) : ''}
-          <div class="cal-chips">${shown.map(it => chip(it, { wrap: list.length === 1 }))}${more > 0 ? html`<button type="button" class="cal-more xbtn" data-act="day" data-day="${day}" tabindex="-1" title="${list.slice(shown.length).map(x => x.title || x.name).join('\n')}">+${more} more</button>` : ''}${open ? html`<span class="cal-open" aria-hidden="true">open slot</span>` : ''}</div>
-        </div>`);
-      }
-      cells.push(html`<div class="cal-row${defer && r >= 3 ? ' cal-row--later' : ''}" role="row">${row}</div>`);
+  /** One week row of the month grid (its seven cells). */
+  function monthRow(map, r) {
+    const start = mondayOf(`${S.month}-01`);
+    const cap = monthRows() >= 6 ? 2 : 3;
+    const row = [];
+    for (let c = 0; c < 7; c++) {
+      const day = addDays(start, r * 7 + c);
+      const list = map.get(day) || [];
+      const drafts = list.filter(i => i.kind === 'draft').length;
+      const out = !day.startsWith(S.month);
+      const open = !out && day >= today && isPostingDay(day) && !drafts;
+      const missed = !out && day < today && day >= since && isPostingDay(day) && !drafts; // CA-2: said in the cell too
+      const shown = list.slice(0, list.length > cap ? cap - 1 : cap);
+      const more = list.length - shown.length;
+      const nw = news.get(day) || [];
+      const outN = list.reduce((n, i) => n + (i.kind === 'draft' ? 0 : (i.n || 1)), 0);
+      const label = `${dayLong(day)}${day === today ? ', today' : ''}, ${drafts ? plural(drafts, 'post') : 'no posts'}${outN ? `, ${plural(outN, 'outreach item')}` : ''}${open ? ', open posting day' : ''}${missed ? ', missed posting day' : ''}${nw.length ? `, ${newsSay(nw)}, top score ${Math.round(nw[0].score)}` : ''}`;
+      // CA-2: a tooltip built from the cell's own data ("5 stories first seen, 3 above your bar · missed posting day")
+      const tip = [nw.length ? newsSay(nw) : '', drafts ? plural(drafts, 'post') : '', outN ? plural(outN, 'outreach item') : '', open ? 'open posting day' : '', missed ? 'missed posting day: nothing was posted' : ''].filter(Boolean).join(' · ');
+      row.push(html`<div class="cal-cell${out ? ' is-out' : ''}${c > 4 ? ' is-weekend' : ''}${day === today ? ' is-today' : ''}${day === S.selected ? ' is-selected' : ''}" role="gridcell" data-cell="${day}" data-drop="${day}"
+        tabindex="${day === S.selected ? 0 : -1}" aria-selected="${day === S.selected}" aria-label="${label}"${tip ? html` title="${tip}"` : ''}>
+        <span class="cal-num" aria-hidden="true">${Number(day.slice(8))}${day.slice(8) === '01' ? html`<span class="cal-mon"> ${fmt(day, { month: 'short' })}</span>` : ''}</span>
+        ${nw.length ? newsMark(nw) : ''}
+        <div class="cal-chips">${shown.map(it => chip(it, { wrap: list.length === 1 }))}${more > 0 ? html`<button type="button" class="cal-more xbtn" data-act="day" data-day="${day}" tabindex="-1" title="${list.slice(shown.length).map(x => x.title || x.name).join('\n')}">+${more} more</button>` : ''}${open ? html`<span class="cal-open" aria-hidden="true">open slot</span>` : ''}${missed ? html`<span class="cal-missed" aria-hidden="true">missed</span>` : ''}</div>
+      </div>`);
     }
+    return html`${row}`;
+  }
+  // defer: rows 4+ are built one task later (revealRows), so the first grid task stays short at 4× (E1)
+  function monthGrid(map, { defer = false } = {}) {
+    const rows = monthRows();
+    const cells = Array.from({ length: rows }, (_, r) => defer && r >= 3
+      ? html`<div class="cal-row cal-row--later" role="row" data-r="${r}"></div>`
+      : html`<div class="cal-row" role="row">${monthRow(map, r)}</div>`);
     return html`<div class="cal-month${rows >= 6 ? ' is-6' : ''}" role="grid" aria-label="${monthYear(S.month)}" aria-describedby="cal-help" style="--rows:${rows}" data-grid>
       <div class="cal-row cal-dow" role="row">${WEEKDAYS.map((d, i) => html`<div class="cal-dow-c${i > 4 ? ' is-weekend' : ''}" role="columnheader"><abbr title="${['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'][i]}">${d}</abbr></div>`)}</div>
       ${cells}
@@ -254,6 +271,7 @@ ${nw.map(x => `${Math.round(x.score)}  ${x.short_title || x.title}`).join('\n')}
         const n = list.filter(i => i.kind === 'draft').length;
         if (!isPostingDay(day)) return { say: 'not a posting day', html: html`<span class="cal-slot is-off" aria-hidden="true">—</span>` };
         if (n) return { say: 'posting day, filled', html: html`<span class="cal-slot is-filled">${glyph('check')}filled</span>` };
+        if (day < today && day < since) return { say: 'posting day, before Byline saw its first story', html: html`<span class="cal-slot is-off" aria-hidden="true">—</span>` };
         return { say: day < today ? 'posting day, missed' : 'posting day, open', html: html`<span class="cal-slot ${day < today ? 'is-missed' : 'is-open'}">${day < today ? 'missed' : 'open slot'}</span>` };
       })}
       ${lane('news', 'Stories', (day) => {
@@ -270,7 +288,7 @@ ${nw.map(x => `${Math.round(x.score)}  ${x.short_title || x.title}`).join('\n')}
     const state = chipState(d);
     const movable = state !== 'published';
     const n = dups?.length || 1;
-    const hook = d.grouped && !sub ? hookText(d, groupTitle) : '';
+    const hook = !sub && !inDay ? hookText(d, groupTitle || d.story_title || d.title) : null; // CA-3: every tray row
     return html`<li class="cal-item${sub ? ' cal-item--sub' : ''}" data-row="${d.id}">
       <span class="cal-qbar" data-q="${qTier(d.score)}" style="${q(d.score)}" aria-hidden="true"></span>
       <button type="button" class="cal-pick xbtn" title="Draft #${d.id}" data-pick="${d.id}" ${movable ? raw('data-movable') : raw('aria-disabled="true"')} data-id="${d.id}" aria-label="${draftLabel(d)}${sub ? `, draft #${d.id}` : ''}${n > 1 ? `, the newest of ${n} with the same opening` : ''}" aria-describedby="${movable ? 'cal-help' : ''}">
@@ -278,7 +296,7 @@ ${nw.map(x => `${Math.round(x.score)}  ${x.short_title || x.title}`).join('\n')}
         <span class="cal-pick-main${inDay || !d.grouped ? '' : ' is-grouped'}">
           ${inDay || !d.grouped ? html`<span class="cal-pick-t">${d.title || 'Untitled'}</span>` : ''}
           <span class="cal-pick-m">${sub ? `Draft #${d.id}` : channelLabel(d.channel, d.format)}</span>
-          ${hook ? html`<span class="cal-pick-h" title="Hook: ${hookOf(d)?.hook || ''}">${hook}</span>` : ''}
+          ${hook ? html`<span class="cal-pick-h${hook.quiet ? ' is-quiet' : ''}" title="${hook.title}">${hook.text}</span>` : ''}
         </span>
       </button>
       <span class="cal-item-tags">${n > 1 ? html`<button type="button" class="cal-dup xbtn" data-dup="${dupKey}" aria-expanded="${String(open)}" title="${open ? 'Hide' : 'Show'} each of the ${n} drafts">×${n}</button>` : ''}${sub ? '' : statusTag(d.status)}${d.score != null && !d.grouped ? scoreChip(d.score, th) : ''}</span>
@@ -400,6 +418,7 @@ ${nw.map(x => `${Math.round(x.score)}  ${x.short_title || x.title}`).join('\n')}
         <footer class="cal-key" aria-label="Key">
           <span><i class="k k--draft"></i>draft</span><span><i class="k k--approved"></i>approved</span><span><i class="k k--scheduled"></i>scheduled</span>
           <span>${glyph('check')}published</span><span>${glyph('outreach')}outreach</span><span title="The left bar is the linked story's score against your bar of ${th}"><i class="k k--bar"></i>story score</span>
+          <span class="cal-key-news" title="Day cells count the stories first seen that day: one dot per story (top 5), filled at or above your bar of ${th}, hollow below it"><i class="k k--dot" style="--q:${qualityColor(th + 10, th)}"></i>story above ${th} · <i class="k k--dot is-below" style="--q:${qualityColor(Math.max(0, th - 10), th)}"></i>below</span>
           <span class="cal-key-open"><i class="k k--open"></i>open slot</span>
         </footer>
       </section>
@@ -471,7 +490,7 @@ ${nw.map(x => `${Math.round(x.score)}  ${x.short_title || x.title}`).join('\n')}
     // month: rows 4+ lay out one task later (content-visibility: hidden keeps their height), halving the swap frame
     if (body && !body.firstElementChild) body.innerHTML = String(S.view === 'month' ? monthGrid(byDay(), { defer: true }) : weekGrid(byDay()));
   }
-  const revealRows = () => el.querySelectorAll('.cal-row--later').forEach(r => r.classList.remove('cal-row--later'));
+  const revealRows = () => { const later = el.querySelectorAll('.cal-row--later'); if (!later.length) return; const map = byDay(); later.forEach(r => { r.innerHTML = String(monthRow(map, Number(r.dataset.r))); r.classList.remove('cal-row--later'); }); };
   function fillSide() {
     if (S.sideReady || !el.isConnected) return;
     fillBody();

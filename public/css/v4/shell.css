@@ -71,7 +71,9 @@ html[data-bg=dim] #bg-light { visibility: hidden; } /* still (overlays) fades it
 /* no z-index here: .shell must not be a stacking context, so the rail (55) can sit above the dossier layer (50) */
 .shell { position: relative; min-height: 100vh; min-height: 100dvh; }
 .main {
-  position: relative; z-index: 1; min-height: 100vh; min-height: 100dvh;
+  /* flow-root: the topbar's top margin stays inside .main instead of collapsing through .shell and body, which made
+     every route 12px taller than the viewport (Map R3 request) */
+  position: relative; z-index: 1; min-height: 100vh; min-height: 100dvh; display: flow-root;
   padding: 0 var(--gutter) 96px calc(var(--shell-inset) + var(--rail-w) + var(--gutter));
 }
 .main > .topbar, #main { max-width: var(--content-max); margin-inline: auto; }

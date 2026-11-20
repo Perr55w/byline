@@ -78,12 +78,24 @@
 .sg-disc-dek { margin: 6px 24px 0; }
 .sg-disc-b[hidden] { display: none; }
 
-/* priorities editor. SS4: the topic column is at least 240 px so a name like "De-emphasize: model horse-race" is never cut */
-.sg-prio-head, .sg-prio { display: grid; grid-template-columns: minmax(250px, 1.05fr) 156px minmax(0, 1.25fr) 28px; align-items: center; gap: 10px; }
+/* priorities editor. SE-1: topic 200 px, weight 150 px, and the rest for Terms, which wrap (2 lines at rest, all on focus).
+   Rows align to their first line, so a 2-line Terms box never pushes the topic or slider off the row's baseline. */
+.sg-prio-head, .sg-prio { display: grid; grid-template-columns: 200px 150px minmax(0, 1fr) 28px; align-items: start; gap: 8px; }
+.sg-prio-head { align-items: center; }
+.sg-prio .sg-w { height: 30px; }
+.sg-prio .btn--icon { margin-top: 1px; }
+/* R24: auto-height Terms. field-sizing sizes by content (rows + line-height); the 2-line cap lifts on focus. */
+.sg-prio .input.sg-ta { field-sizing: content; display: block; height: auto; min-height: 30px; max-height: 48px; padding: 5px 8px; overflow: hidden; resize: none; line-height: 18px; overflow-wrap: break-word; white-space: pre-wrap; }
+.sg-prio .input.sg-ta[data-p=terms] { font-size: 13px; }
+.sg-prio .input.sg-ta:focus { max-height: none; }
+/* narrower desktops (the Terms column drops under ~380 px) allow a third line at rest before fading */
+@media (max-width: 1360px) and (min-width: 761px) { .sg-prio .input.sg-ta[data-p=terms]:not(:focus) { max-height: 66px; } }
+/* a list still longer than 2 lines at rest (narrow desktops only) fades out at the end of its last line */
+.sg-prio .input.sg-ta.is-clipped { -webkit-mask: linear-gradient(#000 0 0) top / 100% calc(100% - 23px) no-repeat, linear-gradient(to left, transparent 6px, #000 72px) bottom / 100% 23px no-repeat;
+  mask: linear-gradient(#000 0 0) top / 100% calc(100% - 23px) no-repeat, linear-gradient(to left, transparent 6px, #000 72px) bottom / 100% 23px no-repeat; }
 .sg-prio-head { padding: 0 2px 2px; color: var(--text-3); font: 500 10.5px/1 var(--font-mono); letter-spacing: var(--tr-label); text-transform: uppercase; }
 [data-prios] { display: flex; flex-direction: column; gap: 5px; }
 .sg-prio .input { height: 30px; font-size: 13.5px; }
-.sg-prio [data-p=topic] { padding-right: 8px; }
 .sg-w { display: flex; align-items: center; gap: 10px; }
 /* G1: neutral track + neutral fill from the zero mark to the value; the thumb turns blue only on hover or
    focus, and a negative weight gets a warn thumb plus its signed value (never colour alone). */
@@ -172,16 +184,20 @@
 .sg-fold-b { display: flex; flex-direction: column; gap: 16px; }
 .sg-fold-b[hidden] { display: none; }
 /* SS3: closed groups share one row (three columns); an opened group takes the full width, the others pack around it */
-.sg-folds { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); grid-auto-flow: row dense; align-items: start; gap: 14px; }
+/* SE-2: the closed cards stretch to one shared height (summary list at the top, card fills the row) */
+.sg-folds { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); grid-auto-flow: row dense; align-items: stretch; gap: 14px; }
 .sg-folds .sg-fold.is-open { grid-column: 1 / -1; margin-top: 0; }
-.sg-folds .sg-fold:not(.is-open) { display: flex; flex-direction: column; padding: 18px 24px 18px; }
+.sg-folds .sg-fold:not(.is-open) { display: flex; flex-direction: column; justify-content: flex-start; padding: 18px 24px 18px; }
+.sg-fold:not(.is-open) .sg-fold-head { flex: 1; display: flex; flex-direction: column; }
+.sg-fold-foot { display: flex; margin-top: auto; padding-top: 16px; }
+.sg-fold-t .sg-fold-h { min-height: 28px; }
 .sg-folds .sg-fold-list { grid-template-columns: 1fr; gap: 8px; margin-top: 12px; padding-top: 12px; }
 .sg-folds .sg-fold-v { overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; }
 .sg-folds .sg-fold:not(.is-open) .sg-fold-h { font-size: 20px; line-height: 26px; }
 /* SS1: off-screen sections skip layout until scrolled to (shared .cv); estimates are the measured heights at 1440 */
 .sg-sec.cv#sg-schedule { contain-intrinsic-size: auto 173px; }
 .sg-sec.cv#sg-ai { contain-intrinsic-size: auto 241px; }
-.sg-folds.cv { contain-intrinsic-size: auto 361px; }
+.sg-folds.cv { contain-intrinsic-size: auto 405px; }
 
 /* ---------------------------------------------------------------- overview: source health + collection */
 .sg-ov { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 12px; }
@@ -196,8 +212,12 @@ a.sg-ov-card:hover { text-decoration: none; background: var(--hover-row); box-sh
 .sg-ov-big b { color: var(--text-1); font-weight: 500; }
 .sg-ov-bar { display: flex; gap: 2px; height: 6px; border-radius: 3px; overflow: hidden; background: var(--track); }
 .sg-ov-bar i, .sg-sw { display: block; }
-.sg-ov-bar i[data-h=ok], .sg-sw[data-h=ok] { background: var(--ok); } .sg-ov-bar i[data-h=stale], .sg-sw[data-h=stale] { background: var(--warn); }
-.sg-ov-bar i[data-h=error], .sg-sw[data-h=error] { background: var(--err); } .sg-ov-bar i[data-h=paused], .sg-sw[data-h=paused] { background: var(--line-3); }
+/* SE-3: the bar's segments are the health hues mixed into the surface (calm); the legend swatches keep full strength */
+.sg-ov-bar i[data-h=ok] { background: color-mix(in oklab, var(--ok) 60%, var(--surface-solid)); }
+.sg-ov-bar i[data-h=stale] { background: color-mix(in oklab, var(--warn) 60%, var(--surface-solid)); }
+.sg-ov-bar i[data-h=error] { background: color-mix(in oklab, var(--err) 55%, var(--surface-solid)); }
+.sg-sw[data-h=ok] { background: var(--ok); } .sg-sw[data-h=stale] { background: var(--warn); } .sg-sw[data-h=error] { background: var(--err); }
+.sg-ov-bar i[data-h=paused], .sg-sw[data-h=paused] { background: var(--line-3); }
 .sg-ov-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; color: var(--text-2); font: 450 12.5px/16px var(--font-sans); font-variant-numeric: tabular-nums; }
 .sg-ov-legend span { display: inline-flex; align-items: center; gap: 6px; }
 .sg-sw { width: 8px; height: 8px; border-radius: 2px; }
@@ -241,6 +261,7 @@ a.sg-ov-card:hover { text-decoration: none; background: var(--hover-row); box-sh
   .sg-prio-head { display: none; }
   .sg-prio { grid-template-columns: minmax(0, 1fr) 28px; padding: 12px; border-radius: var(--r-ctl); background: var(--surface-nested); box-shadow: inset 0 0 0 1px var(--line); }
   .sg-prio .sg-w, .sg-prio [data-p=terms] { grid-column: 1 / -1; }
+  .sg-prio .input.sg-ta { max-height: none; }
   .sg-prio .btn--icon { grid-row: 1; grid-column: 2; }
   .sg-note { margin-left: 0; }
   .sg-fold:not(.is-open), .sg-folds .sg-fold:not(.is-open) { padding: 16px 18px 18px; }

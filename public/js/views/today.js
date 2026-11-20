@@ -23,6 +23,8 @@ const round = (n) => Math.round(Number(n) || 0);
 const listJoin = (a) => (a.length <= 1 ? a.join('') : a.length === 2 ? `${a[0]} and ${a[1]}` : `${a.slice(0, -1).join(', ')} and ${a[a.length - 1]}`);
 const fmtDay = (ymd) => new Date(`${ymd}T12:00:00Z`).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' }).replace(',', '');
 const ymdAdd = (ymd, d) => new Date(Date.parse(`${ymd}T12:00:00Z`) + d * 864e5).toISOString().slice(0, 10);
+// SPEC §5: important titles are never ellipsised; the API's short_title can end in '…', so it is used only when whole
+const nameOf = (it) => (it?.short_title && !/…$/.test(it.short_title) ? it.short_title : it?.title || '');
 const dowOf = (ymd) => new Date(`${ymd}T12:00:00Z`).toLocaleDateString('en-US', { weekday: 'short', timeZone: 'UTC' });
 
 /**
@@ -72,17 +74,17 @@ function headline(t, items) {
   const tail = t.is_today ? '' : ' No run yet today.';
   if (!t.cleared) {
     const top = t.top;
-    return { h: `Nothing cleared your bar of ${T}.`, l: html`<b>${t.ranked}</b> ranked; the closest was ${top ? html`<b>${top.short_title || top.title}</b> at <b>${round(top.score)}</b>` : 'none'}.${tail}` };
+    return { h: `Nothing cleared your bar of ${T}.`, l: html`<b>${t.ranked}</b> ranked; the closest was ${top ? html`<b>${nameOf(top)}</b> at <b>${round(top.score)}</b>` : 'none'}.${tail}` };
   }
   const t1 = byTopic(t.headline_topic), t2 = byTopic(t.second_topic);
   const top = t.top;
   let h;
   if (t1 && t2 && t2.count > 0 && Math.abs(t1.count - t2.count) <= 1) h = `${t1.topic} and ${t2.topic} split ${brief}.`;
   else if (t1 && t1.share >= 0.5) h = `${t1.topic} dominates ${brief}.`;
-  else if (top && top.score >= T + 15) h = `${top.short_title || top.title} tops ${brief} at ${round(top.score)}.`;
+  else if (top && top.score >= T + 15) h = `${nameOf(top)} tops ${brief} at ${round(top.score)}.`;
   else if (t1) h = `${t1.topic} leads ${brief}.`;
   else h = `${t.cleared} of ${t.ranked} stories cleared your bar.`;
-  const l = html`<b>${t.cleared}</b> of <b>${t.ranked}</b> ranked stories cleared your threshold of <b>${T}</b>.${t1 ? html` ${t1.topic} is in <b>${t1.count}</b> of them${t2 ? html`; ${t2.topic} in <b>${t2.count}</b>` : ''}.` : ''}${top ? html` Top: <b>${top.short_title || top.title}</b> at <b>${round(top.score)}</b>, ${top.evidence_qualifier}.` : ''}${tail}`;
+  const l = html`<b>${t.cleared}</b> of <b>${t.ranked}</b> ranked stories cleared your threshold of <b>${T}</b>.${t1 ? html` ${t1.topic} is in <b>${t1.count}</b> of them${t2 ? html`; ${t2.topic} in <b>${t2.count}</b>` : ''}.` : ''}${top ? html` Top: <b>${nameOf(top)}</b> at <b>${round(top.score)}</b>, ${top.evidence_qualifier}.` : ''}${tail}`;
   return { h, l };
 }
 
@@ -212,7 +214,9 @@ function weatherSentence(m) {
  * or else the lane that keeps it farthest away. `xs` are px, ascending. Returns the lifts in px.
  */
 const dotX = (score) => Math.max(0, Math.min(100, Number(score) || 0)) / 100;
-const WX_TRACK_EST = 330; // the track's width at 1440 (the markup's first guess; fitSwarm refits to the real width)
+// the track's width as the markup's first guess (348 px measured at 1440; the phone track is the viewport less 85 px);
+// fitSwarm refits to the real width and rewrites only the dots whose lift changes
+const wxTrackEst = () => 348; // a constant: reading the viewport width here could force a layout in the idle chunk
 function swarm(xs, gap = 9) {
   const lanes = [0, -4, 4, -8, 8];
   const kept = [];
@@ -232,16 +236,18 @@ function swarm(xs, gap = 9) {
 function fitSwarm(tile) {
   const tr = tile?.querySelector('.td-wx-track');
   if (!tr || !('ResizeObserver' in window)) return;
-  let last = WX_TRACK_EST;
+  // the rows' dots, their x fractions and current lifts, read once (the callback then only computes and writes changes)
+  const rows = [...tile.querySelectorAll('.td-wx-row')].map((row) => [...row.querySelectorAll('.td-wx-dot')].map((d) => ({ d, x: dotX(d.dataset.qScore), lift: Number(d.dataset.lift) || 0 })));
+  let last = Math.round(wxTrackEst());
   const ro = track(tile, new ResizeObserver(([en]) => {
     if (!tile.isConnected) { ro.disconnect(); return; }
     const W = Math.round(en.contentRect.width);
     if (!W || W === last) return;
     last = W;
-    for (const row of tile.querySelectorAll('.td-wx-row')) {
-      const dots = [...row.querySelectorAll('.td-wx-dot')];
-      swarm(dots.map(d => dotX(d.dataset.qScore) * W)).forEach((l, i) => dots[i].style.setProperty('--lift', `${l}px`));
-    }
+    for (const dots of rows) swarm(dots.map((o) => o.x * W)).forEach((l, i) => {
+      const o = dots[i];
+      if (o.lift !== l) { o.lift = l; o.d.style.setProperty('--lift', `${l}px`); }
+    });
   }));
   ro.observe(tr);
 }
@@ -255,6 +261,7 @@ function weatherTile(stories, t, weights) {
     <div class="empty"><h3>No ranked stories this week</h3><p>The chart fills in after a run ranks stories from the last ${t.window_days || 7} days.</p></div></section>`;
   const th = Math.max(0, Math.min(100, m.T));
   const LABEL = { hot: 'Hot', warm: 'Warm', calm: 'Calm' };
+  const est = wxTrackEst();
   return html`
   <section class="tile td-wx" data-tile="weather" aria-labelledby="td-wx-h">
     <div class="td-tile-head">
@@ -270,8 +277,8 @@ function weatherTile(stories, t, weights) {
         <span class="td-wx-track">
           ${((lifts) => r.stories.map((s, k) => {
             const lift = lifts[k];
-            return html`<a class="td-wx-dot" href="#/story/${s.id}" tabindex="-1" data-dossier-src data-s="${s.id}" data-q="${qualityTier(s.score, m.T)}" data-q-score="${s.score}" data-q-threshold="${m.T}" data-tip="${shortLabel(s.title || s.short_title, 44)} · ${round(s.score)}" style="--x:${Math.max(0, Math.min(100, s.score)) / 100};--lift:${lift}px;--q:${qualityColor(s.score, m.T)}"></a>`;
-          }))(swarm(r.stories.map(s => dotX(s.score) * WX_TRACK_EST)))}
+            return html`<a class="td-wx-dot" href="#/story/${s.id}" tabindex="-1" data-dossier-src data-s="${s.id}" data-q="${qualityTier(s.score, m.T)}" data-q-score="${s.score}" data-q-threshold="${m.T}" data-lift="${lift}" data-tip="${shortLabel(s.title || s.short_title, 44)} · ${round(s.score)}" style="--x:${Math.max(0, Math.min(100, s.score)) / 100};--lift:${lift}px;--q:${qualityColor(s.score, m.T)}"></a>`;
+          }))(swarm(r.stories.map(s => dotX(s.score) * est)))}
         </span>
         <span class="td-wx-label">${catchAll(r) ? 'catch-all' : LABEL[r.label]}</span>
       </div>`)}
@@ -389,6 +396,14 @@ function fitMap(host, map) {
       c.setAttribute('r', (r / k).toFixed(2));
       return { x: (ccx - vx) * k, y: (ccy - vy) * k, r };
     });
+    host.classList.add('is-fit');
+    // the labels are placed in the next frame: the search below is the costly part (~10 ms at phone 4×), and keeping it
+    // out of this callback keeps the frame that first lays the map out (its content-visibility settle) under budget (T-8)
+    const token = ++pass;
+    requestAnimationFrame(() => { if (token === pass && host.isConnected) placeLabels(W, H, P, pOf, D, realW); });
+  };
+  let pass = 0;
+  const placeLabels = (W, H, P, pOf, D, realW) => {
     const placed = [];
     let lines = '';
     const maxW = Math.round(W * 0.66);
@@ -438,7 +453,6 @@ function fitMap(host, map) {
     }
     if (leaders) { leaders.setAttribute('viewBox', `0 0 ${W} ${H}`); leaders.innerHTML = lines ? `<path d="${lines}"/>` : ''; }
     box.classList.add('is-placed');
-    host.classList.add('is-fit');
   };
   // the first fit runs in the observer callback (before first paint); later resizes (the rail's 420 ms width animation,
   // a window resize) refit once they stop, so no frame of the animation rewrites the drawing (E12)
@@ -500,8 +514,8 @@ function weekTile(w, t, T, sugg) {
   const headline = total >= w.goal ? 'This week is fully planned.' : `${total} of ${w.goal} posts planned this week.`;
   const suggRow = !sugg ? html`<p class="td-sub">No story above your bar is waiting for a draft.</p>`
     : sugg.kind === 'story' ? html`<h3 class="td-label td-week-label">Suggested next post</h3>
-      <a class="td-row td-row--sugg" href="${storyHref(sugg.it)}" data-dossier-src><span class="td-row-title">${sugg.it.short_title || sugg.it.title}</span><span class="td-row-meta"><span class="td-num">${round(sugg.it.score)}</span><span>no draft yet</span><span class="td-sugg-go">Draft a post ${icon('arrow-right')}</span></span></a>
-      <p class="td-caption td-sugg-why">The top story above your bar of <b>${T}</b> with no draft. Opens its dossier; nothing is drafted yet.</p>
+      <a class="td-row td-row--sugg" href="${storyHref(sugg.it)}" data-dossier-src><span class="td-row-title">${sugg.it.title}</span><span class="td-row-meta"><span class="td-num">${round(sugg.it.score)}</span><span>no draft yet</span><span class="td-sugg-go">Draft a post ${icon('arrow-right')}</span></span></a>
+      <p class="td-caption td-sugg-why">The top story over your bar of <b>${T}</b> with no draft. Opens its dossier; drafts nothing.</p>
       ${sugg.more?.length ? html`<h3 class="td-label td-week-label td-sugg-then">Next without a draft</h3>
       <ul class="td-list td-sugg-more">${sugg.more.map(it => html`<li><a class="td-row td-row--then" href="${storyHref(it)}" data-dossier-src><span class="td-num">${round(it.score)}</span><span class="td-row-title">${shortLabel(it.title, 40)}</span></a></li>`)}</ul>` : ''}`
     : html`<h3 class="td-label td-week-label">Suggested next post</h3>
@@ -530,8 +544,7 @@ function weekTile(w, t, T, sugg) {
           })}
         </div>
         <p class="td-legend"><i class="td-day-slot"></i><span>${w.postingDays.length ? `Posting days (${listJoin(w.postingDays)}), filled once a post is planned` : 'Posting day, filled once a post is planned'}</span></p>
-        ${!total ? html`<p class="td-week-empty">Nothing planned yet. <b>${w.unplanned >= 30 ? '30+' : w.unplanned}</b> ${w.unplanned === 1 ? 'draft is' : 'drafts are'} in the tray.</p>` : ''}
-        ${nextRow}
+        ${!total || nextRow ? html`<div class="td-week-tray">${!total ? html`<p class="td-week-empty">Nothing planned yet. <b>${w.unplanned >= 30 ? '30+' : w.unplanned}</b> ${w.unplanned === 1 ? 'draft is' : 'drafts are'} in the tray.</p>` : ''}${nextRow}</div>` : ''}
       </div>
       <div class="td-week-side">
         ${total ? html`<ul class="td-list">${w.posts.slice(0, 3).map(p => html`<li><a class="td-row" href="#/draft/${p.id}"><span class="td-row-day">${dowOf(p.day)}</span><span class="td-row-title">${p.title || p.story_title || 'Untitled draft'}</span><span class="td-row-meta">${statusTag(p.status)}<span>${channelLabel(p.channel)}</span></span></a></li>`)}</ul>${total > 3 ? html`<p class="td-more"><a href="#/calendar">All ${total} this week →</a></p>` : ''}`
@@ -577,14 +590,14 @@ function deskTile(t, s) {
   const out = t.outreach_awaiting || [];
   const nothing = !label && !fu.length && !out.length;
   return html`
-  <section class="tile td-desk" data-tile="desk" aria-labelledby="td-desk-h">
+  <section class="tile td-desk show-extra" data-tile="desk" aria-labelledby="td-desk-h">
     <div class="td-tile-head">
       <h2 class="td-h2" id="td-desk-h">Waiting on you</h2>
       <a class="btn btn--ghost btn--sm" href="#/studio">Studio ${icon('arrow-right')}</a>
     </div>
     ${nothing ? html`<p class="td-sub">Nothing is waiting: no drafts to review and no follow-ups due.</p>` : ''}
     ${label ? html`<h3 class="td-label td-desk-label">${label}</h3>
-      ${groups.length ? html`<ul class="td-list">${(groups.some(g => g.status === 'in_review') ? groups.filter(g => g.status === 'in_review') : groups).slice(0, 2).map(g => html`<li><a class="td-row" href="#/draft/${g.id}"><span class="td-row-title">${g.title}</span><span class="td-row-meta">${statusTag(g.status)}<span>${[...g.channels].join(' · ')}</span></span></a></li>`)}</ul>` : ''}
+      ${groups.length ? html`<ul class="td-list">${groups.slice(0, 2).map((g, i) => html`<li${i ? raw(' class="td-desk-extra"') : ''}><a class="td-row" href="#/draft/${g.id}"><span class="td-row-title">${g.title}</span><span class="td-row-meta">${statusTag(g.status)}<span>${[...g.channels].join(' · ')}</span></span></a></li>`)}</ul>` : ''}
       <p class="td-more"><a href="#/studio">All drafts →</a></p>` : ''}
     ${out.length ? html`<h3 class="td-label td-desk-label">${plural(out.length, 'outreach draft')}</h3>
       <ul class="td-list">${out.slice(0, 3).map(o => html`<li><a class="td-row" href="#/people"><span class="td-row-title">${stripName(o.name)} · ${String(o.purpose || '').replace(/_/g, ' ')}</span><span class="td-row-meta">${statusTag(o.status)}</span></a></li>`)}</ul>` : ''}
@@ -776,19 +789,37 @@ function buildLater(el, restData, later, ctl) {
   const alive = () => !!grid && el.isConnected && !page?.__tdGone; // stops once the router starts this page's exit
   const idle = (fn) => (window.requestIdleCallback ? requestIdleCallback(fn, { timeout: 300 }) : setTimeout(fn, 16));
   let data = null;
+  // a tile is inserted held (content-visibility: hidden): Chromium styles a new content-visibility: auto subtree in full
+  // on its first frame even off screen (the weather tile is 214 elements, a 40 ms style + layout frame at phone 4×), so
+  // a held tile is released only once it comes within half a viewport of the screen, or by settle() below
+  // near the screen, a tile and its held inner part are released together; settle() releases them one idle period apart
+  const release = (tile, inner = true) => {
+    io?.unobserve(tile); tile.classList.remove('td-cv-hold');
+    if (inner) tile.querySelectorAll('.td-cv-hold').forEach(n => n.classList.remove('td-cv-hold'));
+  };
+  const io = 'IntersectionObserver' in window ? track(grid, new IntersectionObserver((ens) => {
+    for (const en of ens) if (en.isIntersecting) release(en.target);
+  }, { rootMargin: '50% 0px' })) : null;
   const append = ([key, build]) => {
     grid.insertAdjacentHTML('beforeend', String(build(data)));
     const tile = grid.lastElementChild;
-    tile.classList.add('cv');
+    tile.classList.add('cv', 'td-cv-hold');
+    // the weather chart (43 dots, 8 rows) is held on its own, so settling the tile is two smaller frames, not one
+    if (key === 'weather') tile.querySelector('.td-wx-chart')?.classList.add('td-cv-hold');
+    if (io) io.observe(tile); else release(tile);
     if (key === 'map') fitMap(tile.querySelector('.td-map-canvas'), data.map);
     if (key === 'weather') fitSwarm(tile);
+    if (key === 'desk') fitRow3(grid);
     ctl.enter(tile);
   };
   // once the entrance is over, the tiles leave content-visibility one per idle period (their estimates match, so
   // nothing moves): scrolling and full-page captures then never meet a skipped tile
   const settle = () => setTimeout(() => {
-    const cvs = [...grid.querySelectorAll(':scope > .cv')];
-    const next = () => { const c = cvs.shift(); if (!c || !alive()) return; c.classList.remove('cv'); idle(next); };
+    const steps = [...grid.querySelectorAll(':scope > .cv')].flatMap(c => [
+      () => { release(c, false); c.classList.remove('cv'); },
+      ...[...c.querySelectorAll('.td-cv-hold')].map(n => () => n.classList.remove('td-cv-hold'))
+    ]);
+    const next = () => { const st = steps.shift(); if (!st || !alive()) return; st(); idle(next); };
     idle(next);
   }, Math.max(0, ctl.endsIn?.() ?? 0) + 400);
   // one idle chunk holds as many tiles as fit a 6 ms script budget (and the idle deadline): on a desktop that is all of
@@ -854,6 +885,40 @@ function fitLead(el) {
   };
   const ro = track(lead, new ResizeObserver(check));
   ro.observe(lead); ro.observe(side);
+}
+
+/**
+ * Round 3 T-1 (R8): row 3 ends on one line, so the shorter of This week and Waiting on you would carry a band. Waiting on
+ * you lists one more open draft (real content, shown from the start) only while that brings the two natural heights
+ * closer; otherwise fitRow3 hides it again. Measured in a ResizeObserver callback (layout is clean there), like fitLead.
+ */
+function fitRow3(grid) {
+  const week = grid.querySelector('.td-week'), desk = grid.querySelector('.td-desk');
+  const extra = desk?.querySelector('.td-desk-extra');
+  if (!week || !extra || !('ResizeObserver' in window)) return;
+  let extraH = 0;
+  const lastBottom = (box) => { const kids = [...(box?.children || [])].filter(k => k.offsetHeight); return kids.length ? Math.max(...kids.map(k => k.getBoundingClientRect().bottom)) : 0; };
+  const check = () => {
+    if (!desk.isConnected) { ro.disconnect(); return; }
+        if (week.matches('.td-cv-hold') || desk.matches('.td-cv-hold')) return; // not laid out yet: the release resizes them
+    const shown = desk.classList.contains('show-extra');
+    if (shown) extraH = extra.offsetHeight || extraH;
+    const beside = week.offsetTop === desk.offsetTop;
+    let want = false;
+    if (beside) {
+      const wTop = week.getBoundingClientRect().top, dTop = desk.getBoundingClientRect().top;
+      const weekNat = Math.max(lastBottom(week.querySelector('.td-week-strip')), lastBottom(week.querySelector('.td-week-side')), lastBottom(week)) - wTop;
+      const deskNat = lastBottom(desk) - dTop - (shown ? extraH : 0);
+      const add = extraH || 64; // a draft row is about 64 px until it has been measured
+      want = Math.abs(weekNat - deskNat - add) < Math.abs(weekNat - deskNat);
+    }
+    if (want !== shown) apply(() => desk.classList.toggle('show-extra', want));
+  };
+  let lastAt = -1e9, timer = 0;
+  const apply = (fn) => { const now = performance.now(), busy = now - lastAt < 120; lastAt = now; clearTimeout(timer); if (busy) timer = setTimeout(fn, 160); else fn(); };
+  const ro = track(grid, new ResizeObserver(check));
+  // the tiles' insides too: a held tile stretched by its row does not resize when released, but its content then does
+  for (const n of [week, desk, week.querySelector('.td-week-side'), desk.querySelector('.td-list')]) if (n) ro.observe(n);
 }
 
 // ------------------------------------------------------------------ choreography (C §2 + round 1 T4/T5)

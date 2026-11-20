@@ -87,7 +87,16 @@ a.sr-item:hover { background: var(--hover-row); text-decoration: none; transitio
 .sr-meta .chip { height: 22px; padding: 0 9px; font-size: 12px; }
 .sr-from b { color: var(--text-2); font-weight: 500; }
 .sr-mini .score-chip { display: inline-flex; align-items: center; gap: 4px; min-width: 30px; height: 20px; padding: 0 7px; border-radius: var(--r-tag); font-size: 12px; line-height: 20px; white-space: nowrap; }
-.sr-story-l { font-weight: 450; }
+/* SR-1: the story a claim or draft belongs to: its plain score chip, then its title (a link when the row isn't one) */
+.sr-sref { display: inline-flex; align-items: center; gap: 7px; min-width: 0; }
+.sr-stitle { color: var(--text-2); font-weight: 500; }
+.sr-slink { position: relative; z-index: 1; color: var(--text-2); font-weight: 500; text-decoration: none; border-radius: 3px; }
+.sr-slink:hover { color: var(--accent-text); text-decoration: underline; text-underline-offset: 2px; text-decoration-thickness: 1px; }
+.sr-slink:focus-visible { outline: none; box-shadow: var(--focus); }
+.sr-slink--chip { display: inline-flex; }
+/* SR-3: contacts sharing a name are one row */
+.sr-dupn { color: var(--text-2); font: 500 14px/1 var(--font-sans); font-variant-numeric: tabular-nums; }
+.sr-dupl { color: var(--warn-text); font: 450 13px/1 var(--font-sans); }
 .sr-glyph { display: inline-block; width: 44px; color: var(--text-3); font: 400 40px/30px var(--font-serif); font-variation-settings: 'opsz' 72; text-align: center; }
 .sr-ico, .sr-avatar { display: inline-grid; place-items: center; width: 34px; height: 34px; margin-left: 5px; border-radius: 50%; background: var(--tint-2); color: var(--text-2); }
 .sr-ico .icon { width: 16px; height: 16px; }
@@ -102,6 +111,14 @@ mark.sr-n { background: var(--accent-soft); color: var(--text-1); font-weight: 5
 
 /* Q1: one row per story for drafts — title once, a chip per channel, count + newest edit */
 .sr-dgroup { cursor: default; }
+/* a single draft: its title link stretches over the row (whole-row click, one focus stop); the story link sits above it */
+.sr-draft1 { cursor: pointer; }
+.sr-draft1:hover { background: var(--hover-row); transition-duration: var(--dur-hover-in); }
+.sr-draft1 .sr-dlink::after { content: ""; position: absolute; inset: 0; }
+.sr-draft1:has(.sr-dlink:focus-visible) { background: var(--hover-row); box-shadow: inset 2px 0 0 var(--accent), inset 0 0 0 1px var(--accent-line); }
+.sr-draft1 .sr-dlink:focus-visible { box-shadow: none; }
+.sr-draft1 .sr-dlink:hover { color: var(--text-1); }
+.sr-draft1 .tag { position: relative; }
 .sr-dlink { color: var(--text-1); text-decoration: none; outline: none; border-radius: 3px; }
 .sr-dlink:hover { color: var(--accent-text); text-decoration: none; }
 .sr-dlink:focus-visible { box-shadow: var(--focus); }

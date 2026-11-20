@@ -2,7 +2,7 @@
    Today (today.js). Tab-specific layout only; every colour is a token
    (the inline --q from quality.js is the one exception, per DECISIONS).
    Responsive by container width (the rail changes the column, not the viewport):
-     wide  ≥ 900px  lead 7 | side 5 · weather 7 | map 5 · week 7 | desk 5 (top-aligned) · rest 12
+     wide  ≥ 900px  lead 7 | side 5 · weather 7 | map 5 · week 7 | desk 5 (one bottom line) · rest 12
      mid   < 900px  lead · side as two columns · weather · map · week · desk · rest
      narrow< 620px  one column, phone type (≤ 480px: the lead ring sits beside the topic pills)
    ===================================================================== */
@@ -63,9 +63,11 @@
 .td-grid > .td-desk { grid-column: span 5; }
 /* T1: the deferred tiles skip style + layout while off screen (shared .cv); the estimates are the measured content
    heights (content box: tile height − padding − border) at 1440 here and at 390 in the narrow block below */
-.td-wx.cv, .td-map.cv { contain-intrinsic-size: auto 477px; }
-.td-week.cv, .td-desk.cv { contain-intrinsic-size: auto 280px; }
+.td-wx.cv, .td-map.cv { contain-intrinsic-size: auto 495px; }
+.td-week.cv, .td-desk.cv { contain-intrinsic-size: auto 370px; }
 .td-rest.cv { contain-intrinsic-size: auto 336px; }
+.td-grid > .td-cv-hold, .td-wx-chart.td-cv-hold { content-visibility: hidden; } /* round 3 T-8: held until near the screen (today.js buildLater) */
+.td-wx-chart.td-cv-hold { contain-intrinsic-size: auto 339px; }
 .td-grid > .td-rest, .td-grid > .td-empty { grid-column: span 12; }
 
 /* shared tile type */
@@ -265,9 +267,9 @@ li:first-child > .td-hot-row { border-top: 0; }
 
 /* ---------------------------------------------------------------- this week (T1: strip | posts side by side) */
 .td-week, .td-desk { display: flex; flex-direction: column; }
-.td-week-body { flex: 1; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 4px 28px; align-items: start; margin-top: 14px; }
+.td-week-body { display: grid; grid-template-columns: minmax(0, 1fr); align-items: start; margin-top: 14px; }
 .td-week-strip { display: flex; flex-direction: column; min-width: 0; }
-.td-week-side { min-width: 0; padding-left: 28px; border-left: 1px solid var(--line); }
+.td-week-side { min-width: 0; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
 .td-cadence { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; margin: 0 0 8px; }
 /* round 3 T-1 (R16): a day is 56 px (weekday, date, posting-day marker); it grows only by the posts it holds (one
    marker each). It never stretches to the row, so an empty week has no tall empty columns */
@@ -302,6 +304,15 @@ li:first-child > .td-hot-row { border-top: 0; }
 .td-week-side { display: flex; flex-direction: column; }
 .td-row.td-week-next { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; margin-top: 12px; padding: 10px 0 0; border-top: 1px solid var(--line); }
 .td-week-next .td-label { margin: 0; }
+/* round 3 T-1 (R16): This week is one column: the 56 px day strip runs the full width (cells grow only by the posts they
+   hold), the tray line and the next open posting day sit right under it, then the posts or "Suggested next post".
+   No column is left shorter than its neighbour, so the tile has no inner band at any width; its height is its content */
+.td-week .td-cadence { gap: 6px; }
+.td-week-tray { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 14px; margin: 10px 0 0; }
+.td-week-tray .td-week-empty { display: inline; margin: 0; }
+.td-week-tray .td-row.td-week-next { display: inline-flex; margin: 0; padding: 0; border-top: 0; }
+.td-week-tray .td-week-next .td-row-title { font-size: 15px; line-height: 21px; }
+.td-week .td-week-side > .td-list li:first-child > .td-row { padding-top: 0; }
 
 /* list rows shared by This week and Waiting on you: titles wrap (never ellipsised) */
 .td-list { margin: 0; padding: 0; list-style: none; }
@@ -319,6 +330,7 @@ li:first-child > .td-hot-row { border-top: 0; }
 .td-row-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; color: var(--text-2); font: 450 12.5px/16px var(--font-sans); }
 .td-overdue { color: var(--err); }
 .td-desk-label { margin: 16px 0 0; }
+.td-desk:not(.show-extra) .td-desk-extra { display: none; } /* round 3 T-1: shown only when it evens row 3 (fitRow3) */
 .td-desk .td-tile-head + .td-desk-label { margin-top: 6px; }
 .td-desk .td-list li:first-child > .td-row { padding-top: 8px; }
 .td-list--fu { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 18px; }
@@ -350,10 +362,11 @@ li:first-child > .td-hot-row { border-top: 0; }
 @container today (max-width: 619px) {
   .td-grid { grid-template-columns: minmax(0, 1fr); gap: 12px; }
   .td-wx.cv { contain-intrinsic-size: auto 630px; }
-  .td-map.cv { contain-intrinsic-size: auto 453px; }
-  .td-week.cv { contain-intrinsic-size: auto 399px; }
+  .td-map.cv { contain-intrinsic-size: auto 496px; }
+  .td-week.cv { contain-intrinsic-size: auto 440px; }
   .td-desk.cv { contain-intrinsic-size: auto 383px; }
-  .td-rest.cv { contain-intrinsic-size: auto 777px; }
+  .td-rest.cv { contain-intrinsic-size: auto 809px; }
+  .td-wx-chart.td-cv-hold { contain-intrinsic-size: auto 417px; }
   .td-grid > * { grid-column: 1 / -1 !important; }
   .td-grid > .td-side { display: flex; flex-direction: column; gap: 12px; }
   .td-lead-top { column-gap: 14px; }
@@ -367,8 +380,6 @@ li:first-child > .td-hot-row { border-top: 0; }
   .td-wx-label { grid-area: label; font-size: 11.5px; }
   .td-wx-track { grid-area: track; height: 24px; }
   .td-wx-row:first-of-type .td-wx-track::after { top: 3px; }
-  .td-week-body { grid-template-columns: minmax(0, 1fr); gap: 14px; }
-  .td-week-side { padding: 14px 0 0; border-left: 0; border-top: 1px solid var(--line); }
   .td-list--fu { grid-template-columns: minmax(0, 1fr); }
   .td-list--fu li + li > .td-row { border-top: 1px solid var(--line); }
   .td-rest-head { padding: 18px 18px 4px; }

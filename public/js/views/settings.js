@@ -25,7 +25,7 @@ const TOC = [
 // from the section nav, from the ⌘K Index (which focuses the matching h3 in the fold head) or #/settings/<id>.
 const FOLDED = { Writing: 'sg-g-writing', Publishing: 'sg-g-publishing', System: 'sg-g-system' };
 const SEC_GROUP = Object.fromEntries(TOC.flatMap(([g, items]) => items.map(([id]) => [id, g])));
-const splitTerms = (s) => s.split(',').map(t => t.trim()).filter(Boolean);
+const splitTerms = (s) => s.split(/[,\n]/).map(t => t.trim()).filter(Boolean);
 const validZone = (tz) => { try { new Intl.DateTimeFormat('en', { timeZone: tz }); return true; } catch { return false; } };
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 const andList = (xs) => xs.length < 2 ? (xs[0] || '') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`;
@@ -72,7 +72,7 @@ export async function render(view, ctx = {}) {
 
   // Read the editable lists (priorities, samples) back from the DOM so add/remove keeps unsaved edits.
   const readPriorities = () => [...el.querySelectorAll('.sg-prio')].map(r => ({
-    topic: r.querySelector('[data-p=topic]').value.trim(), weight: Number(r.querySelector('[data-p=weight]').value), terms: splitTerms(r.querySelector('[data-p=terms]').value)
+    topic: r.querySelector('[data-p=topic]').value.replace(/\s+/g, ' ').trim(), weight: Number(r.querySelector('[data-p=weight]').value), terms: splitTerms(r.querySelector('[data-p=terms]').value)
   }));
   const readSamples = () => [...el.querySelectorAll('[data-sample]')].map(t => t.value);
 
@@ -134,7 +134,7 @@ export async function render(view, ctx = {}) {
     return { sum: `${money(spent)} of ${money(lim)} this month${hit ? ' · limit reached' : ''}`, tag: hit ? html`<span class="tag tag--warn">limit reached</span>` : '' };
   };
   const themeName = () => ({ light: 'Proof', dark: 'Night', system: 'Match system' }[themePref()] || 'Proof');
-  const clip = (t, n = 64) => { t = String(t || '').replace(/\s+/g, ' ').trim(); return t.length > n ? `${t.slice(0, n).replace(/\s+\S*$/, '')}…` : t; };
+  const clip = (t, n = 64) => { t = String(t || '').replace(/\s+/g, ' ').trim(); return t.length > n ? `${t.slice(0, n).replace(/\s+\S*$/, '').replace(/[\s,;:·–—-]+$/, '')}…` : t; };
   // One line of real current values per folded section, so a closed group still says what it holds.
   const facts = () => ({
     'sg-profile': `${wp.tone ? `Tone: ${clip(wp.tone, 40)}` : 'No tone set'} · ${wp.length || 'medium'} · ${plural(wp.samples.filter(x => String(x).trim()).length, 'sample')}`,
@@ -152,9 +152,12 @@ export async function render(view, ctx = {}) {
   });
   const foldHead = (g) => {
     const id = FOLDED[g], open = openFolds.has(g), items = TOC.find(t => t[0] === g)[1], f = facts();
-    return html`<div class="sg-fold-t"><h2 class="sg-fold-h" id="${id}-h">${g}</h2>
-        <button class="btn btn--secondary btn--sm sg-fold-btn" type="button" data-fold-toggle="${g}" aria-expanded="${open}" aria-controls="${id}-b">${open ? 'Hide' : `Show ${items.length} sections`}${icon('chevron-right')}</button></div>
-      ${open ? '' : html`<ul class="sg-fold-list">${items.map(([sid, t]) => html`<li><h3 class="sg-fold-i" data-for="${sid}"><button type="button" class="sg-fold-a" data-open-sec="${sid}">${t}</button></h3><span class="sg-fold-v" data-fact="${sid}" title="${f[sid]}">${f[sid]}</span></li>`)}</ul>`}`;
+    const btn = html`<button class="btn btn--secondary btn--sm sg-fold-btn" type="button" data-fold-toggle="${g}" aria-expanded="${open}" aria-controls="${id}-b">${open ? 'Hide' : `Show ${items.length} sections`}${icon('chevron-right')}</button>`;
+    // SE-2: a closed card is summary list at the top, its Show button on the card's bottom edge (aligned across the row)
+    return open ? html`<div class="sg-fold-t"><h2 class="sg-fold-h" id="${id}-h">${g}</h2>${btn}</div>`
+      : html`<div class="sg-fold-t"><h2 class="sg-fold-h" id="${id}-h">${g}</h2></div>
+      <ul class="sg-fold-list">${items.map(([sid, t]) => html`<li><h3 class="sg-fold-i" data-for="${sid}"><button type="button" class="sg-fold-a" data-open-sec="${sid}">${t}</button></h3><span class="sg-fold-v" data-fact="${sid}" title="${f[sid]}">${f[sid]}</span></li>`)}</ul>
+      <div class="sg-fold-foot">${btn}</div>`;
   };
   // A closed fold's sections are kept as markup only and built on first open (no hidden DOM in the tab change).
   const foldBodies = {};
@@ -219,9 +222,9 @@ export async function render(view, ctx = {}) {
       ${section('sg-priorities', 'Priorities', html`Weight 0 ignores a topic, 1 is normal, 2 doubles it, below 0 de-emphasizes. Saving re-ranks the last 30 days.`, html`
         <div class="sg-prio-head" aria-hidden="true"><span>Topic</span><span>Weight</span><span>Terms</span><span></span></div>
         <div data-prios>${s.priorities.map((x, i) => html`<div class="sg-prio">
-          <input class="input" data-p="topic" value="${x.topic}" title="${x.topic}" placeholder="Topic" aria-label="Topic ${i + 1}">
+          <textarea class="input sg-ta" data-p="topic" rows="1" spellcheck="false" placeholder="Topic" aria-label="Topic ${i + 1}">${x.topic}</textarea>
           <div class="sg-w" data-sign="${sign(x.weight)}"><input type="range" min="-2" max="2" step="0.1" data-p="weight" value="${x.weight}" style="${raw(fillVars(x.weight))}" aria-label="Weight for ${x.topic || `topic ${i + 1}`}" aria-valuetext="${weightText(x.weight)}"><output class="sg-wv" data-sign="${sign(x.weight)}">${weightLabel(x.weight)}</output></div>
-          <input class="input" data-p="terms" value="${(x.terms || []).join(', ')}" title="${(x.terms || []).join(', ')}" placeholder="comma-separated terms" aria-label="Terms for ${x.topic || `topic ${i + 1}`}">
+          <textarea class="input sg-ta" data-p="terms" rows="2" spellcheck="false" placeholder="comma-separated terms" aria-label="Terms for ${x.topic || `topic ${i + 1}`}">${(x.terms || []).join(', ')}</textarea>
           <button class="btn btn--ghost btn--icon btn--sm" type="button" data-act="rm-prio" data-i="${i}" aria-label="Remove ${x.topic || 'topic'}">${icon('x')}</button>
         </div>`)}</div>
         ${!s.priorities.length ? html`<div class="empty"><p>No priorities: every story will rank as a weak match.</p></div>` : ''}`,
@@ -356,6 +359,7 @@ export async function render(view, ctx = {}) {
     }
     paintSecurity();
     spy();
+    markClipped();
   })();
 
   // G4: section-nav highlight from one IntersectionObserver on .sg-sec (and closed folds, which stand in for
@@ -458,6 +462,7 @@ export async function render(view, ctx = {}) {
     for (const [d, v] of days) { const i = el.querySelector(`[data-day="${d}"]`); if (i) i.checked = v; }
     window.scrollTo({ top: y, behavior: 'instant' });
     checkOllama();
+    markClipped();
   };
   paint({ rest: false });
   {
@@ -534,6 +539,27 @@ export async function render(view, ctx = {}) {
     o.textContent = weightLabel(v); o.dataset.sign = r.parentElement.dataset.sign = sign(v);
     r.style.cssText = fillVars(v); r.setAttribute('aria-valuetext', weightText(v));
   });
+  // SE-1 (R24): Topic and Terms are auto-height textareas: at most 2 lines at rest, the full value on focus. Sized by CSS
+  // (field-sizing: content + a 2-line max-height); where that is unsupported, one scrollHeight read per focus or
+  // edit sets the height (no measuring loop). Enter never adds a line: the value stays one comma-separated list.
+  const fieldSizing = typeof CSS !== 'undefined' && CSS.supports?.('field-sizing', 'content');
+  const fitTa = (t) => { t.style.height = 'auto'; t.style.height = `${t.scrollHeight + 2}px`; };
+  on(el, 'keydown', '.sg-ta', (e) => { if (e.key === 'Enter') e.preventDefault(); });
+  // A box still longer than 2 lines at rest (only on narrow desktops) fades its last line, so a cut list never
+  // reads as complete. One read per box, once per paint, resize or blur; never in the tab-change frames.
+  const clipOne = (t) => t.classList.toggle('is-clipped', document.activeElement !== t && t.scrollHeight > t.clientHeight + 1);
+  let clipRaf = 0;
+  const markClipped = () => { cancelAnimationFrame(clipRaf); clipRaf = requestAnimationFrame(() => el.querySelectorAll('.sg-ta').forEach(clipOne)); };
+  el.addEventListener('focusout', (e) => { if (e.target.matches?.('.sg-ta')) requestAnimationFrame(() => clipOne(e.target)); });
+  el.addEventListener('focusin', (e) => { if (e.target.matches?.('.sg-ta')) e.target.classList.remove('is-clipped'); });
+  let clipT = 0;
+  const onResize = () => { if (!el.isConnected) { removeEventListener('resize', onResize); return; } clearTimeout(clipT); clipT = setTimeout(markClipped, 200); };
+  addEventListener('resize', onResize, { passive: true });
+  if (!fieldSizing) {
+    el.addEventListener('focusin', (e) => { if (e.target.matches?.('.sg-ta')) fitTa(e.target); });
+    el.addEventListener('focusout', (e) => { if (e.target.matches?.('.sg-ta')) e.target.style.height = ''; });
+    on(el, 'input', '.sg-ta', (e, t) => fitTa(t));
+  }
   // G2: the first edit in a section promotes its Save to primary and shows "Unsaved changes"
   const markDirty = (key, on = true) => {
     if (!key) return;

@@ -35,6 +35,8 @@ html.st-workshop[data-bg=still] #bg { opacity: .2; } /* class set by studio.js o
 .st-lead-story { display: inline-flex; align-items: center; gap: 8px; color: var(--text-2); font: 450 13px/18px var(--font-sans); text-decoration: none; }
 .st-lead-story:hover { color: var(--text-1); text-decoration: none; }
 .st-lead-story .score-chip { min-width: 32px; height: 24px; font-size: 13px; }
+.st-lead-story .score-chip .sr-only { display: none; } /* the visible "Story score" names it */
+.st-lead-xk { color: var(--text-3); font: 500 13px/1 var(--font-sans); letter-spacing: 0; vertical-align: 1px; }
 .st-lead-side { padding-left: 24px; border-left: 1px solid var(--line); }
 .st-lead-h { margin: 2px 0 10px; color: var(--text-1); font: 460 16px/21px var(--font-serif); font-variation-settings: 'opsz' 20; }
 .st-lead-side .st-checklist { margin-bottom: 10px; }
@@ -67,23 +69,30 @@ html.st-workshop[data-bg=still] #bg { opacity: .2; } /* class set by studio.js o
 .st-group-m .chip { height: 20px; padding: 0 8px; font-size: 11.5px; }
 .st-rows { list-style: none; margin: 0; padding: 0; }
 /* a row is one link (stretched over the row) plus a separate "Plan" button, so nothing interactive nests */
+/* ST-1: one fixed grid for every row — icon / format / hook / status / date / arrow — so the status tags share one x */
 .st-row {
-  position: relative; display: grid; grid-template-columns: 16px minmax(0, 1fr) auto 112px 64px 16px; align-items: center; gap: 12px;
+  --st-cols: 20px 180px minmax(0, 1fr) 88px 64px 16px;
+  position: relative; display: grid; grid-template-columns: var(--st-cols); align-items: center; gap: 12px;
   min-height: 44px; margin: 0 -10px; padding: 6px 10px; border-radius: var(--r-ctl); color: var(--text-1);
   transition: background-color var(--dur-micro) var(--ease-fade);
 }
-.st-group--oneage .st-row { grid-template-columns: 16px minmax(0, 1fr) auto 112px 16px; } /* the shared edit time is in the head: no empty time column */
-.st-group--oneage .st-row-u { display: none; }
+.st-row > .st-glyph { justify-self: center; }
 .st-rows > li + li { box-shadow: inset 0 1px 0 var(--line); }
 .st-row:hover { background: var(--hover-row); }
 .st-rows > li:hover + li, .st-row:hover { box-shadow: none; }
 .st-row:has(.st-row-t:focus-visible) { box-shadow: var(--focus); }
-.st-row-main { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
-/* format label, then the hook in quiet 13 px on the same line (CS1): one line, ellipsis */
-.st-row-line { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
-.st-row-line .st-row-t { flex: none; white-space: nowrap; }
-.st-row--solo .st-row-line .st-row-t { flex: 0 1 auto; white-space: normal; }
-.st-row-h { flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--text-2); font: 450 13px/18px var(--font-sans); }
+/* format cell: the label (ellipsis) and its ×N; the hook cell: one quiet 13 px line (CS1), ellipsis */
+.st-row-f { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.st-row-f .st-row-t { display: block; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.st-row-hk { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.st-row-h { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--text-2); font: 450 13px/18px var(--font-sans); }
+.st-row-h.is-quiet { color: var(--text-3); }
+.st-row-hk .st-row-m { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+/* a solo row (no story group) carries the draft title: it spans the format and hook cells and may wrap */
+.st-row--solo .st-row-f { grid-column: 2 / 4; flex-direction: column; align-items: flex-start; gap: 1px; }
+.st-row--solo .st-row-f .st-row-t { overflow: visible; white-space: normal; }
+.st-row--solo .st-row-hk { display: none; }
+.st-row-s { display: flex; min-width: 0; }
 .st-dup { position: relative; z-index: 1; flex: none; align-self: center; display: inline-flex; align-items: center; height: 20px; padding: 0 6px; margin-left: -2px; border: 0; border-radius: var(--r-tag);
   background: var(--tint-2); color: var(--text-2); font: 500 12px/1 var(--font-sans); font-variant-numeric: tabular-nums; cursor: pointer;
   transition: background-color var(--dur-micro) var(--ease-fade), color var(--dur-micro) var(--ease-fade); }
@@ -100,24 +109,31 @@ html.st-workshop[data-bg=still] #bg { opacity: .2; } /* class set by studio.js o
 .st-row-t::after { content: ""; position: absolute; inset: 0; border-radius: inherit; }
 .st-row--solo .st-row-t { font: 500 15px/21px var(--font-sans); }
 .st-row-m { color: var(--text-2); font: 450 12.5px/17px var(--font-sans); }
-.st-row-plan, .st-row-u { color: var(--text-2); font: 450 12.5px/17px var(--font-sans); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.st-row-u { text-align: right; color: var(--text-3); }
-.st-row-plan .st-k { margin-right: 4px; }
-.st-plan { position: relative; z-index: 1; display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 8px; margin-left: -8px; border: 0; border-radius: var(--r-ctl);
+/* the date cell: a planned / published date, else the edit time, else an em dash; "Plan" shares the cell (stacked in
+   one grid area) and crossfades in on hover or keyboard focus — opacity only */
+.st-row-u { display: grid; align-items: center; justify-items: end; min-width: 0; color: var(--text-3); font: 450 12.5px/17px var(--font-sans); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.st-row-u > * { grid-area: 1 / 1; transition: opacity var(--dur-micro) var(--ease-fade); }
+.st-row-d { display: inline-flex; align-items: center; gap: 4px; color: var(--text-2); }
+.st-row-d .icon { width: 12px; height: 12px; color: var(--text-3); }
+.st-row-none { color: var(--text-3); }
+.st-plan { position: relative; z-index: 1; display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 7px; margin-right: -7px; border: 0; border-radius: var(--r-ctl);
   background: none; color: var(--text-2); font: 500 12.5px/1 var(--font-sans); cursor: pointer; opacity: 0;
   transition: opacity var(--dur-micro) var(--ease-fade), background-color var(--dur-micro) var(--ease-fade), color var(--dur-micro) var(--ease-fade); }
 .st-plan .icon { width: 14px; height: 14px; }
 .st-row:hover .st-plan, .st-row:focus-within .st-plan, .st-plan:focus-visible { opacity: 1; }
+.st-row.has-plan:hover .st-row-u > :not(.st-plan), .st-row.has-plan:focus-within .st-row-u > :not(.st-plan) { opacity: 0; }
 .st-plan:hover { background: var(--tint-2); color: var(--text-1); }
 .st-plan:focus-visible { outline: none; box-shadow: var(--focus); }
-@media (hover: none) { .st-plan { opacity: 1; } }
+@media (hover: none) { .st-plan { opacity: 1; } .st-row.has-plan .st-row-u > :not(.st-plan) { opacity: 0; } }
 .st-row-go { color: var(--text-3); opacity: .5; transition: opacity var(--dur-micro) var(--ease-fade), transform var(--dur-micro) var(--ease-settle); }
 .st-row-go .icon { width: 14px; height: 14px; }
 .st-row:hover .st-row-go { opacity: 1; transform: translateX(2px); }
 .st-empty { margin: 18px 20px; }
 .st-plan-field { margin-top: 16px; max-width: 240px; }
 
-.st-side { position: sticky; top: calc(var(--topbar-h) + 16px); align-self: start; display: flex; flex-direction: column; gap: var(--gap); }
+/* R23 / ST-4: the side column sticks under the top bar while the list scrolls. When it is taller than the viewport
+   (1280×800), --side-h (studio.js, ResizeObserver) lets it scroll with the page until its bottom shows, then hold */
+.st-side { position: sticky; top: min(calc(var(--topbar-h) + 16px), calc(100dvh - var(--side-h, 0px) - 16px)); align-self: start; display: flex; flex-direction: column; gap: var(--gap); }
 .st-side-tile { padding: 18px 18px 14px; }
 .st-side-h { display: flex; align-items: center; margin: 0 0 8px; color: var(--text-3); font: 500 var(--fs-label)/var(--lh-label) var(--font-mono); letter-spacing: var(--tr-label); text-transform: uppercase; }
 .st-side-h:not(:first-child) { margin-top: 16px; }
@@ -392,8 +408,7 @@ html.st-workshop[data-bg=still] #bg { opacity: .2; } /* class set by studio.js o
   .st-list-layout { grid-template-columns: minmax(0, 1fr) 300px; }
   .st-lead { grid-template-columns: minmax(0, 1fr); gap: 18px; }
   .st-lead-side { padding: 16px 0 0; border-left: 0; border-top: 1px solid var(--line); }
-  .st-row, .st-group--oneage .st-row { grid-template-columns: 16px minmax(0, 1fr) auto 104px 16px; }
-  .st-row-u { display: none; }
+  .st-row { --st-cols: 20px 150px minmax(0, 1fr) 88px 64px 16px; }
 }
 @media (max-width: 1100px) {
   .st-desk, .st-list-layout { grid-template-columns: minmax(0, 1fr); }
@@ -402,7 +417,6 @@ html.st-workshop[data-bg=still] #bg { opacity: .2; } /* class set by studio.js o
   .st-insp-body { max-height: none; overflow: visible; }
   .st-sheet-bar { top: 64px; }
 }
-@media (max-height: 800px) { .st-side { position: static; } } /* the side column (≈ 720 px) must fit under the top bar to stick */
 @media (max-width: 760px) {
   .st-sheet { padding: 0 0 20px; margin: 0 -4px; }
   .st-sheet > * { padding-inline: 16px; }
@@ -421,12 +435,17 @@ html.st-workshop[data-bg=still] #bg { opacity: .2; } /* class set by studio.js o
   .st-lead-t { font-size: 24px; line-height: 29px; }
   .st-lead-x { font-size: 17px; }
   .st-group { padding: 16px 14px 8px; }
-  .st-row, .st-group--oneage .st-row { grid-template-columns: 16px minmax(0, 1fr) auto; row-gap: 2px; margin: 0 -6px; padding: 8px 6px; border-radius: 0; }
-  .st-row-plan { grid-column: 2; grid-row: 2; }
-  .st-row-plan:not(:has(.st-k)) { display: none; } /* phone: a date shows when planned; Plan lives in the draft's Date block */
-  .st-row-u, .st-row-go { display: none; }
-  .st-row-line { flex-wrap: wrap; row-gap: 1px; } /* phone: the hook takes its own line under the format */
-  .st-row-h { flex-basis: 100%; }
+  /* phone: icon / format + hook stacked / status; a planned date joins under the hook; Plan lives in the draft's Date block */
+  .st-row { grid-template-columns: 20px minmax(0, 1fr) auto; row-gap: 1px; margin: 0 -6px; padding: 8px 6px; border-radius: 0; }
+  .st-row > .st-glyph, .st-row > .st-sub-mark { grid-row: 1; align-self: center; }
+  .st-row-f { grid-column: 2; grid-row: 1; }
+  .st-row-hk { grid-column: 2 / 4; grid-row: 2; }
+  .st-row-s { grid-column: 3; grid-row: 1; }
+  .st-row--solo .st-row-f { grid-column: 2; }
+  .st-row-u { grid-column: 2 / 4; grid-row: 3; justify-items: start; }
+  .st-row-u:not(:has(.st-row-d)) { display: none; }
+  .st-row-u .st-plan { display: none; }
+  .st-row-go { display: none; }
   .st-list-bar { position: static; padding: 8px; }
   .st-f { height: 36px; }
   .st-filters { flex-wrap: nowrap; padding-right: 16px; -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent); }
@@ -443,3 +462,14 @@ html.st-workshop[data-bg=still] #bg { opacity: .2; } /* class set by studio.js o
   .st-insp { content-visibility: auto; contain-intrinsic-size: auto 900px; } /* below the sheet here: skip it until scrolled to */
   .st-sheet-foot { content-visibility: auto; contain-intrinsic-size: auto 160px; }
 }
+
+/* ST-5: the draft's date control — a formatted value on a button; the native input sits under it, unseen, so
+   showPicker() anchors there. Where showPicker is missing, .is-native reveals the input itself. */
+.st-datepick { position: relative; display: inline-flex; }
+.st-date-btn { min-width: 132px; justify-content: flex-start; gap: 7px; font-variant-numeric: tabular-nums; }
+.st-date-btn .icon { width: 14px; height: 14px; color: var(--text-2); }
+.st-datepick .st-date-native { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; pointer-events: none; }
+.st-datepick.is-native .st-date-btn { display: none; }
+.st-datepick.is-native .st-date-native { position: static; width: 170px; opacity: 1; pointer-events: auto; }
+.st-date-unsaved { color: var(--text-3); font-weight: 450; }
+.st-date-unsaved[hidden] { display: none; }

@@ -295,13 +295,18 @@ export function registerContent(route) {
   });
   route('DELETE', '/api/watchlists/:id', ({ params }) => { run('DELETE FROM watchlists WHERE id = ?', params.id); return { ok: true }; });
 
-  route('GET', '/api/employers', () => loadEmployers().map(e => ({
-    ...e,
-    teams: all('SELECT * FROM watchlists WHERE employer = ? ORDER BY pinned DESC, name', e.name).map(hydrate),
-    // R3 S12 (R14): counted on the corrected company list (longest match wins among siblings), not the raw column
-    story_count: all('SELECT id, companies, updated_at FROM stories WHERE companies LIKE ?', `%"${e.name}"%`).map(hydrate).filter(s => s.companies.includes(e.name)).length,
-    contact_count: get('SELECT COUNT(*) AS n FROM contacts WHERE employer = ?', e.name).n
-  })));
+  route('GET', '/api/employers', () => loadEmployers().map(e => {
+    // R3 S12 (R14): counted on the corrected company list (longest match wins among siblings), not the raw column.
+    // story_ids lets the client list exactly these stories instead of re-matching the raw column.
+    const ids = all('SELECT id, companies, updated_at FROM stories WHERE companies LIKE ? ORDER BY score DESC, id DESC', `%"${e.name}"%`).map(hydrate).filter(s => s.companies.includes(e.name)).map(s => s.id);
+    return {
+      ...e,
+      teams: all('SELECT * FROM watchlists WHERE employer = ? ORDER BY pinned DESC, name', e.name).map(hydrate),
+      story_count: ids.length,
+      story_ids: ids,
+      contact_count: get('SELECT COUNT(*) AS n FROM contacts WHERE employer = ?', e.name).n
+    };
+  }));
   route('POST', '/api/employers', ({ body }) => {
     const r = run('INSERT INTO employers(name, parent, topics, terms, pinned, notes) VALUES(?,?,?,?,?,?)', need(body.name, 'Name required'), body.parent || null, JSON.stringify(body.topics || []), JSON.stringify(body.terms || []), body.pinned ? 1 : 0, body.notes || '');
     return hydrate(get('SELECT * FROM employers WHERE id = ?', Number(r.lastInsertRowid)));

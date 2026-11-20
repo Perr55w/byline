@@ -179,11 +179,26 @@ export function shortTitle(title, { max = 32, min = 20, always = false } = {}) {
   for (let i = 0; i < 4; i++) { const h2 = head.replace(FN_WORD, '').replace(/[\s,;:—–-]+$/, ''); if (h2 === head || h2.length < 8) break; head = h2; }
   return `${head}…`;
 }
-// node label: from the full title (the server's short_title may itself be a mid-phrase cut)
-function labelText(n) {
-  const base = n.short_title && !/…$/.test(n.short_title) ? n.short_title : (n.title || n.short_title || `Story ${n.id}`);
-  return shortTitle(base);
+/**
+ * Node label (round-3 M-5): the text before the first ':' or ' — ' / ' – ' (or ', ' when the phrase before it fits), cut
+ * at a word boundary to at most `max` (28) characters, with an ellipsis after the last whole word when cut. A break
+ * nearer the start than 12 characters ('Study:', 'Hot take:') is a kicker, not the title, and is kept. Never ends on a
+ * function word; never cuts inside a word (a single word longer than `max` is kept whole).
+ */
+export function labelTitle(title, max = 28) {
+  let t = String(title || '').replace(/\s*…$/, '').trim().replace(/^[a-z0-9][\w.-]*\/(?=[\w.-]+(?:\s|$))/i, '');
+  const m = /:\s|\s[—–]\s/.exec(t);
+  if (m && m.index >= 12) t = t.slice(0, m.index).trim();
+  else { const c = /,\s/.exec(t); if (c && c.index >= 12 && c.index <= max) t = t.slice(0, c.index).trim(); }
+  if (t.length <= max) return t;
+  const words = t.split(/\s+/);
+  let head = words[0];
+  for (let i = 1; i < words.length; i++) { const next = `${head} ${words[i]}`; if (next.length > max) break; head = next; }
+  for (let i = 0; i < 4; i++) { const h2 = head.replace(FN_WORD, '').replace(/[\s,;:—–-]+$/, ''); if (h2 === head || h2.length < 8) break; head = h2; }
+  return `${head.replace(/[\s,;:—–-]+$/, '')}…`;
 }
+// node label: from the full title (the server's short_title may itself be a mid-phrase cut)
+function labelText(n) { return labelTitle(n.title || n.short_title || `Story ${n.id}`); }
 /** The full title, wrapped into ≤ 3 lines of ≤ `w` px (the selected node's label: full titles on selection only). */
 function wrapTitle(text, w, measure) {
   const words = String(text || '').split(/\s+/).filter(Boolean), lines = [];
@@ -220,9 +235,7 @@ class MapEngine {
       this.lo.setAttribute('aria-hidden', 'true');
       this.lo.width = this.lo.height = 1; // sized on the first camera motion (no idle backing store at rest)
       this.loCtx = this.lo.getContext('2d');
-      host.append(this.lo);
     }
-    host.append(this.canvas);
     this.ctx = this.canvas.getContext('2d');
     this.cam = { x: 0, y: 0, k: 1 };
     this.fitK = 1;
@@ -244,13 +257,24 @@ class MapEngine {
     // calls one frame after byline:routed, so the tab-in's frames carry no canvas work
     this.armed = !this.held;
 
-    if (!this.mini) this.buildOverlays();
     this.ro = new ResizeObserver((entries) => this.onResize(entries[0].contentRect));
-    this.ro.observe(host);
+    // round-3 M-6: with `lazyDom` the canvases, label layers and size observer join the page only at arm(), after the
+    // tab's swap frame, so the page's first style + layout carries none of them (the stage's box is reserved by CSS)
+    if (!opts.lazyDom) this.attach();
     this.onTheme = () => { this.tok = null; this.qcol = null; this.regions = null; this.regionJob = null; this.requestDraw(); };
     document.addEventListener('byline:theme', this.onTheme);
     if (!this.mini) this.bindInput();
     if (opts.data) this.setData(opts.data);
+  }
+
+  /** Put the canvases and overlays into the host and start observing its size (once). */
+  attach() {
+    if (this.attached || this.destroyed) return;
+    this.attached = true;
+    if (this.lo) this.host.append(this.lo);
+    this.host.append(this.canvas);
+    if (!this.mini) this.buildOverlays();
+    this.ro.observe(this.host);
   }
 
   // -------------------------------------------------------------------- DOM overlays (labels, hover card)
@@ -388,6 +412,8 @@ class MapEngine {
 
   // -------------------------------------------------------------------- regions + isobars (pre-rendered)
   /** Build the regions now (theme switch, the mini map, reduced motion). */
+  /** Run cb once the regions exist, building them in idle slices if they do not yet (never in one long task). */
+  whenRegions(cb) { if (this.regions || !this.N || !this.bounds) { cb(); return; } this.prepareRegions(cb); }
   buildRegions() {
     const job = this.regionJob;
     this.regionJob = null;
@@ -447,9 +473,11 @@ class MapEngine {
       // round-2 M2: a region only for a topic with ≥ 3 stories, drawn round the ones that sit near another of the
       // same topic (near enough that their fields merge into one blob at the outer isobar). No halo ever rings a
       // single story: an outlier, or a topic with fewer than 3 stories, gets no region at all.
+      // round-3 M-5: the grouped core itself must hold ≥ 3 stories; a two-story blob read as nobody's region (its pill
+      // drifted off to unrelated stories), so such a topic is named by a plain label at its centroid instead
       if (c.members.length < 3) continue;
       const core = c.members.filter(i => c.members.some(j => j !== i && Math.hypot(this.X[i] - this.X[j], this.Y[i] - this.Y[j]) < 1.65 * (sigma(i) + sigma(j))));
-      if (core.length < 2) continue;
+      if (core.length < 3) continue;
       const fc = new Float32Array(gw * gh);
       const bb = [gw, gh, 0, 0];
       for (const i of core) splat(fc, i, bb);
@@ -485,12 +513,12 @@ class MapEngine {
       return y0 + Math.max(gy0 - 1, Math.min(ty, fy)) * cell;
     };
     const flood = (start, inside, seen, mark = 1) => {
-      const stack = [start], box = { gx0: gw, gx1: 0, gy0: gh, n: 0 };
+      const stack = [start], box = { gx0: gw, gx1: 0, gy0: gh, gy1: 0, n: 0 };
       seen[start] = mark;
       while (stack.length) {
         const k = stack.pop(), gx = k % gw, gy = (k - gx) / gw;
         box.n++;
-        if (gx < box.gx0) box.gx0 = gx; if (gx > box.gx1) box.gx1 = gx; if (gy < box.gy0) box.gy0 = gy;
+        if (gx < box.gx0) box.gx0 = gx; if (gx > box.gx1) box.gx1 = gx; if (gy < box.gy0) box.gy0 = gy; if (gy > box.gy1) box.gy1 = gy;
         const nb = [gx > 0 ? k - 1 : -1, gx < gw - 1 ? k + 1 : -1, gy > 0 ? k - gw : -1, gy < gh - 1 ? k + gw : -1];
         for (const q of nb) if (q >= 0 && !seen[q] && inside(q)) { seen[q] = mark; stack.push(q); }
       }
@@ -522,6 +550,8 @@ class MapEngine {
       if (pick) {
         lab.tx = x0 + ((pick.gx0 + pick.gx1) / 2) * cell;
         lab.ty = topEdge(own, pick.gx0, pick.gx1, pick.gy0, fc);
+        // round-3 M-5: a second anchor under the territory's foot, for when the top edge is crowded by another region
+        lab.bx = lab.tx; lab.by = y0 + (pick.gy1 + 1) * cell;
       } else {
         const blob = (k) => fc[k] >= LV;
         const tk = cellOf(top), start = blob(tk) ? tk : bi;
@@ -559,6 +589,18 @@ class MapEngine {
     out.img = off;
     out.labels.sort((a, b) => this.clusters[b.ci].count - this.clusters[a.ci].count);
     out.labels = out.labels.slice(0, 12);
+    // round-3 M-5: a topic with ≥ 2 stories but no region gets a plain label anchored at its stories' centroid
+    out.plain = [];
+    const hasRegion = new Set(out.labels.map(l => l.ci));
+    for (let ci = 0; ci < this.clusters.length; ci++) {
+      const c = this.clusters[ci];
+      if (hasRegion.has(ci) || c.topic == null || c.members.length < 2) continue;
+      let x = 0, y = 0;
+      for (const i of c.members) { x += this.X[i]; y += this.Y[i]; }
+      x /= c.members.length; y /= c.members.length;
+      out.plain.push({ ci, x, y, tx: x, ty: y, plain: true });
+    }
+    out.plain.sort((a, b) => this.clusters[b.ci].count - this.clusters[a.ci].count);
     this.regions = out;
   }
 
@@ -720,7 +762,7 @@ class MapEngine {
   /** Cluster centres in canvas px (for background ripples). */
   clusterPoints() {
     if (!this.regions) this.buildRegions();
-    return this.regions.labels.map((l) => {
+    return [...this.regions.labels, ...(this.regions.plain || [])].map((l) => {
       const c = this.clusters[l.ci];
       return { topic: c.topic, heat: +c.heat || 0, x: (l.x - this.cam.x) * this.cam.k + this.w / 2, y: (l.y - this.cam.y) * this.cam.k + this.h / 2 };
     });
@@ -905,6 +947,7 @@ class MapEngine {
   }
   /** round-2 M5: allow the first draw (the cached frame while held, else a full frame). */
   arm() {
+    this.attach();
     if (this.armed || this.destroyed) return;
     this.armed = true;
     if (this.held) this.paintSnap(); else this.requestDraw();
@@ -913,6 +956,7 @@ class MapEngine {
   get fromSnap() { return !!this.snapShown; }
   /** End the hold: full draw (regions, isobars, labels) in the next frame. */
   release() {
+    this.attach();
     if (!this.held || this.destroyed) return;
     this.armed = true;
     // over the cached frame, build the regions in idle slices first so the full draw fits a frame (round-1 M7)
@@ -1209,7 +1253,7 @@ class MapEngine {
       this.labelLayer.style.transform = t; this.topicLayer.style.transform = t;
     } else if (!this.host.classList.contains('labels-off')) this.host.classList.add('labels-off');
     if (this.card && !this.card.hidden) { this.card.hidden = true; this.card.classList.remove('on'); this.hover = -1; }
-    this.hring.classList.remove('on'); this.kring.classList.remove('on');
+    this.hring?.classList.remove('on'); this.kring?.classList.remove('on');
   }
   placeLabels() {
     if (!this.labelPool || !this.N) return;
@@ -1243,43 +1287,65 @@ class MapEngine {
     const clearOf = (q, topic) => !dots.some(o => (this.nodes[o.i].topic ?? null) !== topic && gapTo(q, o.x, o.y, o.r) < 10);
 
     // 1. the top-3 hot regions, always: at the top-centre of their hull, nudged off nodes, forced into view
-    const tl = this.regions ? this.regions.labels : [];
+    // (round-3 M-5: a topic with no region is named by a plain text label at its centroid, after the regions)
+    const tl = this.regions ? [...this.regions.labels, ...(this.regions.plain || [])] : [];
     while (this.topicPool.length < tl.length) { const s = document.createElement('span'); s.className = 'map-topic'; s.innerHTML = '<b></b><i></i>'; this.topicLayer.append(s); this.topicPool.push(s); }
     // round-1 M2: the top-3 read '{topic} · leads {n}' (main-topic stories, the side panel's "Leads n"); others carry no number
     const hot3 = (this.data?.hot_topics || []).slice(0, 3);
     const rank = new Map(hot3.map((h, r) => [h.topic, r + 1]));
     const leads = new Map(hot3.map(h => [h.topic, h.count]));
     const fT = '500 12px Geist, system-ui, sans-serif', fS = '450 12px Geist, system-ui, sans-serif';
-    const H = 22;
     const topics = tl.map((l, j) => ({ l, j, c: this.clusters[l.ci], rank: rank.get(this.clusters[l.ci].topic) || 0 }));
     const placeTopic = ({ l, j, c, rank: rk }, force) => {
       const el = this.topicPool[j];
       const name = c.label || c.topic;
       const n = rk ? leads.get(c.topic) : null;
       const sub = n != null && !phone ? `· leads ${n}` : ''; // a phone stage keeps the names only (room)
-      const w = Math.ceil(this.measure(name, fT) + (sub ? 6 + this.measure(sub, fS) : 0) + 20);
-      if (el.dataset.t !== name || el.dataset.s !== sub) {
-        el.dataset.t = name; el.dataset.s = sub;
-        el.firstChild.textContent = name; el.lastChild.textContent = sub;
-        el.classList.toggle('is-hot', !!rk);
-      }
+      let plain = !!l.plain;
+      const H = plain ? 16 : 22;
+      const tw = this.measure(name, fT) + (sub ? 6 + this.measure(sub, fS) : 0);
+      const w = Math.ceil(tw + (plain ? 6 : 20));
       const ax = (l.tx - this.cam.x) * this.cam.k + this.w / 2 - w / 2, ay = (l.ty - this.cam.y) * this.cam.k + this.h / 2 - H / 2;
-      // nearest clear spot to the anchor (forced labels search up to 130 px out; upward moves are cheaper,
-      // since the hull lies below its top edge), else the other regions give up after a short search
-      let r = null;
-      for (const [dx, dy] of force ? SPIRAL : SPIRAL_NEAR) { const q = { x: ax + dx, y: ay + dy, w, h: H }; if (free(q) && clearOf(q, c.topic ?? null)) { r = q; break; } }
-      if (!r && force) {
+      // nearest clear spot to the anchor (forced labels search up to 130 px out; upward moves are cheaper, since the hull
+      // lies below its top edge), else the other regions give up after a short search. A plain (centroid) label only
+      // looks close by, and keeps 8–10 px clear of other labels so two never stack into one two-line caption
+      const ok = (q) => (plain ? free({ x: q.x - 8, y: q.y - 10, w: q.w + 16, h: q.h + 20 }) && inView(q) : free(q)) && clearOf(q, c.topic ?? null);
+      const near = (x, y) => { for (const [dx, dy] of SPIRAL_NEAR) { const q = { x: x + dx, y: y + dy, w, h: H }; if (ok(q)) return q; } return null; };
+      let r = near(ax, ay);
+      // a crowded top edge: try under the territory's foot before drifting further out
+      // (kept 10 px off other names, so two regions sharing a foot never stack their pills)
+      if (!r && !plain && l.by != null) {
+        const fx = (l.bx - this.cam.x) * this.cam.k + this.w / 2 - w / 2, fy = (l.by - this.cam.y) * this.cam.k + this.h / 2 + 4;
+        for (const [dx, dy] of SPIRAL_NEAR) { const q = { x: fx + dx, y: fy + dy, w, h: H }; if (ok(q) && !placed.some(p => hitR({ x: q.x - 10, y: q.y - 10, w: q.w + 20, h: q.h + 20 }, p))) { r = q; break; } }
+      }
+      if (!r && force && !plain) {
+        for (const [dx, dy] of SPIRAL) { const q = { x: ax + dx, y: ay + dy, w, h: H }; if (ok(q)) { r = q; break; } }
+        // round-3 M-5: a name pushed well off its region's edge no longer marks the region; it stays as plain text
+        // (the topic's name, no pill claiming the ground it sits on)
+        if (r && Math.hypot(r.x - ax, r.y - ay) > 48) { plain = true; const pw = Math.ceil(tw + 6); r = { x: r.x + (w - pw) / 2, y: r.y + 3, w: pw, h: 16 }; }
+      }
+      if (!r && force && !plain) {
         // nowhere clear: keep it at its anchor (inside the stage), stepping past other forced labels only
         const q = { x: clamp(ax, ins.l + 1, this.w - ins.r - w - 1), y: clamp(ay, ins.t + 1, this.h - ins.b - H - 1), w, h: H };
         for (let t = 0; t < 4 && placed.some(p => hitR(q, p)); t++) q.y = clamp(q.y + (H + 4) * (q.y > this.h / 2 ? -1 : 1), ins.t + 1, this.h - ins.b - H - 1);
         r = q;
+        // round-3 M-5: only the hottest topic keeps a pill where nothing is clear; the others, stepped aside, are plain
+        // text (two pills stacked off their regions read as a menu, not as names of ground)
+        if (rk > 1) { plain = true; const pw = Math.ceil(tw + 6); r = { x: r.x + (w - pw) / 2, y: r.y + 3, w: pw, h: 16 }; }
+      }
+      if (el.dataset.t !== name || el.dataset.s !== sub || el.dataset.p !== String(plain)) {
+        el.dataset.t = name; el.dataset.s = sub; el.dataset.p = String(plain);
+        el.firstChild.textContent = name; el.lastChild.textContent = sub;
+        el.classList.toggle('is-hot', !!rk);
+        el.classList.toggle('is-plain', plain);
       }
       const faded = this.topicFade?.(c) ?? false;
       if (r) { placed.push(r); el.style.transform = `translate3d(${Math.round(r.x)}px, ${Math.round(r.y)}px, 0)`; }
       el.classList.toggle('on', !!r && !faded);
       el.classList.toggle('dim', !!r && faded);
     };
-    topics.filter(t => t.rank).sort((a, b) => a.rank - b.rank).forEach(t => placeTopic(t, true));
+    topics.filter(t => t.rank && !t.l.plain).sort((a, b) => a.rank - b.rank).forEach(t => placeTopic(t, true));
+    topics.filter(t => t.rank && t.l.plain).sort((a, b) => a.rank - b.rank).forEach(t => placeTopic(t, true));
 
     // 2. node labels (≤ 20), greedy over 8 spots 6 px off the disc (round-2 M3); a label that would cover another
     // label, a region name or a disc is dropped, and so is one that would sit more than 24 px from its node. Labels
@@ -1321,8 +1387,10 @@ class MapEngine {
     }
     for (let j = used; j < this.labelPool.length; j++) this.labelPool[j].classList.remove('on');
 
-    // 3. the other regions, where room is left
-    topics.filter(t => !t.rank).forEach(t => placeTopic(t, false));
+    // 3. the other regions, where room is left (a topic with neither a region nor a top-3 rank stays unnamed: its
+    // stories carry their own labels, and a floating topic name between two of them read as one of theirs)
+    topics.filter(t => !t.rank && !t.l.plain).forEach(t => placeTopic(t, false));
+    for (const t of topics) if (!t.rank && t.l.plain) this.topicPool[t.j].classList.remove('on', 'dim');
     for (let j = tl.length; j < this.topicPool.length; j++) this.topicPool[j].classList.remove('on', 'dim');
   }
 

@@ -31,7 +31,6 @@ const fmt = (iso, o) => {
 };
 const day = (iso) => fmt(iso, { day: 'numeric', month: 'short', year: 'numeric' });
 const dayShort = (iso) => fmt(iso, { day: 'numeric', month: 'short' });
-const month = (iso) => fmt(iso, { month: 'short', year: 'numeric' });
 const yearOf = (iso) => fmt(iso, { year: 'numeric' });
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 const ts = (iso) => Date.parse(iso || '') || 0;
@@ -52,11 +51,6 @@ const RANGES = [['7d', '7 days', 7], ['30d', '30 days', 30], ['all', 'All', null
 // Start loading the stylesheet as soon as the module is imported (the shell idle-imports every view), so
 // arriving on the Map never restyles the whole document mid-transition. All rules are .map-* scoped.
 useStyle('/css/v4/map.css');
-// document scroll offset, kept from scroll events (window.scrollY forces a layout when read inside a render task;
-// the shell imports this module while idle, so the first read here is free)
-let SY = 0;
-try { SY = window.scrollY; addEventListener('scroll', () => { SY = window.scrollY; }, { passive: true }); } catch (e) { /* no window */ }
-
 /** Text with number highlights ([start, end) UTF-16 pairs from the server), escaped slice by slice. */
 function marked(text, marks) {
   const t = String(text || '');
@@ -67,6 +61,13 @@ function marked(text, marks) {
 }
 
 // ---------------------------------------------------------------- F §2 Map headline + one-liner
+const WEEK = 7 * 864e5;
+/** Stories updated in the last 7 days: the same window and field (`updated_at`) as the Feed's "N updated in the
+ *  last 7 days", so the two tabs never disagree (round-3 M-4). null when the payload carries no update times. */
+function updatedThisWeek(nodes, now = Date.now()) {
+  if (!nodes.some(n => n.updated_at)) return null;
+  return nodes.filter(n => n.updated_at && now - ts(n.updated_at) <= WEEK).length;
+}
 function headline(d) {
   const nodes = d.nodes || [], N = nodes.length, E = (d.edges || []).length;
   if (N < 5) return { h: html`Too few stories to map yet (${N}).`, l: html`The map fills in as runs collect more.` };
@@ -74,17 +75,21 @@ function headline(d) {
   const elig = tc.filter(t => (t.weight ?? 1) > 1);
   const top = (elig.length ? elig : tc).slice().sort((a, b) => b.count * (b.weight ?? 1) - a.count * (a.weight ?? 1))[0];
   const h = top ? html`${top.topic} links ${top.count} of ${N} stories.` : html`${N} stories, ${plural(E, 'connection')}.`;
-  const lo = d.range?.first_seen_min, hi = d.range?.first_seen_max;
-  const span = lo && hi ? html` from ${month(lo)} to ${month(hi)}` : '';
+  // round-3 M-4: the update window, not a first-seen span (old release notes reach back years and contradict the Feed)
+  const wk = updatedThisWeek(nodes);
+  const lead = wk == null ? html`<b>${N}</b> stories`
+    : wk === N ? html`<b>${N}</b> stories updated this week`
+    : wk === 0 ? html`<b>${N}</b> stories, none updated this week`
+    : html`<b>${N}</b> stories, <b>${wk}</b> updated this week`;
   const br = d.bridge;
   const bn = br ? nodes.find(n => String(n.id) === String(br.id)) : null;
   const types = br ? bridgeTypes(d, br.id) : [];
   // the bridge's short title (before its first ':', ' — ' or ','), and the link types it carries, by count
   const bt = shortTitle(bn?.title || br?.short_title || '', { max: 60, always: true });
   const bridge = br && E && br.degree && bt
-    ? html` Biggest bridge: <b>${bt}</b> connects <b>${br.degree}</b> stories through shared ${types.length ? typesPhrase(types) : (TYPE[br.via] || 'features')}.`
+    ? html` The biggest bridge, <b>${bt}</b>, links <b>${br.degree}</b> stories through shared ${types.length ? typesPhrase(types) : (TYPE[br.via] || 'features')}.`
     : '';
-  const l = E ? html`<b>${N}</b> stories${span}, <b>${E}</b> connections.${bridge}` : html`<b>${N}</b> stories${span}, no connections yet.`;
+  const l = E ? html`${lead}, <b>${E}</b> connections.${bridge}` : html`${lead}, no connections yet.`;
   return { h, l };
 }
 
@@ -214,13 +219,13 @@ class MapView {
       onCamera: () => this.heatStale(),
       onMotion: () => bg.hold(240), // the field rests while the camera moves (GPU headroom for the map)
       cardHTML: (n) => this.cardHTML(n),
-      defer: true // full draw waits for an idle callback after byline:routed (round-1 M7); a cached frame shows first
+      defer: true, // full draw waits for an idle callback after byline:routed (round-1 M7); a cached frame shows first
+      lazyDom: true // round-3 M-6: canvases + overlays join the stage at arm(), after the swap frame
     });
     this.eng.topicFade = (c) => this.topics.size > 0 && !this.topics.has(c.topic);
     if (window.__byline) window.__byline.map = this.eng; // test/debug hook (stats, camera)
-    this.paintSide();
-    this.measureTop();
-    this.watchSideEnd();
+    // round-3 M-6: the side panel's content is painted after the swap frame (entered), with the canvas; its items fade
+    // in from 200 ms anyway, so the page's first style + layout is the head, the toolbar and two empty tiles
     if (this.list) this.paintList();
     this.wire();
     this.applyFilter(true);
@@ -242,6 +247,11 @@ class MapView {
     const ric = window.requestIdleCallback || ((f) => setTimeout(f, 60));
     requestAnimationFrame(() => setTimeout(() => {
       if (!this.alive) return;
+      if (!this.sidePainted) {
+        this.paintSide();
+        this.watchSideEnd();
+        if (!reduced()) enterItems(this.side.querySelectorAll('.map-sec-head, .map-hot-list > li, .map-detail > *'), { delay: 200, stagger: 60, y: 6, duration: 520 });
+      }
       this.eng.arm();
       ric(() => {
         if (!this.alive) return;
@@ -251,29 +261,11 @@ class MapView {
         ric(() => { if (this.alive) this.paintTwin(); }, { timeout: 600 });
       }, { timeout: 300 });
     }, 0));
-    this.onResizeTop = () => { clearTimeout(this.topT); this.topT = setTimeout(() => this.measureTop(), 200); };
-    addEventListener('resize', this.onResizeTop, { passive: true });
-    const items = this.side.querySelectorAll('.map-hot-list > li, .map-detail > *');
-    enterItems(items, { delay: 260, stagger: 60, y: 6, duration: 520 });
     setTimeout(() => this.syncHeat(), reduced() ? 0 : 900);
     this.onScroll = () => this.heatStale();
     addEventListener('scroll', this.onScroll, { passive: true });
   }
 
-  /** round-1 M4: the stage and side panel run to 12 px above the viewport's bottom. The tile's top is read from an
-   *  IntersectionObserver entry (no forced layout); at mount the page is still pending, untransformed. */
-  measureTop() {
-    if (typeof IntersectionObserver !== 'function') return;
-    this.topIO?.disconnect();
-    const io = this.topIO = new IntersectionObserver((entries) => {
-      io.disconnect();
-      if (!this.alive) return;
-      const e = entries[entries.length - 1];
-      const top = Math.round(e.boundingClientRect.top + SY);
-      if (top > 0 && top !== this.tileTop) { this.tileTop = top; this.page.style.setProperty('--map-top', `${top}px`); }
-    });
-    io.observe(this.stage);
-  }
   /** A bottom fade on the side panel while more of it is below the fold (a sentinel, observed in the panel). */
   watchSideEnd() {
     if (typeof IntersectionObserver !== 'function') return;
@@ -285,7 +277,7 @@ class MapView {
     this.sideIO = new IntersectionObserver((entries) => {
       const e = entries[entries.length - 1];
       this.side.classList.toggle('has-more', !e.isIntersecting);
-    }, { root: this.side, threshold: 0 });
+    }, { root: this.side, threshold: 0, rootMargin: '0px 0px 4px 0px' });
     this.sideIO.observe(end);
   }
 
@@ -381,12 +373,13 @@ class MapView {
       </button></li>`)}</ol>`;
   }
   paintSide({ animate = false } = {}) {
+    this.sidePainted = true;
     const d = this.data;
     const n = this.sel != null ? this.eng.node(this.sel) : null;
     const detail = n ? this.storyHTML(n) : this.bridgeHTML();
     const hot = html`
       <section class="map-sec map-hot${n ? ' map-hot--after' : ''}" aria-labelledby="map-hot-h">
-        <div class="map-sec-head"><h2 class="map-h2" id="map-hot-h">Hottest topics</h2><span class="section-meta" title="Ranked by heat: the scores of each topic's stories updated in the last 7 days">ranked by this week’s scores</span></div>
+        <div class="map-sec-head map-sec-head--stack"><h2 class="map-h2" id="map-hot-h">Hottest topics</h2><p class="map-sec-cap" title="Ranked by heat: the scores of each topic's stories updated in the last 7 days">ranked by this week’s scores</p></div>
         ${this.hotHTML()}
       </section>`;
     // the selection leads when there is one; the top-3 hot topics lead otherwise
@@ -406,8 +399,10 @@ class MapView {
     return html`
       <section class="map-sec map-bridge" aria-labelledby="map-bridge-h">
         <p class="eyebrow" id="map-bridge-h">Biggest bridge</p>
-        <div class="map-bridge-row">${scoreChip(bn.score, this.th)}<h3 class="map-story-title" title="${bn.title}">${shortTitle(bn.title, { max: 60, always: true })}${demoFlag(bn.is_demo)}</h3></div>
-        <p class="map-bridge-why">Connects <b>${br.degree}</b> stories through shared ${types.length ? typesPhrase(types) : (TYPE[br.via] || 'features')}.</p>
+        <div class="map-bridge-row">${scoreChip(bn.score, this.th)}<div class="map-bridge-body">
+          <h3 class="map-story-title" title="${bn.title}">${shortTitle(bn.title, { max: 60, always: true })}${demoFlag(bn.is_demo)}</h3>
+          <p class="map-bridge-meta" title="${`Shared ${types.length ? typesPhrase(types) : (TYPE[br.via] || 'features')}`}">links <b>${br.degree}</b> stories</p>
+        </div></div>
         <button type="button" class="btn btn--secondary btn--sm" data-select="${bn.id}">Select on map ${icon('arrow-right')}</button>
       </section>
       ${hint}`;
@@ -653,6 +648,9 @@ class MapView {
   }
   syncHeat() {
     if (!this.alive || this.list || document.hidden) return;
+    // round-3 M-6: the cluster centres come from the regions; at phone 4× they may still be building in idle slices
+    // 900 ms in, and building them here in one go was a 25–43 ms task
+    if (!this.eng.regions) { this.eng.whenRegions(() => { if (this.alive) this.syncHeatSoon(); }); return; }
     const r = this.stage.getBoundingClientRect();
     const phone = matchMedia('(max-width: 760px)').matches;
     const rail = phone ? null : document.querySelector('.rail')?.getBoundingClientRect();
@@ -682,9 +680,7 @@ class MapView {
     this.alive = false;
     document.removeEventListener('byline:routed', this.onRouted);
     if (this.onScroll) removeEventListener('scroll', this.onScroll);
-    if (this.onResizeTop) removeEventListener('resize', this.onResizeTop);
-    clearTimeout(this.topT);
-    this.topIO?.disconnect(); this.sideIO?.disconnect();
+    this.sideIO?.disconnect();
     if (this.staleGo) document.removeEventListener('pointermove', this.staleGo);
     clearTimeout(this.heatT);
     this.eng.destroy();

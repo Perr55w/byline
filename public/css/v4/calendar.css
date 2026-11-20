@@ -69,6 +69,8 @@
 .cal-open { display: flex; align-items: center; height: 22px; padding: 0 8px; border-radius: var(--r-tag); border: 1px dashed var(--line-3); color: var(--text-3); font: 500 11px/1 var(--font-sans);
   transition: border-color var(--dur-micro) var(--ease-fade), color var(--dur-micro) var(--ease-fade); }
 .cal-cell:hover .cal-open, .cal-cell.is-target .cal-open, .cal.is-dragging .cal-cell:hover .cal-open { border-color: var(--accent-line); color: var(--accent-text); }
+/* CA-2: a past posting day with no post says so in the cell, muted (no border, no colour: a fact, not an alarm) */
+.cal-missed { align-self: flex-start; display: inline-flex; align-items: center; height: 18px; padding: 0 2px; color: var(--text-3); font: 450 11px/1 var(--font-sans); letter-spacing: 0.01em; }
 .cal-news { grid-column: 2; justify-self: end; align-self: start; display: flex; flex-direction: column; align-items: flex-end; gap: 3px; min-width: 0; padding-top: 2px; color: var(--text-3); font: 450 11px/12px var(--font-sans); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .cal-dots { display: flex; gap: 2px; }
 .cal-dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--q, var(--line-3)); }
@@ -105,11 +107,13 @@
 .cal-chip[data-st=published] .cal-glyph { color: var(--text-1); }
 .cal-chip--out { border-style: solid; border-color: var(--line); background: transparent; color: var(--text-2); cursor: pointer; padding-left: 4px; padding-right: 3px; gap: 3px; letter-spacing: -0.005em; }
 .cal-chip--out .cal-glyph { width: 11px; height: 11px; }
-.cal-chip--out .cal-chip-t { text-overflow: clip; }
+.cal-cell .cal-chip--out .cal-chip-t { flex: 0 1 auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } /* CA-4: one line in a month cell; the ×N sits outside the ellipsis */
 .cal-chip--out::before { display: none; }
-.cal-x { margin-left: 1px; white-space: nowrap; color: var(--text-3); font: 500 11px/1 var(--font-sans); font-variant-numeric: tabular-nums; }
+.cal-x { flex: none; margin-left: 1px; white-space: nowrap; color: var(--text-3); font: 500 11px/1 var(--font-sans); font-variant-numeric: tabular-nums; }
 .cal-out-t .cal-x { font-size: 12px; }
-.cal-cell .cal-chip--out.cal-chip--wrap .cal-chip-t { -webkit-line-clamp: 3; } /* "Test Alumna ×2" keeps its count */
+.cal-cell .cal-chip--out.cal-chip--wrap { height: 22px; align-items: center; padding-top: 0; padding-bottom: 0; }
+.cal-cell .cal-chip--out.cal-chip--wrap .cal-chip-t { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; -webkit-line-clamp: none; }
+.cal-cell .cal-chip--out.cal-chip--wrap .cal-glyph { margin-top: 0; }
 .cal-time { color: var(--text-2); font: 500 11px/1 var(--font-mono); font-variant-numeric: tabular-nums; }
 .cal-glyph { flex: none; width: 12px; height: 12px; color: var(--text-2); }
 .cal-more { align-self: flex-start; height: 18px; padding: 0 4px; margin-left: 2px; border: 0; border-radius: var(--r-tag); background: none; color: var(--text-2); font: 500 11.5px/18px var(--font-sans); cursor: pointer; }
@@ -184,6 +188,11 @@
 .cal-key .k--bar { width: 3px; height: 12px; border: 0; border-radius: 2px; background: var(--q-4); }
 .cal-key .k--open { width: 22px; border-style: dashed; border-color: var(--line-3); background: transparent; }
 .cal-key .k--news { width: 3px; height: 12px; border: 0; border-radius: 2px; background: var(--text-3); }
+/* CA-2: the story dots, drawn exactly like the cells' (filled at or above the bar, hollow below) */
+.cal-key .k--dot { width: 6px; height: 6px; border: 0; border-radius: 50%; background: var(--q); }
+.cal-key .k--dot.is-below { background: transparent; box-shadow: inset 0 0 0 1.25px var(--q); }
+.cal-key > .cal-key-news { gap: 5px; }
+.cal-key-news .k--dot.is-below { margin-left: 2px; }
 .cal-key-open { margin-left: auto; }
 .cal-ics { color: var(--text-2); }
 .cal-ics .icon { width: 14px; height: 14px; }
@@ -211,6 +220,7 @@
 .cal-pick-m { color: var(--text-2); font: 450 12px/16px var(--font-sans); }
 .cal-pick-main.is-grouped .cal-pick-m { color: var(--text-1); font: 500 13px/18px var(--font-sans); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } /* one line (CS9) */
 .cal-pick-h { color: var(--text-2); font: 450 12px/16px var(--font-sans); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cal-pick-h.is-quiet { color: var(--text-3); }
 .cal-dup { flex: none; display: inline-flex; align-items: center; height: 20px; padding: 0 6px; border: 0; border-radius: var(--r-tag); background: var(--tint-2); color: var(--text-2);
   font: 500 12px/1 var(--font-sans); font-variant-numeric: tabular-nums; cursor: pointer; transition: background-color var(--dur-micro) var(--ease-fade), color var(--dur-micro) var(--ease-fade); }
 .cal-dup:hover { color: var(--text-1); box-shadow: inset 0 0 0 1px var(--line-2); }
@@ -241,7 +251,6 @@
 @media (hover: hover) and (min-width: 761px) {
   .cal-tray .cal-item-acts { opacity: 0; transition: opacity var(--dur-micro) var(--ease-fade); }
   .cal-tray .cal-item:hover .cal-item-acts, .cal-tray .cal-item:focus-within .cal-item-acts { opacity: 1; }
-}
 }
 .cal-ilink { display: inline-grid; place-items: center; width: 28px; height: 28px; border-radius: var(--r-ctl); text-decoration: none; transition: background-color var(--dur-micro) var(--ease-fade), color var(--dur-micro) var(--ease-fade); }
 .cal-ilink:hover { background: var(--tint-2); }
@@ -347,7 +356,15 @@
   .cal-week { min-width: 760px; height: auto; }
   .cal-lane--posts { min-height: 200px; }
   .cal-side { padding: 14px 14px 16px; content-visibility: auto; contain-intrinsic-size: auto 1400px; }
-  .cal-item-acts .btn--icon, .cal-ilink, .cal-tray .cal-item-acts .btn--icon, .cal-tray .cal-ilink { width: 38px; height: 40px; }
+  .cal-item-acts .btn--icon, .cal-ilink { width: 38px; height: 40px; }
+  /* CA-1: a tray row is the format + hook at full width, then one right-aligned line: tags, Schedule, Open (32 px) */
+  .cal-tray .cal-item { grid-template-columns: 3px minmax(0, 1fr) auto; grid-template-areas: "bar pick pick" "bar tags acts"; align-items: center; column-gap: 8px; padding-bottom: 6px; }
+  .cal-tray .cal-group .cal-item { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "pick pick" "tags acts"; }
+  .cal-tray .cal-group .cal-item--sub { grid-template-columns: minmax(0, 1fr) auto auto; grid-template-areas: "pick tags acts"; padding-bottom: 4px; }
+  .cal-tray .cal-item-tags { padding-top: 0; }
+  .cal-tray .cal-item-acts { display: flex; align-items: center; gap: 8px; }
+  .cal-tray .cal-item-acts .btn--icon, .cal-tray .cal-ilink { display: inline-grid; place-items: center; width: 32px; height: 32px; padding: 0; }
+  .cal-tray .cal-pick { min-height: 0; }
   .cal-cell .cal-x { display: none; }
   .cal-pick { min-height: 44px; }
   .cal-tray-list { max-height: none; overflow: visible; margin-right: 0; padding-right: 0; }
@@ -356,4 +373,8 @@
 @media (prefers-reduced-motion: reduce) { .cal-item, .cal-chip, .cal-cell { transition: none; } }
 
 /* status/demo tags: --warn text is 3.1–3.6:1 on its soft fill in Proof; darken toward ink locally (shared request filed) */
-@media (max-width: 1359px) { .cal-news-w { display: none; } .cal-key > .cal-key-open { display: none; } }
+@media (max-width: 1359px) { .cal-news-w { display: none; } }
+/* the open-slot chip names itself ("open slot"): its key entry only joins when the key has room for one line */
+@media (max-width: 1599px) { .cal-key > .cal-key-open { display: none; } }
+/* the story-dot key explains the month cells only (the week view shows scores, not dots) */
+.cal-main:has(.cal-body.is-week) .cal-key-news { display: none; }

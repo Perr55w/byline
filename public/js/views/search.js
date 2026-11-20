@@ -139,7 +139,7 @@ function headline(S) {
   const scope = f.q ? `“${f.q}”` : filterNames.join(' and ');
   return {
     h: html`${pl(total, 'result')} ${f.q ? 'for' : 'in'} ${scope}.`,
-    l: html`${joinList(parts)}.${best ? html` Best match: <b>${best.short_title || best.title}</b> (${Math.round(best.score)}).` : ''}${filterNames.length && f.q ? html` Filtered by ${filterNames.join(', ')}.` : ''}`
+    l: html`${joinList(parts)}.${best ? html` Best match: <b>${best.short_title || best.title}</b> (score ${Math.round(best.score)}).` : ''}${filterNames.length && f.q ? html` Filtered by ${filterNames.join(', ')}.` : ''}`
   };
 }
 function joinList(parts) {
@@ -181,11 +181,23 @@ function quickChips(S) {
 }
 
 // ------------------------------------------------------------------ rows (F §4 anatomy)
-/** SS5: a story's score shown on a claim or draft row: the shared ramp chip, labelled "story 59" (title "Story score 59"). */
+/** SR-1 (R22): a story's score on a claim or draft row is the plain shared chip with the tooltip "Story score N".
+ *  It is never labelled "story N" (that reads as a story ID, and #/story/N is a different story). */
 function storyScore(score, T) {
   const n = Math.round(Number(score) || 0);
-  return raw(String(scoreChip(score, T)).replace(/title="[^"]*"/, `title="Story score ${n}"`).replace(/<span class="sr-only">Score <\/span>\d+/, `<span class="sr-story-l">story</span> ${n}`));
+  return raw(String(scoreChip(score, T)).replace(/title="[^"]*"/, `title="Story score ${n}"`).replace(/<span class="sr-only">Score <\/span>/, '<span class="sr-only">Story score </span>'));
 }
+/** The chip followed by the story's title: a link when the row itself is not one (claims link the whole row to the story). */
+function storyRef(storyId, score, title, S, { link = true } = {}) {
+  if (storyId == null && score == null) return '';
+  const chip = score != null ? html`<span class="sr-mini">${storyScore(score, S.T)}</span>` : '';
+  const t = title || S.storyTitle.get(Number(storyId)) || '';
+  if (!t) return link && storyId != null ? html`<a class="sr-slink sr-slink--chip" href="#/story/${storyId}" title="Open the story${score != null ? ` (story score ${Math.round(score)})` : ''}">${chip}</a>` : chip;
+  return html`<span class="sr-sref">${chip}${link && storyId != null ? html`<a class="sr-slink" href="#/story/${storyId}">${t}</a>` : html`<b class="sr-stitle">${t}</b>`}</span>`;
+}
+/** S13: a finding that is missing or only repeats the title is no dek. */
+const norm = (t) => String(t || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+const realFinding = (s) => (s.finding && norm(s.finding) !== norm(s.title) && norm(s.finding) !== norm(s.short_title)) ? s.finding : '';
 /** SS5: the story's topics through the shared helper: blue lead pill only above the bar, neutral below. */
 function storyTopics(s, T) {
   const list = [s.main_topic, ...(s.topics || []).filter(t => t !== s.main_topic)].filter(Boolean);
@@ -195,7 +207,7 @@ function storyRow(s, S) {
   const q = S.f.q;
   const inTitle = q && s.title.toLowerCase().includes(q.toLowerCase());
   const inSummary = q && !inTitle && (s.summary || '').toLowerCase().includes(q.toLowerCase());
-  const snip = inSummary ? hl(windowAround(s.summary, q), q) : hl(s.finding || '', q, s.finding_marks);
+  const snip = inSummary ? hl(windowAround(s.summary, q), q) : realFinding(s) ? hl(s.finding, q, s.finding_marks) : '';
   const chip = String(scoreChip(s.score, S.T)).replace('<span class="score-chip"', '<span class="score-chip" data-shared="ring"');
   return html`<a class="sr-item sr-story" href="#/story/${s.id}" data-sr-item data-dossier-src data-story-id="${s.id}">
     <span class="sr-lead">${raw(chip)}</span>
@@ -213,19 +225,20 @@ function claimRow(c, S) {
     <span class="sr-lead"><span class="sr-glyph" aria-hidden="true">“</span></span>
     <span class="sr-main">
       <span class="sr-claim-text">${hl(text, q, c.text_clean ? c.marks : [])}</span>
-      <span class="sr-meta"><span class="mono">${c.domain}</span><span>${EV[c.evidence_kind] || c.evidence_kind}</span>${c.story_id ? html`<span class="sr-from">from <b>${c.story_short_title || c.story_title}</b></span>${c.story_score != null ? html`<span class="sr-mini">${storyScore(c.story_score, S.T)}</span>` : ''}` : ''}</span>
+      <span class="sr-meta"><span class="mono">${c.domain}</span><span>${EV[c.evidence_kind] || c.evidence_kind}</span>${c.story_id ? storyRef(c.story_id, c.story_score, c.story_short_title || c.story_title, S, { link: false }) : ''}</span>
     </span>
   </a>`;
 }
+/** One draft: the title opens it (and stretches over the row); the story chip + title opens the story. */
 function draftRow(d, S) {
   const q = S.f.q;
-  return html`<a class="sr-item sr-draft" href="#/draft/${d.id}" data-sr-item>
+  return html`<div class="sr-item sr-draft sr-draft1">
     <span class="sr-lead"><span class="sr-ico">${icon('studio')}</span></span>
     <span class="sr-main">
-      <span class="sr-title sr-title--sm">${hl(d.title || 'Untitled draft', q)}</span>
-      <span class="sr-meta"><span>${channelLabel(d.channel, d.format)}</span>${statusTag(d.status)}<span>edited ${timeAgo(d.updated_at)}</span>${d.planned_date ? html`<span>planned ${fmtLongDay(d.planned_date)}</span>` : ''}${d.story_score != null ? html`<span class="sr-mini">${storyScore(d.story_score, S.T)}</span>` : ''}</span>
+      <a class="sr-title sr-title--sm sr-dlink" href="#/draft/${d.id}" data-sr-item>${hl(d.title || 'Untitled draft', q)}</a>
+      <span class="sr-meta"><span>${channelLabel(d.channel, d.format)}</span>${statusTag(d.status)}<span>edited ${timeAgo(d.updated_at)}</span>${d.planned_date ? html`<span>planned ${fmtLongDay(d.planned_date)}</span>` : ''}${d.story_id != null || d.story_score != null ? storyRef(d.story_id, d.story_score, '', S) : ''}</span>
     </span>
-  </a>`;
+  </div>`;
 }
 /** Q1: drafts of one story (same story, or the same title when unlinked), newest edit first; groups by newest edit. */
 function groupDrafts(list) {
@@ -262,7 +275,7 @@ function draftGroupRow(ds, S) {
     <span class="sr-main">
       <a class="sr-title sr-title--sm sr-dlink" href="#/draft/${top.id}" data-sr-item title="Open the newest draft (${channelLabel(top.channel, top.format)})">${hl(top.title || 'Untitled draft', q)}</a>
       <span class="sr-chans" aria-label="${ds.length} drafts of this story, by channel">${byChannel(ds).map(c => html`<a class="sr-chan${c.review ? ' is-review' : ''}" href="#/draft/${c.top.id}" title="${c.label}: ${plural(c.n, 'draft')}${c.review ? `, ${c.review} in review` : ''} · newest edited ${timeAgo(c.top.updated_at)}">${c.label}${c.n > 1 ? html`<span class="sr-chan-n">×${c.n}</span>` : ''}${c.review ? html`<span class="sr-chan-st">in review</span>` : ''}</a>`)}</span>
-      <span class="sr-meta"><span><b class="sr-strong">${ds.length}</b> drafts · ${stLine}</span><span>newest edit ${timeAgo(top.updated_at)}</span>${top.story_score != null ? html`<span class="sr-mini">${storyScore(top.story_score, S.T)}</span>` : ''}</span>
+      <span class="sr-meta"><span><b class="sr-strong">${ds.length}</b> drafts · ${stLine}</span><span>newest edit ${timeAgo(top.updated_at)}</span>${top.story_id != null || top.story_score != null ? storyRef(top.story_id, top.story_score, '', S) : ''}</span>
     </span>
   </div>`;
 }
@@ -281,16 +294,29 @@ function noteRow(n, S) {
   const inner = html`<span class="sr-lead"><span class="sr-ico">${icon('pen')}</span></span>
     <span class="sr-main">
       <span class="sr-snip sr-snip--ink">${hl(windowAround(n.text, q, 110), q)}</span>
-      <span class="sr-meta">${n.count > 1 ? html`<span class="sr-times" title="${n.count} identical notes">×${n.count}</span>` : ''}<span class="tag tag--neutral" title="Notes are private and never appear in exports">Private</span><span>${n.kind || 'note'}</span>${n.draft_title ? html`<span class="sr-from">on <b>${n.draft_title}</b></span>` : ''}<span>${timeAgo(n.created_at)}</span></span>
+      <span class="sr-meta">${n.count > 1 ? html`<span class="sr-times" title="${n.count} identical notes, collapsed into one row">${n.count} copies</span>` : ''}<span class="tag tag--neutral" title="Notes are private and never appear in exports">Private</span><span>${n.kind || 'note'}</span>${n.draft_title ? html`<span class="sr-from">on <b>${n.draft_title}</b></span>` : ''}<span>${timeAgo(n.created_at)}</span></span>
     </span>`;
   return href ? html`<a class="sr-item sr-note" href="${href}" data-sr-item>${inner}</a>` : html`<div class="sr-item sr-note" tabindex="-1" data-sr-item>${inner}</div>`;
 }
+/** SR-3: contacts that share a name (People's duplicate rule) collapse into one row. */
+const stripDemo = (n) => String(n || '').replace(/^\s*DEMO\s*[·:-]\s*/i, '').replace(/\s*\((demo|fictional)\)/ig, '').trim();
+function groupContacts(list) {
+  const by = new Map();
+  for (const c of list) {
+    const k = stripDemo(c.name).toLowerCase().replace(/\s+/g, ' ') || `#${c.id}`;
+    if (by.has(k)) by.get(k).dups.push(c); else by.set(k, { ...c, dups: [c] });
+  }
+  return [...by.values()];
+}
 function contactRow(c, S) {
   const q = S.f.q;
-  return html`<a class="sr-item sr-contact" href="#/person/${c.id}" data-sr-item>
+  const n = c.dups?.length || 1;
+  const dup = n > 1;
+  // a duplicate group opens People, where the duplicate strip links each record
+  return html`<a class="sr-item sr-contact" href="${dup ? '#/people' : `#/person/${c.id}`}" data-sr-item${dup ? raw(` title="${n} records share this name. Open People to compare and keep one."`) : ''}>
     <span class="sr-lead"><span class="sr-avatar" aria-hidden="true">${(c.name || '?').replace(/\(.*?\)/g, '').trim().split(/\s+/).map(w => w[0]).slice(0, 2).join('').toUpperCase()}</span></span>
     <span class="sr-main">
-      <span class="sr-title sr-title--sm">${hl(c.name, q)}</span>
+      <span class="sr-title sr-title--sm">${hl(c.name, q)}${dup ? html` <span class="sr-dupn">×${n}</span><span class="sr-dupl"> · possible duplicate</span>` : ''}</span>
       <span class="sr-snip">${hl([c.role, c.org || c.employer, c.team].filter(Boolean).join(' · '), q)}</span>
       <span class="sr-meta"><span class="tag tag--neutral">${(c.stage || '').replace(/_/g, ' ')}</span>${c.dnc ? html`<span class="tag tag--err">Do not contact</span>` : ''}${c.next_step ? html`<span>Next: ${c.next_step}${c.next_date ? html` · <time datetime="${c.next_date}">${fmtDay(c.next_date)}</time>` : ''}</span>` : ''}</span>
     </span>
@@ -328,10 +354,10 @@ function resultsHtml(S, { from = 0, to = Infinity } = {}) {
   const order = f.type === 'all' ? TYPES : TYPES.filter(([k]) => k === f.type);
   return html`${order.filter(([k]) => (r[k] || []).length).slice(from, to).map(([k, label], gi) => {
     // drafts group by story and identical notes collapse (Q1); the head count stays the record count
-    const list = k === 'drafts' ? groupDrafts(r[k]) : k === 'notes' ? groupNotes(r[k]) : r[k];
+    const list = k === 'drafts' ? groupDrafts(r[k]) : k === 'notes' ? groupNotes(r[k]) : k === 'contacts' ? groupContacts(r[k]) : r[k];
     const shown = f.type === 'all' ? list.slice(0, idle ? IDLE_PER_GROUP[k] : PER_GROUP) : list;
     const total = c[k] ?? r[k].length;
-    const covered = k === 'drafts' ? shown.reduce((a, ds) => a + ds.length, 0) : k === 'notes' ? shown.reduce((a, n) => a + n.count, 0) : shown.length;
+    const covered = k === 'drafts' ? shown.reduce((a, ds) => a + ds.length, 0) : k === 'notes' ? shown.reduce((a, n) => a + n.count, 0) : k === 'contacts' ? shown.reduce((a, c) => a + c.dups.length, 0) : shown.length;
     return html`<section class="sr-group${from + gi > 0 || S.first === 0 ? ' cv' : ''}" aria-labelledby="sr-g-${k}" data-group="${k}">
       <div class="sr-group-head">
         <h2 class="sr-gh" id="sr-g-${k}">${idle ? IDLE_TITLE[k] : label}<span class="sr-gn">${total}</span></h2>
@@ -471,6 +497,7 @@ export async function render(view, ctx = {}) {
     f, settings, sources, employers, watch, today, res: null, error: null, seq: 0,
     T: Number(settings.publish_threshold ?? 55), tz: settings.timezone,
     allStories: all?.stories || [],
+    storyTitle: new Map((all?.stories || []).map(x => [Number(x.id), x.short_title || x.title])),
     sourceName: Object.fromEntries(sources.map(s => [String(s.id), s.name]))
   };
   const prio = (settings.priorities || []).filter(p => p.weight > 0).map(p => p.topic);

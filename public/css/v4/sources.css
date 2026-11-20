@@ -52,7 +52,10 @@
 .so-hbar-label { color: var(--text-3); font: 500 12.5px/16px var(--font-sans); }
 .so-hbar { display: flex; gap: 2px; height: 8px; border-radius: 4px; overflow: hidden; background: var(--track); }
 .so-hbar i { display: block; min-width: 4px; }
-.so-hbar i[data-h=ok] { background: var(--ok); } .so-hbar i[data-h=stale] { background: var(--warn); } .so-hbar i[data-h=error] { background: var(--err); }
+/* SE-3: segments mixed into the surface so the bar is no longer the loudest colour in the app; the legend dots stay full strength */
+.so-hbar i[data-h=ok] { background: color-mix(in oklab, var(--ok) 60%, var(--surface-solid)); }
+.so-hbar i[data-h=stale] { background: color-mix(in oklab, var(--warn) 60%, var(--surface-solid)); }
+.so-hbar i[data-h=error] { background: color-mix(in oklab, var(--err) 55%, var(--surface-solid)); }
 .so-hbar i[data-h=paused] { background: repeating-linear-gradient(135deg, var(--line-3) 0 3px, transparent 3px 6px); box-shadow: inset 0 0 0 1px var(--line-2); }
 .so-hbar-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; color: var(--text-2); font: 450 12.5px/16px var(--font-sans); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .so-hbar-legend span { display: inline-flex; align-items: center; gap: 6px; }

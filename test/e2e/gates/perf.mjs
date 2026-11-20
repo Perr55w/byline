@@ -46,7 +46,7 @@ export async function e1(ctx) {
     for (let lap = 1; lap <= laps; lap++) for (const key of seq) {
       const t0 = await setHash(P.page, `#/${key}`);
       await sleep(1500);
-      const ok = await P.page.evaluate(({ key, t0 }) => window.__e2e.events.some(e => e.type === 'byline:routed' && e.key === key && e.t >= t0), { key, t0 });
+      const ok = await P.page.evaluate(({ key, t0 }) => window.__e2e.events.some(e => e.type === 'byline:routed' && (e.key === key || e.key === key.split('/')[0]) && e.t >= t0), { key, t0 });
       const s = summarizeLoaf(await loafSince(P.page, t0));
       const detail = (ok ? '' : 'not routed within 1.5 s; ') + (s.worst ? `worst: ${s.worst}` : '');
       const scope = laps > 1 ? `${key} · lap ${lap}` : key;
