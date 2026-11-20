@@ -36,6 +36,26 @@ const ALIGNED_SOURCES = [
   ['GitHub — MCP spec releases', 'github', 'https://github.com/modelcontextprotocol/modelcontextprotocol/releases.atom', 'Applied practice', 'application', null],
   ['GitHub — Anthropic Python SDK releases', 'github', 'https://github.com/anthropics/anthropic-sdk-python/releases.atom', 'Applied practice', 'application', null]
 ];
+/**
+ * Known alternate addresses for the seeded feeds. go-live tries these when a source's own URL fails and switches the
+ * source to the first one that returns items. (Checked 2026-11: the primaries are the publishers' documented feeds;
+ * the sandbox these were written in could not reach most hosts, so each is verified on first sync.)
+ */
+export const FEED_ALTERNATES = {
+  'https://blog.google/technology/ai/rss/': ['https://blog.google/rss/'],
+  'https://deepmind.google/blog/rss.xml': ['https://deepmind.google/discover/blog/rss.xml', 'https://deepmind.com/blog/feed/basic/'],
+  'https://aws.amazon.com/blogs/machine-learning/feed/': ['https://aws.amazon.com/blogs/aws/feed/'],
+  'https://rss.arxiv.org/rss/cs.AI': ['https://export.arxiv.org/rss/cs.AI', 'https://rss.arxiv.org/atom/cs.AI'],
+  'https://www.technologyreview.com/topic/artificial-intelligence/feed': ['https://www.technologyreview.com/feed/'],
+  'https://simonwillison.net/atom/everything/': ['https://simonwillison.net/atom/entries/'],
+  'https://openai.com/news/rss.xml': ['https://openai.com/blog/rss.xml'],
+  'https://research.ibm.com/blog': ['https://research.ibm.com/rss'],
+  'https://www.snowflake.com/en/blog/': ['https://www.snowflake.com/feed/'],
+  'https://hnrss.org/newest?q=AI+agents+OR+LLM+evals&points=40': ['https://hnrss.org/newest?q=LLM+agents&points=40']
+};
+/** The connector kind for an alternate URL (a listing page that has an RSS alternate becomes an rss source). */
+export const altKind = (url, kind) => (/\/(rss|feed|atom)(\/|\.xml|$)|\.xml$|\/rss\/|hnrss\.org/.test(url) ? (kind === 'page' ? 'rss' : kind) : kind);
+
 const BIG_PUSH = ['IBM', 'Toyota', 'Cox Automotive', 'Cox Enterprises'];
 const EXISTING_PROJECTS = [
   ['Lot Intelligence', 'dashboard', 'Existing project — add what it does, its data, and what you want to extend.'],

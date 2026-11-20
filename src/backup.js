@@ -18,7 +18,8 @@ export function listBackups(root = backupDir()) {
 /** Write backups/byline-<UTC stamp>/ (byline.db + media/). Media files are hard-linked when possible (no extra space). */
 export function backupNow({ root = backupDir(), keep = null, label = '', now = new Date() } = {}) {
   const stamp = now.toISOString().replace(/[:.]/g, '-').slice(0, 19);
-  const out = path.join(root, `byline-${stamp}${label ? `-${label}` : ''}`);
+  let out = path.join(root, `byline-${stamp}${label ? `-${label}` : ''}`);
+  for (let n = 2; fs.existsSync(out); n++) out = path.join(root, `byline-${stamp}${label ? `-${label}` : ''}-${n}`);
   fs.mkdirSync(path.join(out, 'media'), { recursive: true });
   const db = new DatabaseSync(path.join(dataDir(), 'byline.db'));
   try { db.exec(`VACUUM INTO '${path.join(out, 'byline.db').replace(/'/g, "''")}'`); } finally { db.close(); }
