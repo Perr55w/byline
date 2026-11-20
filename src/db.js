@@ -10,7 +10,9 @@ fs.mkdirSync(MEDIA_DIR, { recursive: true });
 export const db = new DatabaseSync(path.join(DATA_DIR, 'byline.db'));
 db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
 
-db.exec(`
+// The baseline schema (every table as it stood before versioned migrations). CREATE IF NOT EXISTS, so it is safe on
+// any database; everything after it is an ordered, recorded migration.
+export const BASE_SCHEMA = `
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 
 CREATE TABLE IF NOT EXISTS sources (
@@ -154,12 +156,85 @@ CREATE TABLE IF NOT EXISTS usage (
 CREATE INDEX IF NOT EXISTS idx_articles_story ON articles(story_id);
 CREATE INDEX IF NOT EXISTS idx_claims_story ON claims(story_id);
 CREATE INDEX IF NOT EXISTS idx_drafts_story ON drafts(story_id);
-`);
+`;
 
-// Additive migrations for databases created by earlier versions.
-for (const [table, col, def] of [['contacts', 'segment', "TEXT DEFAULT 'target_team'"], ['contacts', 'ksu_alumni', 'INTEGER DEFAULT 0'], ['briefs', 'delivered_json', "TEXT DEFAULT '{}'"], ['outreach', 'last_error', 'TEXT'], ['images', 'blurhash', 'TEXT'], ['images', 'ar', 'REAL'], ['stories', 'viewed_score', 'REAL']]) {
-  if (!db.prepare(`PRAGMA table_info(${table})`).all().some(c => c.name === col)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`);
+const hasColumn = (d, table, col) => d.prepare(`PRAGMA table_info(${table})`).all().some(c => c.name === col);
+const addColumn = (d, table, col, def) => { if (!hasColumn(d, table, col)) d.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`); };
+const hasTable = (d, name) => !!d.prepare("SELECT 1 FROM sqlite_master WHERE name = ?").get(name);
+
+// Full-text search (A3): one trigram FTS5 index over the searchable text of six tables, kept current by triggers.
+// rowid = id * 8 + kind, so a row is found and replaced by rowid. Trigram keeps the old LIKE behaviour (any
+// substring of 3+ characters matches) while using an index.
+export const FTS_KINDS = {
+  stories: { k: 1, body: "coalesce(NEW.title,'') || ' ' || coalesce(NEW.summary,'') || ' ' || coalesce(NEW.companies,'') || ' ' || coalesce(NEW.topics,'')" },
+  claims: { k: 2, body: "coalesce(NEW.text,'')" },
+  briefs: { k: 3, body: "coalesce(NEW.summary,'') || ' ' || coalesce(NEW.items_json,'')" },
+  drafts: { k: 4, body: "coalesce(NEW.title,'') || ' ' || coalesce(NEW.sections_json,'')" },
+  notes: { k: 5, body: "coalesce(NEW.text,'')" },
+  contacts: { k: 6, body: "coalesce(NEW.name,'') || ' ' || coalesce(NEW.role,'') || ' ' || coalesce(NEW.org,'') || ' ' || coalesce(NEW.employer,'') || ' ' || coalesce(NEW.team,'') || ' ' || coalesce(NEW.why,'')" }
+};
+function ftsAvailable(d) {
+  try { d.exec("CREATE VIRTUAL TABLE temp.__fts_probe USING fts5(x, tokenize='trigram'); DROP TABLE temp.__fts_probe;"); return true; } catch { return false; }
 }
+function buildFts(d) {
+  if (!ftsAvailable(d)) return { skipped: 'FTS5 with the trigram tokenizer is not available: search uses LIKE' };
+  d.exec("CREATE VIRTUAL TABLE IF NOT EXISTS search_fts USING fts5(body, tokenize='trigram')");
+  for (const [table, { k, body }] of Object.entries(FTS_KINDS)) {
+    d.exec(`DROP TRIGGER IF EXISTS fts_${table}_ai; DROP TRIGGER IF EXISTS fts_${table}_au; DROP TRIGGER IF EXISTS fts_${table}_ad;
+      CREATE TRIGGER fts_${table}_ai AFTER INSERT ON ${table} BEGIN INSERT INTO search_fts(rowid, body) VALUES (NEW.id * 8 + ${k}, ${body}); END;
+      CREATE TRIGGER fts_${table}_au AFTER UPDATE ON ${table} BEGIN DELETE FROM search_fts WHERE rowid = OLD.id * 8 + ${k}; INSERT INTO search_fts(rowid, body) VALUES (NEW.id * 8 + ${k}, ${body}); END;
+      CREATE TRIGGER fts_${table}_ad AFTER DELETE ON ${table} BEGIN DELETE FROM search_fts WHERE rowid = OLD.id * 8 + ${k}; END;`);
+    d.exec(`DELETE FROM search_fts WHERE rowid % 8 = ${k}`);
+    d.exec(`INSERT INTO search_fts(rowid, body) SELECT id * 8 + ${k}, ${body.replace(/NEW\./g, '')} FROM ${table}`);
+  }
+  return { built: true };
+}
+
+/**
+ * Ordered migrations. Each runs once, in a transaction, and is recorded in schema_version. Every step is written so
+ * it is also harmless on a database that already has the change (earlier versions added columns ad hoc).
+ * Append new steps at the end; never edit or reorder a released one.
+ */
+export const MIGRATIONS = [
+  { version: 1, name: 'columns added before versioned migrations', up: (d) => {
+    for (const [table, col, def] of [['contacts', 'segment', "TEXT DEFAULT 'target_team'"], ['contacts', 'ksu_alumni', 'INTEGER DEFAULT 0'], ['briefs', 'delivered_json', "TEXT DEFAULT '{}'"],
+      ['outreach', 'last_error', 'TEXT'], ['images', 'blurhash', 'TEXT'], ['images', 'ar', 'REAL'], ['stories', 'viewed_score', 'REAL']]) addColumn(d, table, col, def);
+  } },
+  { version: 2, name: 'indexes for common lookups', up: (d) => {
+    d.exec(`CREATE INDEX IF NOT EXISTS idx_articles_source ON articles(source_id);
+      CREATE INDEX IF NOT EXISTS idx_drafts_planned ON drafts(channel, planned_date);
+      CREATE INDEX IF NOT EXISTS idx_runs_date ON runs(run_date, trigger);`);
+  } },
+  { version: 3, name: 'full-text search index (FTS5 trigram)', up: (d) => buildFts(d) }
+];
+
+export function schemaVersion(d = db) {
+  if (!hasTable(d, 'schema_version')) return 0;
+  return d.prepare('SELECT COALESCE(MAX(version), 0) AS v FROM schema_version').get().v;
+}
+
+/** Bring a database up to the latest schema. Idempotent; returns the versions applied. */
+export function migrate(d) {
+  d.exec(BASE_SCHEMA);
+  d.exec('CREATE TABLE IF NOT EXISTS schema_version (version INTEGER PRIMARY KEY, name TEXT, applied_at TEXT, note TEXT)');
+  const current = schemaVersion(d);
+  const applied = [];
+  for (const m of MIGRATIONS) {
+    if (m.version <= current) continue;
+    d.exec('BEGIN');
+    try {
+      const r = m.up(d);
+      d.prepare('INSERT INTO schema_version(version, name, applied_at, note) VALUES(?,?,?,?)').run(m.version, m.name, new Date().toISOString(), r ? JSON.stringify(r) : null);
+      d.exec('COMMIT');
+      applied.push(m.version);
+    } catch (e) { d.exec('ROLLBACK'); throw new Error(`Migration ${m.version} (${m.name}) failed: ${e.message}`); }
+  }
+  return applied;
+}
+
+export const ftsEnabled = (d = db) => hasTable(d, 'search_fts');
+
+migrate(db);
 
 export const now = () => new Date().toISOString();
 export const all = (sql, ...p) => db.prepare(sql).all(...p);

@@ -87,3 +87,88 @@ test('safeFetch re-checks the host on every redirect', async () => {
     assert.deepEqual(seen, ['https://news.example.com/feed'], 'the private hop was never requested');
   } finally { globalThis.fetch = realFetch; }
 });
+
+// ---------------------------------------------------------------- A3: migrations, FTS search, backups, catch-up
+const { DatabaseSync } = await import('node:sqlite');
+const dbm = await import('../src/db.js');
+test('migrations: an old database (no schema_version, missing columns) upgrades in order, idempotently', () => {
+  const file = path.join(process.env.BYLINE_DATA_DIR, 'old.db');
+  const d = new DatabaseSync(file);
+  d.exec(dbm.BASE_SCHEMA); // the tables as they stood before versioned migrations
+  d.prepare("INSERT INTO stories(title, summary, companies, topics) VALUES('Agent orchestration lands in the enterprise', 'A survey of 40 workflows.', '[\"AWS\"]', '[\"Agent orchestration\"]')").run();
+  assert.equal(dbm.schemaVersion(d), 0);
+  assert.ok(!d.prepare('PRAGMA table_info(stories)').all().some(c => c.name === 'viewed_score'));
+  const applied = dbm.migrate(d);
+  assert.deepEqual(applied, dbm.MIGRATIONS.map(m => m.version));
+  assert.equal(dbm.schemaVersion(d), dbm.MIGRATIONS.at(-1).version);
+  assert.ok(d.prepare('PRAGMA table_info(stories)').all().some(c => c.name === 'viewed_score'));
+  assert.ok(d.prepare('PRAGMA table_info(contacts)').all().some(c => c.name === 'segment'));
+  // the FTS index was built from existing rows and follows later writes
+  const hit = (q) => d.prepare('SELECT rowid / 8 AS id FROM search_fts WHERE search_fts MATCH ? AND rowid % 8 = 1').all(q).map(r => r.id);
+  assert.deepEqual(hit('"orchestr"'), [1]);
+  d.prepare("UPDATE stories SET title = 'Evaluation harnesses' WHERE id = 1").run();
+  assert.deepEqual(hit('"orchestr"'), [1], 'topics still match');
+  assert.deepEqual(hit('"harness"'), [1]);
+  d.prepare('DELETE FROM stories WHERE id = 1').run();
+  assert.deepEqual(hit('"harness"'), []);
+  // run again: nothing to apply, nothing breaks
+  assert.deepEqual(dbm.migrate(d), []);
+  // a database that already had the ad-hoc columns (an earlier version) also upgrades cleanly
+  const d2 = new DatabaseSync(path.join(process.env.BYLINE_DATA_DIR, 'mid.db'));
+  d2.exec(dbm.BASE_SCHEMA); d2.exec("ALTER TABLE stories ADD COLUMN viewed_score REAL; ALTER TABLE contacts ADD COLUMN segment TEXT DEFAULT 'target_team'");
+  assert.deepEqual(dbm.migrate(d2), dbm.MIGRATIONS.map(m => m.version));
+  d.close(); d2.close();
+});
+
+test('backups: daily backup once per day, keeps the newest N', async () => {
+  const { dailyBackup, listBackups, backupNow } = await import('../src/backup.js');
+  const root = path.join(process.env.BYLINE_DATA_DIR, 'bk');
+  for (let i = 0; i < 3; i++) { backupNow({ root, label: `old${i}` }); }
+  const first = dailyBackup({ root, keep: 2, now: new Date('2099-01-01T08:00:00Z') });
+  assert.ok(first.dir && fs.existsSync(path.join(first.dir, 'byline.db')));
+  assert.equal(dailyBackup({ root, keep: 2, now: new Date('2099-01-01T09:00:00Z') }).skipped, 'already backed up today');
+  assert.equal(listBackups(root).length, 2);
+});
+
+test('scheduler catch-up: after the scheduled time with no run today it is due once; not before, not twice', async () => {
+  const { scheduleDue, FIRST_TICK_MS } = await import('../src/scheduler.js');
+  assert.ok(FIRST_TICK_MS <= 10000, 'the first check runs within seconds of start-up');
+  const settings = { timezone: 'America/New_York', schedule: { enabled: true, time: '07:00' } };
+  const at = (iso) => new Date(iso);
+  // the PC was off at 07:00 and Byline starts at 09:30 local (14:30 UTC)
+  const late = scheduleDue({ settings, now: at('2031-03-04T14:30:00Z') });
+  assert.equal(late.due, true);
+  assert.equal(late.date, '2031-03-04');
+  assert.equal(scheduleDue({ settings, now: at('2031-03-04T11:30:00Z') }).due, false, '06:30 local: not yet');
+  assert.equal(scheduleDue({ settings: { ...settings, schedule: { enabled: false, time: '07:00' } }, now: at('2031-03-04T14:30:00Z') }).due, false);
+  dbm.run("INSERT INTO runs(run_date, trigger, status, started_at) VALUES('2031-03-04', 'schedule', 'done', '2031-03-04T14:31:00Z')");
+  assert.equal(scheduleDue({ settings, now: at('2031-03-04T15:00:00Z') }).reason, 'already ran today');
+  // a failed attempt is retried after 10 minutes, resuming that run
+  dbm.run("INSERT INTO runs(run_date, trigger, status, started_at) VALUES('2031-03-05', 'schedule', 'failed', '2031-03-05T14:30:00Z')");
+  assert.equal(scheduleDue({ settings, now: at('2031-03-05T14:35:00Z') }).due, false);
+  const retry = scheduleDue({ settings, now: at('2031-03-05T14:45:00Z') });
+  assert.equal(retry.due, true);
+  assert.ok(retry.resume_run_id);
+});
+
+test('search: FTS5 trigram index, same results as the LIKE fallback when FTS is unavailable', async () => {
+  const { registerContent } = await import('../src/routes/content.js');
+  const routes = {};
+  registerContent((m, p, h) => { routes[`${m} ${p}`] = h; });
+  const search = (q) => routes['GET /api/search']({ query: { q, type: 'stories,claims,notes' } });
+  dbm.run("INSERT INTO stories(title, summary, companies, topics, updated_at) VALUES('Snowflake ships a semantic layer for agents', 'Cortex adds governed metrics.', '[\"Snowflake\"]', '[\"Analytics\"]', '2031-01-01')");
+  dbm.run("INSERT INTO notes(text) VALUES('Private: ask about the semantic layer pricing')");
+  const a = search('semantic lay');
+  assert.equal(a.engine, 'fts5');
+  assert.equal(a.stories.length, 1);
+  assert.equal(a.counts.notes, 1);
+  assert.equal(search('mantic').stories.length, 1, 'a substring inside a word still matches (trigram)');
+  assert.equal(search('ai').engine, 'like', 'terms shorter than 3 characters fall back to LIKE');
+  // FTS missing (an SQLite build without FTS5): the same query runs on LIKE
+  for (const t of Object.keys(dbm.FTS_KINDS)) dbm.db.exec(`DROP TRIGGER IF EXISTS fts_${t}_ai; DROP TRIGGER IF EXISTS fts_${t}_au; DROP TRIGGER IF EXISTS fts_${t}_ad;`);
+  dbm.db.exec('DROP TABLE search_fts');
+  const b = search('semantic lay');
+  assert.equal(b.engine, 'like');
+  assert.equal(b.stories.length, 1);
+  assert.equal(b.counts.notes, 1);
+});

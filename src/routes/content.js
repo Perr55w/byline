@@ -1,4 +1,6 @@
-import { all, get, run, now, hydrate, parse, getSettings, setSetting } from '../db.js';
+import { execFileSync } from 'node:child_process';
+import { all, get, run, now, hydrate, parse, getSettings, setSetting, ftsEnabled, FTS_KINDS, schemaVersion } from '../db.js';
+import { listBackups, backupDir, backupKeep } from '../backup.js';
 import { connectors, connectorFor } from '../connectors/index.js';
 import { weeklyRoundup } from '../pipeline.js';
 import { deliverBrief, deliveryStatus, digestHtml } from '../delivery.js';
@@ -107,6 +109,13 @@ export function nextOpenSlot({ today, after = null, days, taken = () => false, h
   return null;
 }
 
+/** Whether ffmpeg is installed (video render, thumbnails, blurhash). Checked once per process. */
+let ffmpegOk = null;
+export function ffmpegAvailable() {
+  if (ffmpegOk === null) { try { execFileSync('ffmpeg', ['-version'], { stdio: 'ignore', timeout: 5000 }); ffmpegOk = true; } catch { ffmpegOk = false; } }
+  return ffmpegOk;
+}
+
 /** Settings the generic PUT /api/settings may change. Everything else (TOTP material, the ICS token, demo and
  *  alignment bookkeeping) is set only by its own route or by the server. */
 export const SETTINGS_KEYS = new Set(['timezone', 'schedule', 'publish_threshold', 'brief_size', 'priorities', 'posting_days', 'editorial',
@@ -128,7 +137,9 @@ export function registerContent(route) {
       last_run: runSummary(get('SELECT * FROM runs ORDER BY id DESC LIMIT 1'), s.timezone),
       issue: (() => { const b = get('SELECT run_date FROM briefs ORDER BY run_date DESC LIMIT 1'); return b ? { number: get('SELECT COUNT(*) AS n FROM briefs WHERE run_date <= ?', b.run_date).n, brief_date: b.run_date, date_label: dayLabel(b.run_date), is_today: b.run_date === todayIn(s.timezone) } : null; })(),
       timezone_abbr: tzAbbr(s.timezone),
-      ffmpeg: true, delivery: deliveryStatus(), auth: !!process.env.BYLINE_PASSWORD, ics_path: `/api/calendar.ics?token=${icsToken()}`
+      schema_version: schemaVersion(), search_engine: ftsEnabled() ? 'fts5' : 'like',
+      backups: (() => { const l = listBackups(); return { dir: backupDir(), count: l.length, latest: l.at(-1) || null, keep: backupKeep(), enabled: process.env.BYLINE_BACKUPS !== '0' }; })(),
+      ffmpeg: ffmpegAvailable(), delivery: deliveryStatus(), auth: !!process.env.BYLINE_PASSWORD, ics_path: `/api/calendar.ics?token=${icsToken()}`
     };
   });
 
@@ -436,10 +447,22 @@ export function registerContent(route) {
     const limit = Math.min(200, Number(query.limit || 50));
     const out = {}, counts = {};
     const dateF = (col) => { const c = []; const p = []; if (query.from) { c.push(`${col} >= ?`); p.push(query.from); } if (query.to) { c.push(`${col} <= ?`); p.push(query.to + 'T23:59:59'); } return [c.length ? ' AND ' + c.join(' AND ') : '', p]; };
+    // A3: the text condition uses the FTS5 trigram index when it exists and every term has 3+ characters (trigram's
+    // minimum); otherwise the old LIKE scan. `text(kind, alias, likeCols)` returns [sql, params].
+    const terms = raw.split(/\s+/).filter(Boolean);
+    const useFts = !!raw && ftsEnabled() && terms.every(t => [...t].length >= 3);
+    const ftsQ = terms.map(t => `"${t.replace(/"/g, '""')}"`).join(' ');
+    const text = (kind, alias, likeCols) => {
+      if (!raw) return ['1 = 1', []];
+      if (useFts) return [`${alias}.id IN (SELECT rowid / 8 FROM search_fts WHERE search_fts MATCH ? AND rowid % 8 = ${FTS_KINDS[kind].k})`, [ftsQ]];
+      return [`(${likeCols.map(c => `${c} LIKE ?`).join(' OR ')})`, likeCols.map(() => q)];
+    };
+    out.engine = !raw ? 'none' : useFts ? 'fts5' : 'like';
     const both = (from, where, p, order, map = (x) => x, orderP = []) => { counts[from.key] = get(`SELECT COUNT(*) AS n FROM ${from.sql} WHERE ${where}`, ...p).n; return all(`SELECT ${from.cols} FROM ${from.sql} WHERE ${where} ORDER BY ${order} LIMIT ${limit}`, ...p, ...orderP).map(map); };
     if (types.includes('stories')) {
       const [dc, dp] = dateF('s.updated_at');
-      let where = `(s.title LIKE ? OR s.summary LIKE ? OR s.companies LIKE ? OR s.topics LIKE ?)${dc}`; const p = [q, q, q, q, ...dp];
+      const [tw, tp] = text('stories', 's', ['s.title', 's.summary', 's.companies', 's.topics']);
+      let where = `${tw}${dc}`; const p = [...tp, ...dp];
       if (query.topic) { where += ' AND s.topics LIKE ?'; p.push(`%"${query.topic}"%`); }
       if (query.company) { where += ' AND s.companies LIKE ?'; p.push(`%"${query.company}"%`); }
       if (query.source) { where += ' AND EXISTS (SELECT 1 FROM articles a WHERE a.story_id = s.id AND a.source_id = ?)'; p.push(query.source); }
@@ -451,21 +474,22 @@ export function registerContent(route) {
       out.stories = enrich(query.company ? rows.filter(r => (r.companies || []).includes(query.company)) : rows).map(({ breakdown, ...r }) => ({ ...r, main_topic: mainTopic(r.topics, weights) }));
     }
     if (types.includes('claims')) {
-      const where = `c.text LIKE ?${query.source ? ' AND a.source_id = ?' : ''}`; const p = [q, ...(query.source ? [query.source] : [])];
+      const [tw, tp] = text('claims', 'c', ['c.text']);
+      const where = `${tw}${query.source ? ' AND a.source_id = ?' : ''}`; const p = [...tp, ...(query.source ? [query.source] : [])];
       out.claims = both({ key: 'claims', sql: 'claims c JOIN articles a ON a.id = c.article_id LEFT JOIN stories s ON s.id = c.story_id', cols: 'c.id, c.text, c.evidence_kind, c.story_id, c.article_id, c.has_number, a.url, a.domain, a.title AS article_title, s.title AS story_title, s.score AS story_score' },
         where, p, 'c.has_number DESC, c.id', (c) => { const t = cleanClaim(c.text); return { ...c, text_clean: t, marks: numberMarks(t), story_short_title: shortTitle(c.story_title || '') }; });
     }
-    if (types.includes('briefs')) { const [dc, dp] = dateF('run_date'); out.briefs = both({ key: 'briefs', sql: 'briefs', cols: 'id, run_date, summary, quiet' }, `(summary LIKE ? OR items_json LIKE ?)${dc}`, [q, q, ...dp], 'run_date DESC'); }
+    if (types.includes('briefs')) { const [dc, dp] = dateF('b.run_date'); const [tw, tp] = text('briefs', 'b', ['b.summary', 'b.items_json']); out.briefs = both({ key: 'briefs', sql: 'briefs b', cols: 'b.id, b.run_date, b.summary, b.quiet' }, `${tw}${dc}`, [...tp, ...dp], 'b.run_date DESC'); }
     if (types.includes('drafts')) {
       const [dc, dp] = dateF('d.updated_at');
       out.drafts = both({ key: 'drafts', sql: 'drafts d LEFT JOIN stories s ON s.id = d.story_id', cols: 'd.id, d.title, d.channel, d.format, d.status, d.updated_at, d.planned_date, d.story_id, s.score AS story_score' },
-        `(d.title LIKE ? OR d.sections_json LIKE ?)${query.status ? ' AND d.status = ?' : ''}${dc}`, [q, q, ...(query.status ? [query.status] : []), ...dp], 'd.updated_at DESC');
+        `${text('drafts', 'd', ['d.title', 'd.sections_json'])[0]}${query.status ? ' AND d.status = ?' : ''}${dc}`, [...text('drafts', 'd', ['d.title', 'd.sections_json'])[1], ...(query.status ? [query.status] : []), ...dp], 'd.updated_at DESC');
     }
-    if (types.includes('notes')) out.notes = both({ key: 'notes', sql: 'notes n LEFT JOIN drafts d ON d.id = n.draft_id', cols: 'n.id, n.text, n.kind, n.draft_id, n.story_id, n.include, n.created_at, d.title AS draft_title' }, 'n.text LIKE ?', [q], 'n.id DESC');
+    if (types.includes('notes')) out.notes = both({ key: 'notes', sql: 'notes n LEFT JOIN drafts d ON d.id = n.draft_id', cols: 'n.id, n.text, n.kind, n.draft_id, n.story_id, n.include, n.created_at, d.title AS draft_title' }, text('notes', 'n', ['n.text'])[0], text('notes', 'n', ['n.text'])[1], 'n.id DESC');
     if (types.includes('contacts')) {
       out.contacts = both({ key: 'contacts', sql: 'contacts c', cols: 'c.id, c.name, c.role, c.org, c.employer, c.team, c.stage, c.dnc, c.next_step, c.next_date, c.updated_at' },
-        `(c.name LIKE ? OR c.role LIKE ? OR c.org LIKE ? OR c.employer LIKE ? OR c.team LIKE ? OR c.why LIKE ?)${query.employer ? ' AND c.employer = ?' : ''}`,
-        [q, q, q, q, q, q, ...(query.employer ? [query.employer] : [])], 'c.updated_at DESC', (c) => ({ ...c, dnc: !!c.dnc }));
+        `${text('contacts', 'c', ['c.name', 'c.role', 'c.org', 'c.employer', 'c.team', 'c.why'])[0]}${query.employer ? ' AND c.employer = ?' : ''}`,
+        [...text('contacts', 'c', ['c.name', 'c.role', 'c.org', 'c.employer', 'c.team', 'c.why'])[1], ...(query.employer ? [query.employer] : [])], 'c.updated_at DESC', (c) => ({ ...c, dnc: !!c.dnc }));
     }
     out.counts = { ...counts, total: Object.values(counts).reduce((m, n) => m + n, 0) };
     out.totals = get(`SELECT (SELECT COUNT(*) FROM stories) AS stories, (SELECT COUNT(*) FROM claims) AS claims, (SELECT COUNT(*) FROM drafts) AS drafts,
