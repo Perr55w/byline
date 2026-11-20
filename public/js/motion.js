@@ -183,7 +183,9 @@ export function enterHeading(el, { variant = 'load', lede = null, eyebrow = null
   lines.forEach((ln, i) => {
     const d = delay + (load ? 60 : 0) + i * stagger;
     ln.style.willChange = 'transform, opacity, filter';
-    anims.push(ln.animate([{ opacity: 0 }, { opacity: 1 }], opts(d, load ? 700 : 420, EASE.fade)));
+    // R3 S7 (C): on a tab switch the line rises on --ease-settle (non-zero initial slope), so it is ≥ .15 within ~50ms of
+    // its start and the heading band is never empty between the old h1 leaving and the new one arriving
+    anims.push(ln.animate([{ opacity: 0 }, { opacity: 1 }], opts(d, load ? 700 : 420, load ? EASE.fade : EASE.settle)));
     anims.push(ln.animate([{ transform: `translateY(${load ? 0.10 : 0.06}em)`, filter: `blur(${load ? 6 : 3}px)` }, { transform: 'none', filter: 'blur(0px)' }], opts(d, dur, EASE.settle)));
     if (load) {
       anims.push(ln.animate([

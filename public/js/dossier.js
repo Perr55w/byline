@@ -41,21 +41,20 @@ const ric = window.requestIdleCallback ? (f, o) => requestIdleCallback(f, o) : (
 
 // ------------------------------------------------------------------ prefetch + idle prebuild (S3)
 // prefetch(id) warms the data; once it resolves, an idle callback renders the whole 'open' dossier into a hidden,
-// attached, contain:strict root at the final geometry and measures the shared destinations there.
-// R3 S2 (E): the MOST RECENT prebuild stays attached (.is-prebuild: visibility hidden, inert, aria-hidden, its ids
-// parked in data-pre-id), so its style, layout and paint records already exist when the click comes; open() only
-// un-hides it (visibility / transform / clip change, nothing new is laid out). Older LRU entries are detached.
+// attached, contain:strict root at the final geometry, measures the shared destinations there, then detaches it.
+// open() re-appends that root and starts the flight with zero layout reads after the insert. LRU of 3.
+// R3 S2 (E's attached host) was built and measured A/B in the same session (desktop 1440, dpr 2, 4× CPU, trace of the
+// reveal frame): keeping the prebuild attached under visibility:hidden made the click frame SLOWER (median ≈ 60 ms vs
+// ≈ 41 ms detached): un-hiding restyles the subtree (20–43 ms vs 4–30 ms) and the panel is painted in that frame either
+// way (hidden content is never painted), while the layout it saves is ≈ 3 ms (the open-phase body is light). So the
+// prebuild stays detached; the open's other R3 savings (no `inert`, html.dossier-open a frame later, the route guard)
+// stand.
 const ready = new Map();           // id → story payload (resolved)
 const PRE = new Map();             // id → { root, rects, key, after }
 const PRE_MAX = 3;
 const geomKey = () => `${innerWidth}x${innerHeight}:${collapsed() ? 'c' : 'e'}:${phone() ? 'p' : 'd'}`;
 const pending = new Set();
-// ids inside a parked prebuild move to data-pre-id (no duplicate ids in the document while it waits)
-function parkIds(root) { for (const el of root.querySelectorAll('[id]')) { el.setAttribute('data-pre-id', el.id); el.removeAttribute('id'); } }
-function unparkIds(root) { for (const el of root.querySelectorAll('[data-pre-id]')) { el.id = el.getAttribute('data-pre-id'); el.removeAttribute('data-pre-id'); } }
-/** Detach every parked prebuild except `keep` (LRU entries other than the most recent stay detached). */
-function detachOthers(keep = null) { for (const v of PRE.values()) if (v.root !== keep && v.root.isConnected) v.root.remove(); }
-function dropPrebuilt() { for (const v of PRE.values()) v.root.remove(); PRE.clear(); }
+function dropPrebuilt() { PRE.clear(); }
 /** Warm the story (no side effects: mark_viewed=0). Call on tile hover / focus. */
 export function prefetch(id) {
   if (!id) return;
@@ -83,7 +82,8 @@ async function prebuild(id, data) {
   const root = build(id);
   root.classList.add('is-prebuild');
   root.setAttribute('aria-hidden', 'true');
-  root.inert = true;
+  // no `inert`: visibility:hidden already keeps the subtree out of focus, hit-testing and the accessibility tree, and
+  // un-inerting restyled the whole subtree in the click frame (measured ~5 ms at 4×)
   document.body.append(root);
   const panel = root.querySelector('.dossier-panel'), body = root.querySelector('.dossier-body');
   let after = {};
@@ -95,17 +95,15 @@ async function prebuild(id, data) {
     const el = sharedIn(body, n);
     if (el) rects[n] = { rect: el.getBoundingClientRect(), fs: n === 'title' ? parseFloat(getComputedStyle(el).fontSize) || 0 : 0 };
   }
-  parkIds(root); // stays attached (R3 S2); its ids wait in data-pre-id until open()
+  root.remove(); // detached until open(): no duplicate ids, no style cost meanwhile (R3 S2 A/B above)
   PRE.set(id, { root, rects, key, after });
-  detachOthers(root);
-  while (PRE.size > PRE_MAX) { const k = PRE.keys().next().value; PRE.get(k).root.remove(); PRE.delete(k); }
+  while (PRE.size > PRE_MAX) PRE.delete(PRE.keys().next().value);
 }
 function takePrebuilt(id) {
   const hit = PRE.get(id);
   if (!hit) return null;
   PRE.delete(id);
-  if (hit.key !== geomKey()) { hit.root.remove(); return null; }
-  return hit;
+  return hit.key === geomKey() ? hit : null;
 }
 /** Warm the first story on a page once it has sat idle (never inside the tab switch itself). */
 let warmT = 0;
@@ -203,7 +201,7 @@ export async function open(id, srcEl = null, opts = {}) {
   let root, after = {}, late = false, dataP = null, data = null, skel = null;
   if (pre) {
     root = pre.root; after = pre.after;
-    detachOthers(root);
+    root.classList.remove('is-prebuild'); root.removeAttribute('aria-hidden');
   } else {
     root = build(id);
     data = ready.get(id) || null;
@@ -225,18 +223,13 @@ export async function open(id, srcEl = null, opts = {}) {
   }
   if (seq !== S.seq) return;
   S.root = root; S.panel = root.querySelector('.dossier-panel'); S.body = root.querySelector('.dossier-body'); S.src = src;
-  if (pre && root.isConnected) {
-    // R3 S2: the parked root is already styled and laid out at the final geometry: un-hide it in place
-    unparkIds(root);
-    root.classList.remove('is-prebuild'); root.removeAttribute('aria-hidden'); root.inert = false;
-  } else {
-    if (pre) { unparkIds(root); root.classList.remove('is-prebuild'); root.removeAttribute('aria-hidden'); root.inert = false; }
-    document.body.append(root);
-  }
+  document.body.append(root);
   wire(root);
   clearTimeout(chromeT);
-  document.documentElement.classList.remove('dz-back');
-  document.documentElement.classList.add('dossier-open'); // S11: the top bar fades out (shell.css)
+  // S11: the top bar fades out (shell.css). R3 S2: one frame after the reveal, so the click frame restyles only the
+  // panel (the chrome's 240ms fade and the field's exit simply start 16ms later)
+  const htmlOpen = () => { if (seq !== S.seq || S.closing) return; const h = document.documentElement; h.classList.remove('dz-back', 'dz-field-hold'); h.classList.add('dossier-open'); };
+  if (reduced()) htmlOpen(); else requestAnimationFrame(() => requestAnimationFrame(htmlOpen));
 
   // 3) flight. Destination rects: cached by the prebuild (no read); otherwise one read of the inserted panel.
   const panel = S.panel, scrim = root.querySelector('.dossier-scrim');
@@ -372,20 +365,25 @@ function whenQuiet(root, alive, cap = 2000) {
   const panel = root.querySelector('.dossier-panel'), body = root.querySelector('.dossier-body');
   return new Promise((resolve) => {
     const t0 = performance.now();
-    let calm = 0, dirty = false, done = false;
+    let calm = 0, dirty = false, done = false, waiting = false;
     const mo = new MutationObserver(() => { dirty = true; calm = 0; });
     if (body) mo.observe(body, { childList: true, subtree: true, attributes: true });
-    const end = () => { if (done) return; done = true; mo.disconnect(); resolve(); };
+    const end = () => { if (done) return; done = true; clearTimeout(capT); mo.disconnect(); resolve(); };
+    const capT = setTimeout(() => { if (alive() && root.isConnected) end(); else { done = true; mo.disconnect(); } }, cap);
     const tick = () => {
-      if (done) return;
-      if (!alive() || !root.isConnected) { mo.disconnect(); done = true; return; }
-      if (performance.now() - t0 >= cap) { end(); return; }
-      const busy = dirty || root.classList.contains('is-busy')
-        || panel.getAnimations({ subtree: true }).some(a => a.playState === 'running')
-        || !!body?.querySelector('[data-defer], .dx-cv');
+      if (done || waiting) return;
+      if (!alive() || !root.isConnected) { clearTimeout(capT); mo.disconnect(); done = true; return; }
+      // cheap signals first (no style or layout read): a body mutation this frame, a placeholder, an expansion, a scroll
+      const busy = dirty || root.classList.contains('is-busy') || root.classList.contains('is-active') || !!body?.querySelector('[data-defer], .dx-cv');
       dirty = false;
       calm = busy ? 0 : calm + 1;
-      if (calm >= 2) end(); else requestAnimationFrame(tick);
+      if (calm < 2) { requestAnimationFrame(tick); return; }
+      // 2 frames with no mutation: only now ask for the panel's animations (style is clean, so the flush is a no-op);
+      // a running one is waited for on its own promise, not polled
+      const running = panel.getAnimations({ subtree: true }).filter(a => a.playState === 'running');
+      if (!running.length) { end(); return; }
+      calm = 0; waiting = true;
+      Promise.race(running.map(a => a.finished.catch(() => {}))).then(() => { waiting = false; requestAnimationFrame(tick); });
     };
     requestAnimationFrame(tick);
   });
@@ -452,7 +450,7 @@ export function close({ instant = false } = {}) {
   r.classList.add('closing');
   // R3 S4 (R4): one beat. The top bar's children and the field start their 240ms fade back in this same first close
   // frame (named children, opacity only), alongside the panel and scrim, not after the teardown
-  if (!window.__noChrome) chromeBack();
+  chromeBack();
   // mid-flight: reverse what's running (works at any point of the flight)
   if (midFlight) {
     const list = S.anims;
@@ -530,7 +528,7 @@ function teardown() {
   if (src) { src.style.visibility = ''; src.getAnimations?.().forEach(a => { if (a.effect?.getKeyframes?.().some(k => 'opacity' in k)) a.cancel(); }); }
   S.srcShared.forEach(e => { e.style.visibility = ''; });
   S.root?.remove();
-  if (window.__noChrome) chromeBack();
+  // an animated close already swapped the class in its first frame (R3 S4); an instant one just drops it
   document.documentElement.classList.remove('dossier-open', 'dz-field-hold');
   busyN = 0;
   if (S.keyHandler) document.removeEventListener('keydown', S.keyHandler, true);
@@ -545,8 +543,20 @@ let chromeT = 0;
 function wire(r) {
   // S12: the close button's top fade shows once the body has scrolled (class only; no layout read beyond scrollTop)
   const sc = r.querySelector('.dossier-scroll');
-  let scRaf = 0, scOn = false;
+  let scRaf = 0, scOn = false, actT = 0;
+  // R3 S1 (frost at rest only): the backdrop blur is re-rendered on EVERY frame anything in or under the panel changes,
+  // not only during the landing (measured at 1×, 1440: scrolling the body p95 67 ms with the frost live vs 17 ms
+  // without; hovering its buttons p95 50 vs 17). So while the reader scrolls, points or types in the dossier the frost
+  // steps out for the opaque .98 flight fill (white .98 vs white .82 + blur: the swap is not visible) and comes back
+  // 400ms after the last input, once (past a 360ms hover-out), when nothing on screen is moving.
+  const active = () => {
+    if (!actT) r.classList.add('is-active');
+    clearTimeout(actT); actT = setTimeout(() => { actT = 0; r.classList.remove('is-active'); }, 400);
+  };
+  const panelEl = r.querySelector('.dossier-panel');
+  for (const t of ['pointermove', 'pointerdown', 'wheel', 'keydown', 'focusin']) panelEl?.addEventListener(t, active, { passive: true });
   sc?.addEventListener('scroll', () => {
+    active();
     if (scRaf) return;
     scRaf = requestAnimationFrame(() => { scRaf = 0; const on = sc.scrollTop > 8; if (on !== scOn) { scOn = on; sc.classList.toggle('is-scrolled', on); } });
   }, { passive: true });
@@ -597,7 +607,7 @@ export function railWillChange(newW) {
   if (!S.open || phone() || !S.body) return;
   const oldW = collapsed() ? 64 : 232, toW = typeof newW === 'number' ? newW : (collapsed() ? 232 : 64);
   const dx = oldW - toW; // left = inset + rail + inset, so the left edge moves by the rail's width change
-  S.root?.classList.add('is-reflowing');
+  S.root?.classList.add('is-reflowing'); clearTimeout(reflowT);
   railAnims.forEach(a => a.cancel());
   railAnims = [];
   if (!dx || reduced()) { railDidChange(); return; }
@@ -607,7 +617,9 @@ export function railWillChange(newW) {
   }
   Promise.all(railAnims.map(a => a.finished)).then(() => { if (seq === S.seq) railDidChange(); }, () => {});
 }
-export function railDidChange() { railAnims = []; S.root?.classList.remove('is-reflowing'); }
+// the frost comes back 400ms after the move has landed (once, at rest), not in the frame the motion ends
+let reflowT = 0;
+export function railDidChange() { railAnims = []; clearTimeout(reflowT); const r = S.root; reflowT = setTimeout(() => { if (!railAnims.length) r?.classList.remove('is-reflowing'); }, 400); }
 addEventListener('resize', () => dropPrebuilt(), { passive: true });
 document.addEventListener('byline:theme', () => dropPrebuilt());
 

@@ -329,7 +329,11 @@ function leaveEarly(old) {
   old.__early = true; old.__quick = quick; old.__leaveAt = performance.now();
   old.classList.remove('current');
   if (quick) old.classList.add('skeleton-page');
+  // a transition only starts on the frame after its style change; so the very next frame already answers the click
+  // with a one-step dip to .9 (inline, no transition), from which the 220ms leave fade continues a frame later
+  old.style.transition = `opacity 0s, transform ${quick ? LEAVE_QUICK_MS : LEAVE_MS}ms var(--ease-exit)`; old.style.opacity = '.9';
   old.classList.add('leaving');
+  requestAnimationFrame(() => requestAnimationFrame(() => { old.style.transition = ''; old.style.opacity = ''; }));
 }
 /** R3 S8 (E): out of flow in the swap task, so #view's height is the new page's alone and its removal lays nothing out */
 function destroyPage(p) { if (!p || p.__destroyed) return; p.__destroyed = true; p.__mod?.destroy?.(p); }
@@ -464,6 +468,9 @@ async function routeTo(key, params, hash) {
   let sk = null, skAt = 0;
   const slow = setTimeout(() => { if (seq === cur.seq) { sk = showSkeleton(key, cur.page && cur.page.isConnected ? cur.page : old); skAt = performance.now(); cur.page = sk; } }, 120);
   try {
+    // R3 S7: let one frame paint the leave's start before the new view's render task occupies the thread (measured: the
+    // first visible change came 36–61 ms after the hashchange when the render ran first)
+    if (old?.__early) { await nextFrame(); if (seq !== cur.seq) { clearTimeout(slow); page.remove(); return; } }
     const mod = await import(await moduleFor(key));
     page.__mod = mod;
     await mod.render(page, { name: key, params });

@@ -305,12 +305,14 @@ html.dossier-open :is(.crumb, .topbar-right) { opacity: 0; visibility: hidden; p
 .page.is-pending { opacity: 0; z-index: -1; }
 .page.is-building { content-visibility: hidden; } /* app.js routeTo: rendered without style/layout, laid out a frame later */
 .page.leaving { z-index: -1; opacity: 0; transform: translateY(-6px);
-  transition: opacity 220ms var(--ease-fade), transform 220ms var(--ease-exit); }
+  transition: opacity 220ms var(--ease-settle), transform 220ms var(--ease-exit); }
+/* R3 S7 (E): the leave starts on the hashchange and on --ease-settle (a non-zero initial slope), so the frame after
+   the click already shows the old page going; --ease-fade's flat start held it at ≥ .995 for 2–3 frames */
 .page.leaving .page-head { opacity: 0; transition: opacity 140ms var(--ease-exit); }
 /* utilities for long tabs: skip offscreen rendering (tab owners; deferred work waits for byline:routed) */
 .cv { content-visibility: auto; contain-intrinsic-size: auto 320px; }
 .cv-row { content-visibility: auto; contain-intrinsic-size: auto 56px; }
-.page.skeleton-page.leaving { transition-duration: 160ms; transform: none; transition-timing-function: var(--ease-fade); }
+.page.skeleton-page.leaving { transition-duration: 160ms; transform: none; transition-timing-function: var(--ease-settle); }
 
 /* ---------------------------------------------------------------- theme cross-fade (S7): surfaces fade, ink swaps once
    Surfaces cross-fade their fill and hairline over --dur-theme. Text must NOT cross-fade: a light ink fading to dark

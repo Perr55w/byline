@@ -214,6 +214,7 @@
   #view .cr-table th, #view .cr-table td { padding-left: 8px; padding-right: 8px; }
   .cr-barcell { width: 34%; }
   .cr-days li { grid-template-columns: minmax(0, 1fr) auto; }
+  .cr-days--side li { grid-template-columns: minmax(0, 1fr) auto 14px; }   /* side card keeps its count on the row */
   .cr-days-n { grid-column: 1 / -1; text-align: left; }
   .cr-plist li { padding: 14px 18px; }
 }
@@ -222,3 +223,4 @@
    ink with color-mix (tokens only). Shared-file request: fix .tag--ok/--warn/--demo in components.css. */
 :is(.cp-ok, .pp-note--ok) { color: var(--ok-text); }
 :is(.pp-note--warn, .pp-dupnote, .pp-date.is-today) { color: var(--warn-text); }
+

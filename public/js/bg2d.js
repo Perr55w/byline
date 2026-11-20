@@ -118,7 +118,9 @@ export function createField(ctx) {
         const he = D.heat[i], u = .5 + .5 * w;
         let a = aBase + aSpan * u * u + he * .10 + L * .16 + sheen * .22 + P * .072 + pr * .2;
         // R3 S10: blue only from heat, the pool's edge band and a click pulse; the pointer light is neutral
-        let hot = Math.min(1, he * .85 + PE * .5 + pr * .5);
+        // only the cores of the hot topics turn blue (smoothstep .55 → 1 of the heat): the skirt stays neutral ink
+        const hq = he <= .55 ? 0 : he >= 1 ? 1 : (he - .55) / .45, hb = hq * hq * (3 - 2 * hq);
+        let hot = Math.min(1, hb * .85 + PE * .5 + pr * .5);
         a *= 1 + (hratio - 1) * hot * hot;
         if (near > .001) {
           const ddx = x - px, ddy = y - py, d2 = ddx * ddx + ddy * ddy;

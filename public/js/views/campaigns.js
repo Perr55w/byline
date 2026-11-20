@@ -9,7 +9,7 @@
 // outcomes panel (replies, meetings, portfolio visits; "unavailable" when nothing was recorded) and sources.
 import { api } from '../api.js';
 import { html, raw, esc, on, act, toast, modal, confirmBox, status, channelLabel, scoreChip, topicPills, icon, useStyle, evLabel } from '../ui.js';
-import { openOutreach, PURPOSES, CHANNELS, plural, demoTag, stripDemo, whenLabel, listJoin } from './people.js';
+import { openOutreach, PURPOSES, CHANNELS, plural, demoTag, stripDemo, whenLabel, listJoin, afterSwap } from './people.js';
 
 const CH = { linkedin: 'LinkedIn', instagram: 'Instagram', video: 'Video' };
 const CHANNEL_ORDER = ['linkedin', 'instagram', 'video'];
@@ -33,7 +33,6 @@ function dek(st) {
   const f = toks(st.finding), t = new Set([...toks(st.title), ...toks(st.short_title)]);
   return f.length && f.filter(w => t.has(w)).length / f.length >= 0.8 ? null : st.finding;
 }
-const ric = (fn) => (window.requestIdleCallback ? requestIdleCallback(fn, { timeout: 300 }) : setTimeout(fn, 16));
 
 function campaignFacts(c, d) {
   const drafts = d?.drafts || c.drafts || [];
@@ -46,8 +45,10 @@ function campaignFacts(c, d) {
 const factLine = (f) => `${plural(f.d, 'draft')} (${f.p} published), ${plural(f.o, 'message')}, ${f.r == null ? '?' : plural(f.r, 'reply', 'replies')}, ${f.m == null ? '?' : plural(f.m, 'meeting')}.`;
 
 export async function render(el, ctx = {}) {
-  await Promise.all([useStyle('/css/v4/campaigns.css'), useStyle('/css/v4/people.css')]);
-  if (ctx.params?.[0]) return renderDetail(el, ctx.params[0], ctx);
+  // The list itself uses no people.css rules; the detail page and the create modal do (C-4: one stylesheet fewer
+  // on the list's cold path).
+  if (ctx.params?.[0]) { await Promise.all([useStyle('/css/v4/campaigns.css'), useStyle('/css/v4/people.css')]); return renderDetail(el, ctx.params[0], ctx); }
+  await useStyle('/css/v4/campaigns.css');
   return renderList(el, ctx);
 }
 
@@ -95,7 +96,10 @@ async function renderList(el, ctx) {
   const slotDates = new Set(slotList.map(([, d]) => d));
   const oneSlot = slotDates.size === 1 ? [...slotDates][0] : undefined;
   // C-4 (E1): the swap frame builds the head and the first 6 anchor rows; the rest follow in one idle chunk.
-  const FIRST = 6;
+  // At phone width only the head and the first rows fit, and the side column stacks below the list, so the swap frame
+  // there builds 3 rows and leaves the side column to the idle chunk too.
+  const phone = matchMedia('(max-width: 1100px)').matches;
+  const FIRST = phone ? 3 : 6;
   const row = (s) => {
     const ds = byStory.get(s.id) || [];
     const fd = dek(s);
@@ -121,6 +125,25 @@ async function renderList(el, ctx) {
         <ol class="cp-cand-list">${now.map(row)}</ol></section>`;
   });
 
+  const asideHtml = () => html`
+      <section class="tile tile--static cp-card-s" aria-labelledby="cp-free-h">
+        <h2 class="section-label" id="cp-free-h">Pieces waiting for a campaign</h2>
+        <p class="cp-big"><span class="cp-big-n">${free.length}</span><span class="cp-big-of">${free.length === 1 ? 'draft' : 'drafts'} not in a campaign</span></p>
+        ${freeBy.length ? html`<ul class="cp-bars">${freeBy.map(([ch, a]) => html`<li><span>${CH[ch]}</span><span class="meter"><i style="--v:${a.length / Math.max(1, free.length)}"></i></span><b>${a.length}</b></li>`)}</ul>` : ''}
+        <p class="cp-note">${statusCounts(free).sort((a, b) => a[1] - b[1]).map(([s, n]) => `${n} ${s === 'draft' ? (n === 1 ? 'draft' : 'drafts') : s.replace(/_/g, ' ')}`).join(' · ') || 'No unassigned drafts.'}</p>
+        <div class="cp-rule"></div>
+        <p class="cp-note"><b>${freeOut.length}</b> outreach ${freeOut.length === 1 ? 'message' : 'messages'} not linked to a campaign${freeOut.filter(o => o.status === 'sent').length ? ` (${freeOut.filter(o => o.status === 'sent').length} already sent)` : ''}.</p>
+      </section>
+      <section class="tile tile--static cp-card-s" aria-labelledby="cp-plan-h">
+        ${topicFinding ? html`<h2 class="section-label" id="cp-plan-h">Where the drafts sit</h2>
+        <p class="cp-finding">${topicFinding}</p>
+        <div class="cp-rule"></div>` : ''}
+        <h2 class="section-label"${topicFinding ? '' : raw(' id="cp-plan-h"')}>Next open posting slot${oneSlot === undefined ? 's' : ''}</h2>
+        ${oneSlot !== undefined ? html`<p class="cp-oneslot">${oneSlot ? html`<b>${dayShort(oneSlot)}</b> · ${slotList.map(([ch]) => CH[ch]).join(', ')}` : 'None in the next 60 days on any channel'}</p>`
+          : html`<ul class="cp-slots">${slotList.map(([ch, d]) => html`<li><span>${CH[ch]}</span><b>${d ? dayShort(d) : 'none in 60 days'}</b></li>`)}</ul>`}
+        <p class="cp-note">Posting days with no draft planned for that channel. Plan pieces in <a href="#/calendar">Calendar</a>.</p>
+      </section>
+`;
   const root = document.createElement('div');
   root.className = 'cp';
   root.innerHTML = String(html`
@@ -158,30 +181,13 @@ async function renderList(el, ctx) {
       <p class="cp-foot-note cp-pad">Each piece in a campaign keeps its own approval, and deleting a campaign keeps every piece. <a href="#/studio">Review approvals in Studio${icon('arrow-right')}</a></p>
     </section>
 
-    <aside class="stack cp-aside">
-      <section class="tile tile--static cp-card-s" aria-labelledby="cp-free-h">
-        <h2 class="section-label" id="cp-free-h">Pieces waiting for a campaign</h2>
-        <p class="cp-big"><span class="cp-big-n">${free.length}</span><span class="cp-big-of">${free.length === 1 ? 'draft' : 'drafts'} not in a campaign</span></p>
-        ${freeBy.length ? html`<ul class="cp-bars">${freeBy.map(([ch, a]) => html`<li><span>${CH[ch]}</span><span class="meter"><i style="--v:${a.length / Math.max(1, free.length)}"></i></span><b>${a.length}</b></li>`)}</ul>` : ''}
-        <p class="cp-note">${statusCounts(free).sort((a, b) => a[1] - b[1]).map(([s, n]) => `${n} ${s === 'draft' ? (n === 1 ? 'draft' : 'drafts') : s.replace(/_/g, ' ')}`).join(' · ') || 'No unassigned drafts.'}</p>
-        <div class="cp-rule"></div>
-        <p class="cp-note"><b>${freeOut.length}</b> outreach ${freeOut.length === 1 ? 'message' : 'messages'} not linked to a campaign${freeOut.filter(o => o.status === 'sent').length ? ` (${freeOut.filter(o => o.status === 'sent').length} already sent)` : ''}.</p>
-      </section>
-      <section class="tile tile--static cp-card-s" aria-labelledby="cp-plan-h">
-        ${topicFinding ? html`<h2 class="section-label" id="cp-plan-h">Where the drafts sit</h2>
-        <p class="cp-finding">${topicFinding}</p>
-        <div class="cp-rule"></div>` : ''}
-        <h2 class="section-label"${topicFinding ? '' : raw(' id="cp-plan-h"')}>Next open posting slot${oneSlot === undefined ? 's' : ''}</h2>
-        ${oneSlot !== undefined ? html`<p class="cp-oneslot">${oneSlot ? html`<b>${dayShort(oneSlot)}</b> · ${slotList.map(([ch]) => CH[ch]).join(', ')}` : 'None in the next 60 days on any channel'}</p>`
-          : html`<ul class="cp-slots">${slotList.map(([ch, d]) => html`<li><span>${CH[ch]}</span><b>${d ? dayShort(d) : 'none in 60 days'}</b></li>`)}</ul>`}
-        <p class="cp-note">Posting days with no draft planned for that channel. Plan pieces in <a href="#/calendar">Calendar</a>.</p>
-      </section>
+    <aside class="stack cp-aside">${phone ? '' : asideHtml()}
     </aside>
   </div>`);
   el.replaceChildren(root);
   on(root, 'click', '[data-act="new"]', (e, b) => openCreate({ storyId: b.dataset.story ? Number(b.dataset.story) : null }));
-  if (later.length) ric(() => {
-    if (!root.isConnected && !el.contains(root)) return;
+  if (later.length || phone) afterSwap(root, () => {
+    if (phone) root.querySelector('.cp-aside').innerHTML = String(asideHtml());
     for (const [gi, list] of later) {
       const sec = root.querySelector(`.cp-group[data-g="${gi}"]`);
       if (!sec) continue;
@@ -193,7 +199,7 @@ async function renderList(el, ctx) {
 
 // ------------------------------------------------------------------ create
 async function openCreate({ storyId = null } = {}) {
-  const [drafts, projects, stories] = await Promise.all([api.get('/drafts'), api.get('/projects'), api.get('/stories?limit=200').catch(() => [])]);
+  const [, drafts, projects, stories] = await Promise.all([useStyle('/css/v4/people.css'), api.get('/drafts'), api.get('/projects'), api.get('/stories?limit=200').catch(() => [])]);
   const T = window.__byline?.threshold ?? 55;
   const free = drafts.filter(d => !d.campaign_id).sort((a, b) => (b.story_id === storyId) - (a.story_id === storyId));
   const story = stories.find(s => s.id === storyId);

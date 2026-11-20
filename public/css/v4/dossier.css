@@ -22,9 +22,17 @@
 /* ---------------------------------------------------------------- header: the same 7/5 grid as the body, so the fact card sits over the right column */
 .dx-head { display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); gap: 0 var(--dx-gap); align-items: start; }
 .dx-head-main { min-width: 0; }
-.dx-eyebrow { display: block; }
-.dx-eb-part { white-space: nowrap; } /* the line wraps between its parts, never inside "updated 2d ago" */
-.dx-eyebrow .tag { display: inline-flex; margin-right: 8px; vertical-align: 1px; white-space: nowrap; } /* the Demo / Archived tag leads the line, inline, so it never wraps alone (FD10) */
+/* D-8: parts wrap as flex items; each part's "·" sits in the column gap before it, and the left-edge clip hides the
+   one that would start a line, so no line ever begins with a separator */
+.dx-eyebrow { display: flex; flex-wrap: wrap; align-items: center; column-gap: 16px; row-gap: 2px; clip-path: inset(-6px -6px -6px 0); }
+.dx-eb-part { position: relative; white-space: nowrap; } /* the line wraps between its parts, never inside "updated 2d ago" */
+.dx-eb-part::before { content: "·"; position: absolute; right: 100%; width: 16px; text-align: center; color: var(--text-3); }
+.dx-eyebrow .tag + .dx-eb-part::before { content: none; }
+.dx-eyebrow .tag { display: inline-flex; margin-right: -6px; white-space: nowrap; } /* the Demo / Archived tag leads the line, so it never wraps alone (FD10) */
+@media (max-width: 599px) {
+  .dx-eb-topic { flex-basis: 100%; }
+  .dx-eb-long { display: none; }
+}
 .dx-title {
   margin: 12px 0 0; max-width: 22ch; color: var(--text-1); text-wrap: balance;
   font: 400 40px/44px var(--font-serif); font-variation-settings: 'opsz' 72; letter-spacing: -0.02em;
@@ -54,6 +62,10 @@
 .dx-fact dt { display: flex; align-items: center; gap: 10px; font: 500 12px/16px var(--font-sans); color: var(--text-3); } /* sentence case: mono caps are for eyebrows only */
 .dx-fact dd { margin: 0; }
 .dx-fact-v { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; color: var(--text-1); font: 500 14px/20px var(--font-sans); font-variant-numeric: tabular-nums; }
+/* "6 posts · 1 outlet · 0 independent" wraps between its parts, and a wrapped line never starts with the "·" */
+.dx-fact-v.dx-seps { column-gap: 14px; row-gap: 0; clip-path: inset(-6px -6px -6px 0); }
+.dx-seps > span { position: relative; white-space: nowrap; }
+.dx-seps > span + span::before { content: "·"; position: absolute; right: 100%; width: 14px; text-align: center; color: var(--text-3); }
 .dx-fact-s { color: var(--text-3); font: 450 12.5px/17px var(--font-sans); }
 
 .dx-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 22px; }
@@ -164,6 +176,12 @@
 .dx-compact-t:hover { color: var(--accent-text); }
 .dx-compact-s { color: var(--text-2); font: 400 13.5px/20px var(--font-sans); overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; } /* FD5: two lines, not one */
 .dx-compact-s--none { color: var(--text-3); }
+/* D-5: a run of posts with nothing extracted, as one row */
+.dx-run { margin: 8px 0 0; color: var(--text-2); font: 400 14px/22px var(--font-sans); text-wrap: pretty; }
+.dx-run b { color: var(--text-1); font-weight: 600; }
+.dx-run a { color: var(--accent-text); font: 500 13px/20px var(--font-mono); text-decoration: none; white-space: nowrap; }
+.dx-run a:hover { text-decoration: underline; text-underline-offset: 3px; }
+.dx-srcname--first::before { content: none; }
 .dx-compact[hidden], .dx-rest-full[hidden], .dx-claims [hidden], .dx-conn-list [hidden], .dx-pieces [hidden] { display: none; }
 
 /* ---------------------------------------------------------------- B. Evidence (label column + plain sentences) */
@@ -184,17 +202,21 @@
 .dx-pw li { display: flex; flex-direction: column; align-items: stretch; gap: 3px; }
  /* FD6: quotes show whole up to 240 characters; longer ones are cut at a word boundary in JS (clip), never by a clamp */
 .dx-pw b { color: var(--text-1); font-weight: 600; font-size: 13.5px; }
+/* D-1: a signal with no quote reads "You can try it · matched available" on one line */
+.dx-pw .dx-pw-line > span:first-child { display: inline; line-height: 24px; }
+.dx-pw .dx-term { margin-left: 2px; }
+.dx-pw-ok { display: inline-flex; vertical-align: -2px; margin-left: 4px; color: var(--text-3); }
+.dx-pw-ok .icon { width: 14px; height: 14px; }
 .dx-quote { display: block; padding-left: 12px; box-shadow: inset 2px 0 0 var(--line-2); color: var(--text-2); font: 400 14.5px/21px var(--font-serif); font-variation-settings: 'opsz' 16; quotes: "“" "”"; }
 .dx-nums { margin: 2px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
 .dx-nums li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0 14px; align-items: baseline; color: var(--text-2); font: 400 14px/21px var(--font-sans); text-wrap: pretty; }
 .dx-frag-src { color: var(--text-3); font: 450 12px/16px var(--font-mono); white-space: nowrap; }
 .dx-notes { margin: 6px 0 0; padding: 14px 0 0; border-top: 1px solid var(--line); list-style: none; display: flex; flex-direction: column; gap: 6px; color: var(--text-2); font: 400 13.5px/20px var(--font-sans); }
 
-/* ---------------------------------------------------------------- C. Why it ranked */
-.dx-why-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 10px; counter-reset: why; }
-.dx-why-list li { counter-increment: why; position: relative; padding-left: 28px; color: var(--text-1); font: 400 15px/22px var(--font-sans); text-wrap: pretty; }
-.dx-why-list li::before { content: counter(why); position: absolute; left: 0; top: 1px; width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center;
-  box-shadow: inset 0 0 0 1px var(--line-2); color: var(--text-2); font: 500 11px/18px var(--font-mono); text-align: center; }
+/* ---------------------------------------------------------------- C. Why it ranked: Today's dash markers (D-7, SPEC §0 names them), one component */
+.dx-why-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; }
+.dx-why-list li { position: relative; padding-left: 20px; color: var(--text-1); font: 400 15px/22px var(--font-sans); text-wrap: pretty; }
+.dx-why-list li::before { content: ""; position: absolute; left: 2px; top: 11px; width: 9px; height: 1.5px; border-radius: 1px; background: var(--accent); }
 
 /* ---------------------------------------------------------------- D. Score breakdown: UNEQUAL tracks ∝ weights */
 .dx-score-top { display: flex; align-items: center; gap: 14px; margin: 2px 0 6px; }
@@ -331,6 +353,8 @@ mark.num-hl { background: var(--accent-soft); color: var(--text-1); border-radiu
    task with content-visibility:auto at its measured height (--cis, story-dossier.js CIS), then drops it one per task
    once all have arrived, so the scroll height ends exact. overflow-clip-margin keeps focus rings unclipped meanwhile.
    The collapsed rest of a group stays lazy. */
+/* D-6: a section inserted after the flight is held here until the scroller's IntersectionObserver reports it */
+.dossier .dx-body .dx-pre { opacity: 0; } /* beats the frame's .dossier [data-dossier-section] { opacity: 1 } */
 .dx-cv { content-visibility: auto; contain-intrinsic-size: auto var(--cis, 320px); overflow-clip-margin: 8px; }
 .dx-rest-full { content-visibility: auto; contain-intrinsic-size: auto 600px; }
 /* local fixes for shared components (requested upstream): AA demo tag; visible focus on .btn */

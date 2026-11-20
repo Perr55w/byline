@@ -9,7 +9,7 @@
 
 import { api } from '../api.js';
 import * as ui from '../ui.js';
-import { EASE, reduced, enterHeading, flip } from '../motion.js';
+import { EASE, reduced, flip } from '../motion.js';
 import * as dossier from '../dossier.js';
 
 const { html, raw, esc, on, act, toast, icon, scoreChip, strikeOut, useStyle } = ui;
@@ -132,7 +132,7 @@ function row(s, T, cv = false) {
   const changed = s.viewed_score != null && Math.round(s.viewed_score) !== Math.round(s.score);
   const eng = Object.entries(s.breakdown?.engagement || {});
   const counts = countsLabel(s);
-  return html`<article class="fd-row${below ? ' is-below' : ''}${cv ? ' cv-row' : ''}" data-row data-dossier-src data-key="${s.id}" data-sig="${rowSig(s, T)}" data-id="${s.id}" data-score="${s.score}">
+  return html`<article class="fd-row${below ? ' is-below' : ''}${cv ? ' cv-row' : ''}" data-row data-key="${s.id}" data-sig="${rowSig(s, T)}" data-id="${s.id}" data-score="${s.score}">
     <div class="fd-score">${raw(String(scoreChip(s.score, T)).replace('<span class="score-chip"', '<span class="score-chip" data-shared="ring"'))}${changed ? html`<span class="fd-was" title="Score when you last opened it">was ${Math.round(s.viewed_score)}</span>` : ''}</div>
     <div class="fd-main">
       <h3 class="fd-h"><a class="fd-title" href="#/story/${s.id}" data-shared="title">${s.title}</a>${s.is_demo ? html` <span class="tag tag--demo" title="Fictional sample data">Demo</span>` : ''}</h3>
@@ -153,7 +153,12 @@ function row(s, T, cv = false) {
   </article>`;
 }
 
-/** One toolbar for the whole list (keeps per-row DOM small); it moves into the row under the pointer or focus. */
+/**
+ * Row actions (F3). F-2: every row carries its own toolbar, added in idle time after the list is on screen
+ * (armActs), so hover and focus only toggle :hover / :focus-within styles: nothing moves, nothing lays out. The
+ * toolbar is absolutely placed over the date column and its reveal is opacity only. A row that is hovered or
+ * focused before the idle pass reaches it gets its toolbar then (placeActs).
+ */
 function actsHtml(archived) {
   return html`<div class="fd-acts" role="group" aria-label="Story actions" data-acts>
     ${archived
@@ -164,21 +169,37 @@ function actsHtml(archived) {
   </div>`;
 }
 function placeActs(el, rowEl, state) {
-  if (!rowEl) return;
-  let bar = el.querySelector('.fd-list [data-acts]');
-  if (!bar) bar = el.querySelector('template[data-acts-home]')?.content.firstElementChild?.cloneNode(true);
-  if (!bar || bar.parentElement === rowEl.querySelector('.fd-end')) return;
-  rowEl.querySelector('.fd-end').append(bar);
+  const end = rowEl?.querySelector('.fd-end');
+  if (!end || end.querySelector('[data-acts]')) return false;
+  const bar = el.querySelector('template[data-acts-home]')?.content.firstElementChild?.cloneNode(true);
+  if (!bar) return false;
   const s = state.stories.find(x => String(x.id) === rowEl.dataset.id);
   bar.setAttribute('aria-label', `Actions for ${s?.short_title || s?.title || 'story'}`);
   bar.querySelector('[data-fd="save"]')?.setAttribute('aria-pressed', String(!!s?.collections));
+  end.append(bar);
+  return true;
+}
+/** Idle pass: a toolbar for every row that has none yet, a few rows per idle slice. */
+function armActs(el, state) {
+  if (matchMedia('(hover: none)').matches) return; // touch: the toolbar is hidden (feed.css); actions live in the dossier
+  const token = (state.actsToken = {});
+  const step = (dl) => {
+    if (state.actsToken !== token || !el.isConnected) return;
+    const todo = [...el.querySelectorAll('.fd-list > .fd-row:not(.fd-leaving)')].filter(r => !r.querySelector('.fd-end [data-acts]'));
+    let n = 0;
+    while (todo.length && (dl.didTimeout ? n < 12 : dl.timeRemaining() > 3)) { placeActs(el, todo.shift(), state); n++; }
+    if (todo.length) idle(step, 1000);
+  };
+  idle(step, 1000);
 }
 
 // FD3 / E1: the first SYNC_ROWS rows render with the page; the rest arrive in one idle chunk. Every row after the
 // 8th skips layout until scrolled to (cv-row; its intrinsic size is the measured Feed row, feed.css).
-// On a phone (rows ≈ 200 px, about 4 on screen) the page renders 5 rows with it; rows 6–8 join the idle chunk.
-const SYNC_ROWS = 8, SYNC_ROWS_PHONE = 5, CV_FROM = 8, REUSE_SYNC = 40;
-const syncRows = () => (matchMedia('(max-width: 760px)').matches ? SYNC_ROWS_PHONE : SYNC_ROWS);
+// F-1, phone: rows are ≈ 196 px and the list starts ≈ 500 px down, so two rows show on a 390 × 844 screen. The swap
+// frame renders the first 6 rows and lays out only the first 3 (rows 4–6 are cv-row); the rest join the idle chunk.
+const SYNC_ROWS = 8, SYNC_ROWS_PHONE = 6, CV_FROM = 8, CV_FROM_PHONE = 3, REUSE_SYNC = 40;
+const isPhoneW = () => matchMedia('(max-width: 760px)').matches;
+const syncRows = () => (isPhoneW() ? SYNC_ROWS_PHONE : SYNC_ROWS);
 /** Row ids + scores: when this key is unchanged a repaint leaves the list alone. */
 const listKey = (st, stories, T) => `${T}|${st.status}|${st.sort}|${st.min}|${stories.map(s => `${s.id}:${s.score}`).join(',')}`;
 /**
@@ -193,6 +214,7 @@ function listPlan(st, stories, T) {
   if (!list.length) return { items: [], hidden, empty: String(html`<div class="empty"><h3>Nothing at or above ${st.min}.</h3><p>${plural(hidden, 'story', 'stories')} in this range score lower. Lower the minimum score to see them.</p></div>`) };
   const items = [];
   let divided = false, rows = 0;
+  const cvFrom = isPhoneW() ? CV_FROM_PHONE : CV_FROM;
   const belowCount = list.filter(s => s.score < T).length;
   const divText = `Below your bar · ${T} — ${plural(belowCount, 'story', 'stories')}`;
   for (const s of list) {
@@ -200,7 +222,7 @@ function listPlan(st, stories, T) {
       divided = true;
       items.push({ key: 'div', sig: divText, text: divText, html: () => String(html`<div class="divider-label fd-divider" role="separator" data-key="div" data-sig="${divText}">${divText}</div>`) });
     }
-    const cv = rows++ >= CV_FROM;
+    const cv = rows++ >= cvFrom;
     items.push({ key: String(s.id), sig: rowSig(s, T), cv, html: () => String(row(s, T, cv)) });
   }
   return { items, hidden, empty: null };
@@ -231,6 +253,7 @@ function fillRest(el, state, rest) {
     if (more && list) { if (typeof more === 'string') list.insertAdjacentHTML('beforeend', more); else list.append(...more); }
     clampCheck(el, state);
     releaseCv(el, state);
+    armActs(el, state);
   });
 }
 /**
@@ -349,11 +372,24 @@ function headHtml(state) {
   const head = headline(st, stories, T, state.status);
   return { eyebrow: `Ranked by your ${prioCount} priorities · bar ${T}`, h: String(html`${head.h}`), l: String(html`${head.l}`), raw: head };
 }
+/**
+ * F-5: catch-all topics (weight ≤ 1) and topics with a single story fold into a trailing "+N" chip, so the row
+ * stays on one line at 1440; the selected topic is never folded. "+N" expands the row in place (and "Fewer" folds it).
+ */
 function chipsData(state, topics) {
   const { st } = state;
-  return [{ v: '', label: 'All', pressed: !st.topic && !st.status }, ...topicCounts(state, topics).map(([t, n]) => ({ v: t, label: t, n, pressed: st.topic === t && !st.status }))];
+  const weight = new Map((state.settings.priorities || []).map(p => [p.topic, Number(p.weight) || 0]));
+  const all = topicCounts(state, topics).map(([t, n]) => ({ v: t, label: t, n, pressed: st.topic === t && !st.status, minor: (weight.get(t) ?? 1) <= 1 || n <= 1 }));
+  const minor = all.filter(c => c.minor && !c.pressed);
+  const fold = minor.length > 1 && !state.chipsOpen;
+  const shown = fold ? all.filter(c => !c.minor || c.pressed) : all;
+  const out = [{ v: '', label: 'All', pressed: !st.topic && !st.status }, ...shown];
+  if (minor.length > 1) out.push({ v: '__more', more: true, label: fold ? `+${minor.length}` : 'Fewer', title: fold ? `${minor.map(c => `${c.label} (${c.n})`).join(', ')}` : 'Fold the catch-all and single-story topics', open: !fold });
+  return out;
 }
-const chipHtml = (c) => html`<button type="button" class="chip chip--filter" data-fd="topic" data-v="${c.v}" aria-pressed="${String(!!c.pressed)}">${c.label}${c.n != null ? html`<span class="fd-n">${c.n}</span>` : ''}</button>`;
+const chipHtml = (c) => (c.more
+  ? html`<button type="button" class="chip chip--filter fd-more" data-fd="topic-more" data-v="__more" aria-expanded="${String(!!c.open)}" title="${c.title}">${c.label}</button>`
+  : html`<button type="button" class="chip chip--filter" data-fd="topic" data-v="${c.v}" aria-pressed="${String(!!c.pressed)}">${c.label}${c.n != null ? html`<span class="fd-n">${c.n}</span>` : ''}</button>`);
 function bodyHtml(state, head) {
   const { st, stories, T } = state;
   if (stories.length) return listHtml(st, stories, T);
@@ -412,41 +448,59 @@ function paint(el, state) {
 // ------------------------------------------------------------------ repaint in place (FD4: nothing blanks, nothing pops)
 const fadeIn = (n, delay = 0) => { if (!reduced()) n.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 240, delay, easing: EASE.fade, fill: 'backwards' }); };
 /**
- * Header swap (FD4). Figures are never blanked in place: a changed h1 cross-fades as a whole (old out over
- * 120 ms, then motion.js enterHeading's tab variant brings the new sentence and lede in); a lede that changes
- * under an unchanged h1 does the same on its own (120 ms out, 240 ms in).
+ * Header swap on a filter change (F-3). enterHeading runs on route entry only; here the h1 stays put. When the new
+ * sentence has the same words around its figures (each figure is a <b>), only the figures that changed dip to
+ * opacity .5 and back over 160 ms, swapping at the bottom of the dip; when the wording changes too, the whole h1
+ * dips the same way. A changed lede dips as a block. Nothing is ever blanked.
  */
+const frag = (markup) => { const t = document.createElement('template'); t.innerHTML = markup; return t.content; };
+const skeleton = (root) => [...root.childNodes].map(n => (n.nodeName === 'B' ? '\u0001' : n.textContent)).join('');
+function dip(node, apply) {
+  if (reduced()) { apply(); return; }
+  const out = node.animate([{ opacity: 1 }, { opacity: 0.5 }], { duration: 80, easing: EASE.exit, fill: 'forwards' });
+  out.finished.then(() => {
+    apply();
+    node.animate([{ opacity: 0.5 }, { opacity: 1 }], { duration: 80, easing: EASE.fade });
+    out.cancel(); // after the return leg has started: no frame at full opacity in between
+  }, () => {});
+}
 function swapHead(el, state, head) {
   const h1 = el.querySelector('.page-head h1'), lede = el.querySelector('.page-head .lede');
   const eb = el.querySelector('.page-head .eyebrow'); if (eb && eb.textContent !== head.eyebrow) eb.textContent = head.eyebrow;
-  const hChanged = !!h1 && state.head?.h !== head.h, lChanged = !!lede && state.head?.l !== head.l;
+  const prev = state.head;
+  const hChanged = !!h1 && prev?.h !== head.h, lChanged = !!lede && prev?.l !== head.l;
   state.head = head;
-  if (reduced()) { if (hChanged) h1.innerHTML = head.h; if (lChanged) lede.innerHTML = head.l; return; }
-  const pend = state.headSwap; // a swap whose fade-out is still running picks up the latest text when it ends
-  if (pend) { pend.heading = pend.heading || hChanged; return; }
-  if (!hChanged && !lChanged) return;
-  const swap = state.headSwap = { heading: hChanged, anims: [] };
-  const out = (n) => n.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 120, easing: EASE.exit, fill: 'forwards' });
-  if (hChanged) swap.anims.push(out(h1));
-  if (lede) swap.anims.push(out(lede)); // the lede goes with the heading; enterHeading brings it back
-  Promise.all(swap.anims.map(a => a.finished)).then(() => {
-    if (state.headSwap !== swap || !el.isConnected) return;
-    state.headSwap = null;
-    if (swap.heading) h1.innerHTML = state.head.h;
-    if (lede) lede.innerHTML = state.head.l;
-    if (swap.heading) enterHeading(h1, { variant: 'tab', lede });
-    else if (lede) fadeIn(lede);
-    swap.anims.forEach(a => a.cancel()); // same task as the entrance starts: its backwards fill holds the new text at 0
-  }, () => { if (state.headSwap === swap) state.headSwap = null; });
+  if (hChanged) {
+    const A = frag(prev?.h || ''), B = frag(head.h);
+    const ab = [...A.querySelectorAll('b')], bb = [...B.querySelectorAll('b')];
+    if (prev && ab.length === bb.length && skeleton(A) === skeleton(B)) {
+      // the route entrance split the h1 into line boxes: put the same sentence back unsplit (no visible change)
+      if (h1.children.length !== A.children.length || [...h1.children].some(c => c.nodeName !== 'B')) h1.innerHTML = prev.h;
+      const live = [...h1.querySelectorAll('b')];
+      bb.forEach((b, i) => {
+        if (!live[i] || live[i].textContent === b.textContent) return;
+        dip(live[i], () => {
+          const now = frag(state.head.h), nb = [...now.querySelectorAll('b')];
+          if (nb.length === live.length && skeleton(now) === skeleton(frag(h1.innerHTML))) live[i].textContent = nb[i].textContent;
+          else h1.innerHTML = state.head.h;
+        });
+      });
+    } else dip(h1, () => { h1.innerHTML = state.head.h; });
+  }
+  if (lChanged) dip(lede, () => { lede.innerHTML = state.head.l; });
 }
 /** Topic chips keyed by value: kept chips update in place and move; new ones fade in. */
 function patchChips(el, state) {
   const bar = el.querySelector('[data-fd-topics]'); if (!bar) return;
   const topics = (state.settings.priorities || []).filter(p => p.weight > 0).map(p => p.topic);
-  const have = new Map([...bar.querySelectorAll('[data-fd="topic"]')].map(b => [b.dataset.v, b]));
+  const have = new Map([...bar.querySelectorAll('[data-fd="topic"], [data-fd="topic-more"]')].map(b => [b.dataset.v, b]));
   const next = chipsData(state, topics).map(c => {
     let b = have.get(c.v);
-    if (b) {
+    if (b && c.more) {
+      have.delete(c.v);
+      if (b.textContent !== c.label) b.textContent = c.label;
+      b.setAttribute('aria-expanded', String(!!c.open)); b.title = c.title;
+    } else if (b) {
       have.delete(c.v);
       b.setAttribute('aria-pressed', String(c.pressed));
       const n = b.querySelector('.fd-n'); if (n && c.n != null && n.textContent !== String(c.n)) n.textContent = c.n;
@@ -474,7 +528,7 @@ async function replaceBody(el, state, head, st) {
     out.cancel();
     fadeIn(bodyEl);
   } else bodyEl.innerHTML = body.html;
-  if (body.rest) fillRest(el, state, body.rest);
+  if (body.rest) fillRest(el, state, body.rest); else armActs(el, state);
 }
 
 /**
@@ -525,7 +579,7 @@ function reconcile(el, state, head, st) {
   }
   // the hover toolbar belongs to the old status's list when the status changed
   if (st.status !== state.listStatus) {
-    listEl.querySelector('[data-acts]')?.remove();
+    listEl.querySelectorAll('[data-acts]').forEach(b => b.remove());
     const tpl = bodyEl.querySelector('template[data-acts-home]');
     if (tpl) tpl.innerHTML = String(actsHtml(st.status === 'archived'));
     state.listStatus = st.status;
@@ -553,7 +607,7 @@ function reconcile(el, state, head, st) {
     }
   } else leaving.forEach(n => n.remove());
   if (later.length) fillRest(el, state, () => parse(later.map(it => it.html()).join('')));
-  else { clampCheck(el, state); releaseCv(el, state); }
+  else { clampCheck(el, state); releaseCv(el, state); armActs(el, state); }
 }
 
 async function update(el, state, patch) {
@@ -593,6 +647,7 @@ function wire(el, state) {
     const rowEl = b.closest('[data-row]');
     const id = rowEl?.dataset.id;
     if (k === 'topic') return update(el, state, { topic: b.dataset.v, status: '' });
+    if (k === 'topic-more') { state.chipsOpen = !state.chipsOpen; patchChips(el, state); el.querySelector('[data-fd="topic-more"]')?.focus(); return; }
     if (k === 'archived') return update(el, state, { status: state.st.status ? '' : 'archived', topic: '' });
     if (k === 'days') return update(el, state, { days: b.dataset.v });
     if (k === 'sort') return update(el, state, { sort: b.dataset.v });
@@ -636,7 +691,18 @@ function wire(el, state) {
     if (getSelection()?.toString()) return;
     r.querySelector('a.fd-title')?.click();
   });
-  el.addEventListener('pointerover', (e) => { const r = e.target.closest?.('[data-row]'); if (r && r !== el._hov) { el._hov = r; dossier.prefetch(r.dataset.id); placeActs(el, r, state); } }, { passive: true });
+  // F-2: hover only toggles :hover styles (rows carry their toolbars, armActs). The dossier warm-up waits for hover
+  // intent, the pointer resting 80 ms on one row, so a sweep across the list fetches nothing; a press warms at once.
+  let hovT = 0;
+  el.addEventListener('pointerover', (e) => {
+    const r = e.target.closest?.('[data-row]');
+    if (!r || r === el._hov) return;
+    el._hov = r;
+    clearTimeout(hovT);
+    hovT = setTimeout(() => { if (el._hov !== r || !r.isConnected) return; placeActs(el, r, state); dossier.prefetch(r.dataset.id); }, 80);
+  }, { passive: true });
+  el.addEventListener('pointerleave', () => { clearTimeout(hovT); el._hov = null; }, { passive: true });
+  el.addEventListener('pointerdown', (e) => { const r = e.target.closest?.('[data-row]'); if (r) dossier.prefetch(r.dataset.id); }, { passive: true });
   el.addEventListener('focusin', (e) => { const r = e.target.closest?.('[data-row]'); if (r && !e.target.closest('[data-acts]')) placeActs(el, r, state); });
   el.querySelector('[data-intake]').addEventListener('submit', async (e) => {
     e.preventDefault();

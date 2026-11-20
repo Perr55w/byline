@@ -315,6 +315,12 @@ export async function cTabswap(ctx) {
       }, { to, eff: EFF_OPACITY });
       if (r.error) { check(g, 'tab switch sampled', null, 'true', true, { scope: `${from}→${to}`, detail: r.error }); continue; }
       const both = r.out.filter(x => x.old > .08 && x.nw > .08);
+      // R3 S7 (E, C): the click is answered at once (the old page starts fading on hashchange) and there is no empty
+      // heading band (after 300 ms some h1 is always ≥ .15)
+      const first = r.out.find(x => x.old < .995);
+      const gap = r.out.filter(x => x.t > 300 && x.t < 1100 && x.old < .15 && x.nw < .15);
+      check(g, 'first visible change after the hash change', first ? first.t : null, '<=', 34, { unit: 'ms', scope: `${from}→${to} (R3 S7)` });
+      check(g, 'frames after 300 ms with both h1s < .15', gap.length, '==', 0, { scope: `${from}→${to} (R3 S7)`, detail: gap.length ? `first at ${gap[0].t} ms (old ${gap[0].old.toFixed(2)}, new ${gap[0].nw.toFixed(2)})` : `${r.out.length} frames` });
       const jump = r.out.filter(x => x.y !== r.y0 && x.old >= .05);
       check(g, 'frames with both h1s > .08', both.length, '==', 0, { scope: `${from}→${to}`, detail: both.length ? `first at ${both[0].t} ms (old ${both[0].old.toFixed(2)}, new ${both[0].nw.toFixed(2)})` : `${r.out.length} frames` });
       if (r.y0 > 0) check(g, 'frames where scroll moved before the old h1 < .05', jump.length, '==', 0, { scope: `${from}→${to} (scrollY ${r.y0})`, detail: jump.length ? `first at ${jump[0].t} ms: scrollY ${jump[0].y}, old h1 ${jump[0].old.toFixed(2)}` : 'scroll reset after the old page left' });

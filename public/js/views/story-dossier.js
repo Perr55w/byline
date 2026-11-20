@@ -15,7 +15,7 @@ import { api } from '../api.js';
 import * as ui from '../ui.js';
 import { qualityColor } from '../quality.js';
 import { EASE, reduced } from '../motion.js';
-import { registerDossierRenderer } from '../dossier.js';
+import * as dossier from '../dossier.js';
 
 const { html, raw, esc, icon, scoreRing, toast, act, channelLabel, status: statusTag, useStyle, threshold: liveThreshold } = ui;
 /** R2 / S9: the main pill is blue only when round(score) clears the bar, else the neutral lead pill (shared helper). */
@@ -136,7 +136,9 @@ function trimSays(text, marks, dekW) {
 // source-role shape markers (F §4): ■ first-party / primary, ◆ independent, ○ commentary & community
 const ROLE = { first_party: ['fp', 'first-party'], primary: ['fp', 'primary source'], independent: ['ind', 'independent'], commentary: ['com', 'commentary or community'] };
 const marker = (role) => html`<i class="mk mk--${(ROLE[role] || ROLE.commentary)[0]}" aria-hidden="true"></i>`;
-const KIND_TONE = { Primary: 'neutral', Research: 'neutral', Independent: 'ok', Reporting: 'ok', Commentary: 'neutral', Community: 'neutral', 'Release notes': 'neutral' };
+// R12: every kind tag is neutral; the ◆ marker (blue) carries "independent". No --ok colour in the dossier: green
+// means healthy or sent elsewhere in the app.
+const KIND_TONE = {};
 
 // ------------------------------------------------------------------ header
 /**
@@ -184,7 +186,15 @@ function headerHtml(d, th) {
   const origin = d.origin;
   const archived = s.status === 'archived';
   const eyebrow = [main || 'Story', s.first_seen ? `first seen ${day(s.first_seen)}, ${clock(s.first_seen)}` : '', s.updated_at ? `updated ${ago(s.updated_at)}` : ''].filter(Boolean).join(' · ');
+  // D-8: the separators are drawn in CSS (never at the start of a line); under 600 px the topic takes line 1 and
+  // the date loses "first seen" and the clock ("18 Nov · updated 2d ago")
+  const ebParts = [main || 'Story',
+    s.first_seen ? html`<span class="dx-eb-long">first seen </span>${day(s.first_seen)}<span class="dx-eb-long">, ${clock(s.first_seen)}</span>` : '',
+    s.updated_at ? `updated ${ago(s.updated_at)}` : ''].filter(Boolean);
   const plan = headPlan(s, companies, eyebrow);
+  // D-4: "with no independent report yet" is dropped when the first-party / no-independent callout says it below
+  const callout = d.sources_header?.callout;
+  const qualifier = callout?.text && callout.kind !== 'disagreement' && /no independent/i.test(s.evidence_qualifier || '') ? '' : (s.evidence_qualifier || '');
   const topicsHtml = main ? html`<div class="dx-topics">${mainPill(main, s.score, th)}${rest.length ? html`<span class="dx-rest-topics" data-dossier-section>${rest.map(t => html`<span class="chip chip--topic">${t}</span>`)}</span>` : ''}</div>` : '';
   const actionsHtml = html`<div class="dx-actions" data-dossier-section>
         <div class="dx-split">
@@ -207,7 +217,7 @@ function headerHtml(d, th) {
   return html`
   <header class="dx-head${plan.stack ? ' dx-head--stack' : ''}">
     <div class="dx-head-main">
-      <p class="eyebrow dx-eyebrow" data-dossier-section>${s.is_demo ? html`<span class="tag tag--demo" title="Fictional sample data">Demo</span>` : ''}${archived ? html`<span class="tag tag--neutral">Archived</span>` : ''}${eyebrow.split(' · ').map((part, i) => html`${i ? ' ' : ''}<span class="dx-eb-part">${i ? '· ' : ''}${part}</span>`)}</p>
+      <p class="eyebrow dx-eyebrow" data-dossier-section>${s.is_demo ? html`<span class="tag tag--demo" title="Fictional sample data">Demo</span>` : ''}${archived ? html`<span class="tag tag--neutral">Archived</span>` : ''}${ebParts.map((part, i) => html`${i ? raw('<span class="sr-only"> · </span>') : ''}<span class="dx-eb-part${i ? '' : ' dx-eb-topic'}">${part}</span>`)}</p>
       <h1 class="dx-title${String(s.title || '').length > 70 ? ' dx-title--long' : ''}" data-shared="title">${s.title}</h1>
       ${s.finding ? html`<p class="dx-dek" data-dossier-section>${marked(s.finding, s.finding_marks)}</p>` : ''}
       ${plan.pills ? '' : topicsHtml}
@@ -219,8 +229,8 @@ function headerHtml(d, th) {
         <dl class="dx-facts">
           <div class="dx-fact" data-dossier-section>
             <dt>Sources</dt>
-            <dd class="dx-fact-v">${s.source_line}</dd>
-            <dd class="dx-fact-s">${s.evidence_qualifier || ''}</dd>
+            <dd class="dx-fact-v dx-seps">${String(s.source_line || '').split(' · ').map(p => html`<span>${p}</span>`)}</dd>
+            ${qualifier ? html`<dd class="dx-fact-s">${qualifier}</dd>` : ''}
           </div>
           ${companies.length ? html`<div class="dx-fact" data-dossier-section>
             <dt>Companies</dt>
@@ -278,12 +288,30 @@ function articleCard(a, dek, storyTitle, label = a.kind_label, cv = false) {
       ${sameHead ? html`<a class="dx-dom dx-dom-link" href="${a.url}" target="_blank" rel="noopener noreferrer">${a.domain}<span class="sr-only"> (opens the post: ${a.title})</span>${icon('arrow-up-right', 'dx-out')}</a>` : html`<span class="dx-dom">${a.domain}</span>`}
       ${name ? html`<span class="dx-srcname">${name}</span>` : ''}
       <time datetime="${a.published_at || a.fetched_at || ''}">${when}</time>
-      ${a.is_new ? html`<span class="tag tag--ok">New</span>` : ''}${a.is_demo ? html`<span class="tag tag--demo" title="Fictional sample data">Demo</span>` : ''}
+      ${a.is_new ? html`<span class="tag tag--neutral dx-new">New</span>` : ''}${a.is_demo ? html`<span class="tag tag--demo" title="Fictional sample data">Demo</span>` : ''}
     </div>
     ${sameHead ? '' : html`<a class="dx-art-title" href="${a.url}" target="_blank" rel="noopener noreferrer"><span>${a.title}<span class="sr-only"> (opens the article)</span></span>${icon('arrow-up-right', 'dx-out')}</a>`}
     ${saysHtml(says)}
     ${claims.length ? html`<ul class="dx-claims">${claims.map((c, i) => { const t = clip(c.text, c.marks); return html`<li${i >= 1 ? raw(' hidden data-more') : ''}>${marked(t.text, t.marks)}${c.also_reported_by?.length ? html` <span class="dx-also">also reported by ${c.also_reported_by.join(', ')}</span>` : ''}</li>`; })}</ul>
       ${claims.length > 1 ? html`<button type="button" class="dx-link" data-dx="more-claims">+${plural(claims.length - 1, 'more claim')}</button>` : ''}` : ''}
+  </article>`;
+}
+/**
+ * D-5: a run of posts from one outlet that have no summary or claim, as one row: "4 release notes from
+ * github.com (23 Oct – 9 Nov): v2.2.0, v2.5.0, v2.6.0, v2.7.0 · no summaries extracted". Each version (or title,
+ * when it carries none) links to its post; dates and versions come from the articles.
+ */
+function runHtml(run, label) {
+  const a0 = run[0];
+  const rel = run.every(x => x.kind_label === 'Release notes');
+  const ts = run.map(x => x.published_at || x.fetched_at).filter(Boolean).sort();
+  const from = ts.length ? day(ts[0]) : '', to = ts.length ? day(ts[ts.length - 1]) : '';
+  const span = from && to && from !== to ? `${from} – ${to}` : from;
+  const ver = (x) => String(x.title || '').match(/(?:^|\s)(v?\d+(?:\.\d+)+(?:[-+][\w.]+)?)\s*$/)?.[1] || x.title || x.domain;
+  const name = srcName(a0);
+  return html`<article class="dx-art dx-art--run">
+    <div class="dx-art-meta">${marker(a0.role)}<span class="tag tag--neutral">${label || a0.kind_label}</span>${name ? html`<span class="dx-srcname dx-srcname--first">${name}</span>` : ''}${run.some(x => x.is_demo) ? html`<span class="tag tag--demo" title="Fictional sample data">Demo</span>` : ''}</div>
+    <p class="dx-run"><b>${plural(run.length, rel ? 'release note' : 'post')}</b> from <span class="dx-dom">${a0.domain}</span>${span ? ` (${span})` : ''}: ${run.map((x, i) => html`${i ? ', ' : ''}<a href="${x.url}" target="_blank" rel="noopener noreferrer" title="${x.title}">${ver(x)}</a>`)} <span class="ink-3">· no summaries extracted</span></p>
   </article>`;
 }
 /** FD7: "Primary" goes to the earliest first-party post only; the outlet's other posts read "Same outlet". */
@@ -355,10 +383,25 @@ function sourcesHtml(d, defer = null) {
   // the first two cards render during the flight (early chunks, one per frame), the rest after it
   const soon = (fn) => { if (!defer) return fn(); const slot = `src${n++}`; defer.push({ slot, html: fn, early: true }); return raw(`<div data-defer="${slot}" hidden></div>`); };
   const card = (a) => { const k = cards++; return k < 2 ? soon(() => articleCard(a, dek, title, labels.get(a.id))) : later(() => articleCard(a, dek, title, labels.get(a.id), !!defer)); };
-  for (const a of arts) {
+  // D-5: consecutive posts from one outlet with nothing extracted fold into one row
+  const empty = new Map();
+  const noSays = (a) => { if (!empty.has(a.id)) empty.set(a.id, !postView(a, dek).says); return empty.get(a.id); };
+  for (let i = 0; i < arts.length; i++) {
+    const a = arts[i];
     if (done.has(a.id)) continue;
     const g = groups[a.domain];
-    if (!g) { done.add(a.id); blocks.push(card(a)); continue; }
+    if (!g) {
+      const run = [a];
+      if (noSays(a)) for (let j = i + 1; j < arts.length; j++) { const x = arts[j]; if (done.has(x.id) || groups[x.domain] || x.domain !== a.domain || !noSays(x)) break; run.push(x); }
+      if (run.length > 1) {
+        run.forEach(x => done.add(x.id));
+        const k = cards++;
+        const fn = () => runHtml(run, labels.get(a.id));
+        blocks.push(k < 2 ? soon(fn) : later(fn));
+        continue;
+      }
+      done.add(a.id); blocks.push(card(a)); continue;
+    }
     const members = arts.filter(x => x.domain === a.domain);
     members.forEach(x => done.add(x.id));
     const first = members.slice(0, 2), rest = members.slice(2);
@@ -456,7 +499,14 @@ function evidenceHtml(d, defer = null) {
   const fragsOf = (r) => { if (!fragCache.has(r)) fragCache.set(r, numberFragments(d, r.terms)); return fragCache.get(r); };
   let pwCache = null;
   const pwRows = () => pwCache || (pwCache = (pw.rows || []).map(r => {
-    if (r.signal !== 'numbers') { const q = r.quote ? clip(r.quote) : null; return html`<li><b>${r.label}</b>${q ? html`<q class="dx-quote"${q.clipped ? raw(` title="${esc(r.quote)}"`) : ''}>${q.text}</q>` : html`<span>${r.text}</span>`}</li>`; }
+    if (r.signal !== 'numbers') {
+      const q = r.quote ? clip(r.quote) : null;
+      if (q) return html`<li><b>${r.label}</b><q class="dx-quote"${q.clipped ? raw(` title="${esc(r.quote)}"`) : ''}>${q.text}</q></li>`;
+      // D-1: no quote. The label, then what it matched; the row's text is shown only when it says more than the label
+      const terms = uniqCI(r.terms);
+      const echo = normTitle(r.text) === normTitle(r.label) || !String(r.text || '').trim();
+      return html`<li class="dx-pw-line"><span><b>${r.label}</b>${terms.length ? html`<span class="ink-3"> · matched </span>${listJoin(terms.map(t => html`<span class="dx-term">${t}</span>`))}` : echo ? html` <span class="dx-pw-ok" aria-hidden="true">${icon('check')}</span>` : ''}</span>${echo ? '' : html`<span>${r.text}</span>`}</li>`;
+    }
     const frags = fragsOf(r);
     return frags.length ? html`<li><b>${r.label}</b><ul class="dx-nums">${frags}</ul></li>` : '';
   }).filter(x => x !== ''));
@@ -504,8 +554,8 @@ function breakdownHtml(d, th, pending) {
   return html`<section class="dx-sec dx-score" data-dossier-section aria-labelledby="dx-h-score">
     <div class="section-head"><h2 class="t-h2 dx-h" id="dx-h-score">Score breakdown</h2><span class="section-meta">bar ${th}</span></div>
     <p class="dx-score-line"><b>${Math.round(score)}</b> of 100 · ${verdict}</p>
-    <p class="dx-base">Base <b>${f1(b.base)}</b> of ${b.base_max || 100} <span class="ink-3">· track length = weight</span></p>
-    <ol class="dx-bars${pending ? ' is-pending' : ''}" aria-label="Score components, track length proportional to weight">
+    <p class="dx-base">Base <b>${f1(b.base)}</b> of ${b.base_max || 100} <span class="ink-3">· bar width = share of 100</span></p>
+    <ol class="dx-bars${pending ? ' is-pending' : ''}" aria-label="Score components; each bar's width is its share of 100">
       ${rows.map(r => html`<li class="dx-bar" style="--track:${Number(r.track) || 0};--fill:${Math.max(0, Math.min(1, Number(r.fraction) || 0))};--q:${qualityColor((Number(r.fraction) || 0) * 100, th)}">
         <span class="dx-bar-l">${r.label}<small>${r.weight_pct}%</small></span>
         <span class="dx-bar-t" aria-hidden="true"><span class="dx-bar-track"><i></i></span></span>
@@ -533,6 +583,14 @@ function lensHtml(d) {
     <p class="dx-fine">Lens: ${l.provider || 'provider'}</p>
   </section>`;
 }
+/**
+ * D-3: a matched term that is the employer's own name or its parent ("Google" under "Google (other teams)" or
+ * "Google Cloud") says nothing about what the employer works on.
+ */
+function ownName(term, employer) {
+  const t = normTitle(term), e = normTitle(employer), base = normTitle(String(employer || '').replace(/\s*\([^)]*\)\s*/g, ' '));
+  return !!t && (t === e || t === base || base.startsWith(`${t} `) || e.startsWith(`${t} `));
+}
 /** The quote the server embedded in `why` ("…; domain says: “…”"). */
 const quoteOf = (c) => /“([^”]+)”\s*$/.exec(c.why || '')?.[1] || null;
 /**
@@ -547,11 +605,11 @@ function connectionsHtml(d) {
   const named = list.filter(c => c.mention_ok), topical = list.filter(c => !c.mention_ok);
   const shownQuotes = new Map(); // quote → first employer that showed it
   const card = (c, i) => {
-    const q = quoteOf(c), hits = uniqCI(c.matched).filter(h => h.toLowerCase() !== String(c.employer).toLowerCase());
+    const q = quoteOf(c), hits = uniqCI(c.matched).filter(h => !ownName(h, c.employer));
     const dup = q && shownQuotes.has(q);
     if (q && !dup) shownQuotes.set(q, c.employer);
     return html`<li${i >= 3 ? raw(' hidden data-more') : ''}>
-      <div class="dx-conn-top"><b>${c.employer}</b><span class="tag tag--ok">${c.first_party ? 'First-party' : 'Named in a source'}</span></div>
+      <div class="dx-conn-top"><b>${c.employer}</b>${c.first_party ? html`<span class="tag tag--warn">First-party</span>` : html`<span class="tag">Named in a source</span>`}</div>
       ${c.first_party && c.mention_note ? html`<p class="dx-fine">${String(c.mention_note).replace(/^First-party:\s*/i, '').replace(/^./, (ch) => ch.toUpperCase())}</p>` : ''}
       ${hits.length ? html`<p>Works publicly on ${listJoin(hits.slice(0, 3).map(h => html`<span class="dx-term">${h}</span>`))}.</p>` : ''}
       ${q ? (dup ? html`<p class="dx-fine">Same passage as ${shownQuotes.get(q)}.</p>` : html`<q class="dx-quote">${q}</q>`) : ''}
@@ -572,7 +630,6 @@ function connectionsHtml(d) {
     ${topical.length ? html`<div class="dx-conn-topical">
       <p class="dx-conn-k">Topical overlap only, not named:</p>
       <div class="dx-conn-chips">${topical.map(c => { const hits = uniqCI(c.matched); return html`<span class="chip chip--topic" title="${hits.length ? `Overlaps on ${hits.join(', ')}` : 'Topical overlap'}">${c.employer}</span>`; })}</div>
-      ${basisQ && !basisShown ? html`<p class="dx-conn-basis ink-3">Same passage as ${shownQuotes.get(basisQ)} above.</p>` : ''}
       ${basisShown ? html`<p class="dx-conn-basis"><span class="ink-3">${basisList.length === topical.length ? (topical.length > 1 ? 'All match on' : 'Matches on') : html`${listJoin(basisList.map(c => c.employer))} match on`} this passage from ${basisList[0].source?.url ? html`<a href="${basisList[0].source.url}" target="_blank" rel="noopener noreferrer">${basisList[0].source.domain || 'the source'}</a>` : 'the source'}:</span> <q class="dx-quote">${basisQ}</q></p>` : ''}
     </div>` : ''}
     ${caveat ? html`<p class="dx-fine dx-conn-caveat">${caveat}</p>` : ''}
@@ -583,7 +640,7 @@ function makeHtml(d) {
   return html`<section class="dx-sec dx-make" data-dossier-section data-dx-movable aria-labelledby="dx-h-make">
     <div class="section-head"><h2 class="dx-h3" id="dx-h-make">Drafts & projects</h2><span class="section-meta">${drafts.length + projects.length ? `${drafts.length + projects.length} linked` : 'none yet'}</span></div>
     ${drafts.length || projects.length ? html`<ul class="dx-pieces">
-      ${[...drafts.map(x => html`<li><a href="#/draft/${x.id}">${x.title && x.title !== d.story?.title ? x.title : channelLabel(x.channel, x.format)}</a><span class="dx-fine">${x.title && x.title !== d.story?.title ? channelLabel(x.channel, x.format) : `edited ${ago(x.updated_at)}`}</span>${statusTag(x.status)}</li>`),
+      ${[...drafts.map(x => html`<li><a href="#/draft/${x.id}">${x.title && x.title !== d.story?.title ? x.title : channelLabel(x.channel, x.format)}</a><span class="dx-fine">${x.title && x.title !== d.story?.title ? channelLabel(x.channel, x.format) : `edited ${ago(x.updated_at)}`}</span>${raw(String(statusTag(x.status)).replace('tag--ok', 'tag--neutral'))}</li>`),
         ...projects.map(p => html`<li><a href="#/career">${p.title}</a><span class="dx-fine">Project</span><span class="tag tag--neutral">${p.status}</span></li>`)]
         .map((li, i) => (i >= 4 ? raw(String(li).replace('<li>', '<li hidden data-more>')) : li))}
     </ul>
@@ -651,7 +708,28 @@ const live = (body, st) => body._dx === st && body.isConnected && !body.closest(
  * Everything stops when the dossier closes or moves to another story.
  */
 function fillProgressive(body, st, chunks, done) {
-  let i = 0, landed = false, waiting = false;
+  let i = 0, landed = false, waiting = false, io = null;
+  const phone = () => !!(st.phone || dossier.isPhone?.());
+  /**
+   * D-6: an entrance only for a section the reader can see. Each inserted section is held at opacity 0 (.dx-pre)
+   * and observed (IntersectionObserver rooted on the scroller: no layout read); on its first report an on-screen
+   * section fades in (opacity only, 240 ms, --ease-fade) and an off-screen one simply drops the hold, with no
+   * animation, no layer and no repaint while the panel settles. On the phone sheet there is no entrance at all.
+   */
+  const enter = (nodes) => {
+    if (reduced() || phone() || !nodes.length || !('IntersectionObserver' in window)) return;
+    const scroller = body.closest('.dossier-scroll');
+    if (!scroller) return;
+    io ||= new IntersectionObserver((entries) => {
+      for (const en of entries) {
+        const n = en.target;
+        io.unobserve(n);
+        if (en.isIntersecting && live(body, st)) n.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 240, easing: EASE.fade });
+        n.classList.remove('dx-pre'); // same task as the animation's start: no frame at the resting opacity first
+      }
+    }, { root: scroller });
+    for (const n of nodes) { n.classList.add('dx-pre'); io.observe(n); }
+  };
   const step = () => {
     waiting = false;
     // an idle prebuild renders into a container that dossier.js detaches until open(): park, and resume on land()
@@ -668,14 +746,14 @@ function fillProgressive(body, st, chunks, done) {
       const nodes = [...t.content.children];
       if (!early) for (const n of nodes) if (n.matches('.dx-sec, .dx-ev') && !n.classList.contains('dx-cv')) { n.classList.add('dx-cv'); n.style.setProperty('--cis', `${CIS[slot] || 320}px`); }
       ph.replaceWith(t.content);
-      if (!reduced()) nodes.forEach(n => n.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 360, easing: EASE.fade, fill: 'backwards' }));
-      if (landed) animateBars(body); // the breakdown arrived after the landing
+      enter(nodes);
+      if (landed) animateBars(body, phone()); // the breakdown arrived after the landing
       break; // one section per task
     }
     if (i < chunks.length) nextTask(step); else nextTask(release);
   };
   const release = () => {
-    if (!live(body, st)) return;
+    if (!live(body, st)) { io?.disconnect(); return; }
     const n = body.querySelector('.dx-cv');
     if (!n) { done(); return; }
     n.classList.remove('dx-cv'); n.style.removeProperty('--cis');
@@ -687,11 +765,11 @@ function fillProgressive(body, st, chunks, done) {
   return { land() { landed = true; if (waiting) nextTask(step); } };
 }
 
-function animateBars(body) {
+function animateBars(body, phone = false) {
   const list = body.querySelector('.dx-bars.is-pending');
   if (!list) return;
   list.classList.remove('is-pending');
-  if (reduced()) return;
+  if (reduced() || phone) return; // D-6: on the phone sheet the breakdown is far below the fold: no entrance
   list.querySelectorAll('.dx-bar-track i').forEach((el, i) => {
     el.animate([{ transform: 'scaleX(0)' }, { transform: 'scaleX(var(--fill))' }], { duration: 700, delay: i * 60, easing: EASE.settle, fill: 'backwards' });
   });
@@ -736,6 +814,12 @@ function layoutObserver(body) {
   body._dxRO = ro;
 }
 
+/** S1 / D-6: an in-panel expansion keeps the frost off (dossier.busy) until its animations have finished. */
+function settle(anims) {
+  if (!anims.length) return;
+  const all = Promise.all(anims.map(a => a.finished.catch(() => {})));
+  if (typeof dossier.busy === 'function') dossier.busy(all);
+}
 function closeMenus(body, except = null) {
   body.querySelectorAll('.dx-menu:not([hidden])').forEach(m => { if (m !== except) { m.hidden = true; body.querySelector(`[data-menu="${m.dataset.menuFor}"]`)?.setAttribute('aria-expanded', 'false'); } });
 }
@@ -818,12 +902,14 @@ function wire(body) {
       const out = body.querySelector('[data-angles]');
       out.innerHTML = String(html`${(angles || []).map(g => html`<div class="dx-angle"><div><b>${g.title}</b><p>${g.covers}</p></div>
         <button type="button" class="btn btn--secondary btn--sm" data-dx="draft" data-channel="linkedin" data-format="long" data-angle="${g.key}">Draft with this angle</button></div>`)}`);
-      if (!reduced()) [...out.children].forEach((el, i) => el.animate([{ opacity: 0, transform: 'translateY(6px)' }, { opacity: 1, transform: 'none' }], { duration: 420, delay: i * 50, easing: EASE.settle, fill: 'backwards' }));
+      if (!reduced()) settle([...out.children].map((el, i) => el.animate([{ opacity: 0, transform: 'translateY(6px)' }, { opacity: 1, transform: 'none' }], { duration: 420, delay: i * 50, easing: EASE.settle, fill: 'backwards' })));
     }, 'Thinking…');
     if (kind === 'more-claims' || kind === 'more-conn') {
       const host = btn.previousElementSibling;
-      host?.querySelectorAll('[data-more]').forEach(li => { li.hidden = false; if (!reduced()) li.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 320, easing: EASE.fade }); });
+      const anims = [];
+      host?.querySelectorAll('[data-more]').forEach(li => { li.hidden = false; if (!reduced()) anims.push(li.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 240, easing: EASE.fade })); });
       btn.remove();
+      settle(anims);
     }
     if (kind === 'expand-group') {
       const rest = btn.closest('.dx-group')?.querySelector('[data-rest]');
@@ -838,7 +924,7 @@ function wire(body) {
       full.hidden = !open; compact.hidden = open;
       btn.setAttribute('aria-expanded', String(open));
       btn.textContent = open ? 'Show the short list' : `Show all ${rest.closest('.dx-group').querySelectorAll('.dx-group > .dx-art').length + full.children.length} in full`;
-      if (open && !reduced()) [...full.children].forEach((el, i) => el.animate([{ opacity: 0, transform: 'translateY(6px)' }, { opacity: 1, transform: 'none' }], { duration: 420, delay: Math.min(i, 6) * 40, easing: EASE.settle, fill: 'backwards' }));
+      if (open && !reduced()) settle([...full.children].map((el, i) => el.animate([{ opacity: 0, transform: 'translateY(6px)' }, { opacity: 1, transform: 'none' }], { duration: 420, delay: Math.min(i, 6) * 40, easing: EASE.settle, fill: 'backwards' })));
     }
   });
   // menus: arrow keys move, Esc closes the menu (before the frame's capture handler would close the dossier)
@@ -882,14 +968,15 @@ async function renderDossier(body, ctx) {
   // early chunks start now (from the flight's second frame); the rest wait for afterFlight
   const fill = m.defer.length ? fillProgressive(body, st, m.defer, () => layoutObserver(body)) : null;
   return {
-    afterFlight() {
+    afterFlight(opts = {}) {
       if (landed || body._dx !== st) return;
       landed = true;
-      animateBars(body);
+      if (opts.phone) st.phone = true;
+      animateBars(body, !!(opts.phone || dossier.isPhone?.()));
       if (fill) fill.land(); else layoutObserver(body);
     }
   };
 }
 
-registerDossierRenderer(renderDossier);
+dossier.registerDossierRenderer(renderDossier);
 export { renderDossier };

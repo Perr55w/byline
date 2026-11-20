@@ -11,9 +11,9 @@
 // weekly recap (persisted trends, changed claims, ideas, shortlist with pursue / skip), experiences with the
 // public-OK gate.
 import { api } from '../api.js';
-import { html, on, act, toast, modal, confirmBox, strikeOut, status, channelLabel, icon, useStyle, topicPills, threshold } from '../ui.js';
+import { html, raw, on, act, toast, modal, confirmBox, strikeOut, status, channelLabel, icon, useStyle, topicPills, threshold } from '../ui.js';
 import { enterItems, reduced } from '../motion.js';
-import { plural, isDemoText, stripDemo, demoTag, dayLabel } from './people.js';
+import { plural, isDemoText, stripDemo, demoTag, dayLabel, afterSwap } from './people.js';
 
 const TABS = [['radar', 'Skill radar'], ['collections', 'Collections'], ['projects', 'Projects'], ['weekly', 'Weekly recap'], ['experiences', 'Experiences']];
 const GROUPS = ['AI product management', 'Business analysis', 'Data analytics'];
@@ -204,6 +204,41 @@ async function radar(pane, again, { skills, jobs, J, weekly }) {
           <td class="num cr-jobcol">${jobCell(s)}</td>
           ${showTrend ? html`<td class="cr-trendcol">${trendVal(s) ? trendTag(s.trend, s) : html`<span class="cr-raw">—</span>`}</td>` : ''}</tr>`; };
   const cols = 4 + (showWeek ? 1 : 0) + (showTrend ? 1 : 0);
+  // E1: at phone width the side column stacks below the table, off screen; it is built after the swap frame has
+  // painted, in idle time, so the swap frame only lays out the head and the table.
+  const phone = matchMedia('(max-width: 1100px)').matches;
+  const sideParts = [
+    () => html`
+      <section class="tile tile--static cr-card" aria-labelledby="cr-jl-h">
+        <div class="section-head"><h2 class="t-h2" id="cr-jl-h">Saved job posts</h2><span class="section-meta">${J.unique} unique${J.copies ? ` · ${jobs.length} saved` : ''}</span></div>
+        ${jobs.length ? html`<ul class="cr-jobs">${J.groups.map(g => { const j = g[0]; return html`<li>
+          <div class="cr-job-h"><span class="cr-job-t">${stripDemo(j.title)}</span></div>
+          <span class="cr-sub">${j.employer || 'No employer'} · saved ${dayLabel((j.created_at || '').slice(0, 10), { weekday: false })}${j.url ? html` · <a href="${j.url}" target="_blank" rel="noopener">posting${icon('arrow-up-right')}</a>` : ''}</span>
+          <div class="cr-job-tags">${demoTag(isDemoText(j.title))}${g.length > 1 ? html`<span class="tag tag--warn" title="${g.length} identical saved copies; counted once">×${g.length} copies</span>` : ''}${J.unique === 1 ? html`<span class="cr-job-n">${plural(skills.filter(s => s.job_mentions > 0).length, 'radar skill')} found in it</span>` : ''}</div>
+          <p class="cr-excerpt">${j.excerpt}…</p>
+          <div class="cr-end"><button class="btn btn--ghost btn--sm" data-del-job="${j.id}">${g.length > 1 ? 'Delete one copy' : 'Delete'}</button></div>
+        </li>`; })}</ul>` : html`<p class="cr-note">None yet. Paste a posting below; job mentions count double in the ranking.</p>`}
+      </section>`,
+    () => html`
+      ${(weekly?.persisted || []).length ? html`<section class="tile tile--static cr-card" aria-labelledby="cr-tp-h">
+        <div class="section-head"><h2 class="section-label" id="cr-tp-h">Story topics this week</h2><span class="section-meta">days seen of 7</span></div>
+        <ul class="cr-days cr-days--side">${weekly.persisted.slice(0, 3).map(p => { const sk = skills.find(x => x.skill.toLowerCase() === p.topic.toLowerCase()); return html`<li><span class="cr-days-t">${p.topic}${sk && jobsOnly(sk) ? html`<span class="cr-days-note" title="As a skill, only job posts name it">also a job-post skill</span>` : ''}</span>
+          <span class="cr-days-dots" aria-hidden="true">${Array.from({ length: 7 }, (_, i) => html`<i class="${i < p.days ? 'on' : ''}"></i>`)}</span><span class="cr-days-k">${p.days}<span class="sr-only"> of 7 days</span></span></li>`; })}</ul>
+      </section>` : ''}`,
+    () => html`
+      <section class="tile tile--static cr-card" aria-labelledby="cr-jp-h">
+        <h2 class="section-label" id="cr-jp-h">Add a job description</h2>
+        <form class="cr-form" id="jp">
+          <label class="field">Title<input class="input cr-ph" name="title" placeholder="Job title"></label>
+          <label class="field">Employer<input class="input" name="employer"></label>
+          <label class="field cr-full">Posting URL<input class="input" name="url" placeholder="https://…" inputmode="url"></label>
+          <label class="field cr-full">Description *<textarea class="textarea" name="text" rows="3" required placeholder="Paste the full job description"></textarea></label>
+          <div class="cr-full cr-end"><button class="btn btn--primary" type="submit">Add to radar</button></div>
+        </form>
+      </section>
+`
+  ];
+  const sideHtml = () => raw(sideParts.map(f => String(f())).join(''));
   pane.innerHTML = String(html`
   <div class="cr-cols">
     <section class="tile tile--static tile--flush" aria-labelledby="cr-r-h">
@@ -216,39 +251,19 @@ async function radar(pane, again, { skills, jobs, J, weekly }) {
         <tbody id="cr-tail" class="cr-tail" hidden>${rest.map(row)}</tbody>` : ''}</table>`
       : html`<div class="cr-pad cr-padb"><div class="empty"><h3>No skill evidence yet.</h3><p>Run the daily workflow or paste a job description.</p></div></div>`}
     </section>
-    <aside class="stack cr-side">
-      <section class="tile tile--static cr-card" aria-labelledby="cr-jl-h">
-        <div class="section-head"><h2 class="t-h2" id="cr-jl-h">Saved job posts</h2><span class="section-meta">${J.unique} unique${J.copies ? ` · ${jobs.length} saved` : ''}</span></div>
-        ${jobs.length ? html`<ul class="cr-jobs">${J.groups.map(g => { const j = g[0]; return html`<li>
-          <div class="cr-job-h"><span class="cr-job-t">${stripDemo(j.title)}</span></div>
-          <span class="cr-sub">${j.employer || 'No employer'} · saved ${dayLabel((j.created_at || '').slice(0, 10), { weekday: false })}${j.url ? html` · <a href="${j.url}" target="_blank" rel="noopener">posting${icon('arrow-up-right')}</a>` : ''}</span>
-          <div class="cr-job-tags">${demoTag(isDemoText(j.title))}${g.length > 1 ? html`<span class="tag tag--warn" title="${g.length} identical saved copies; counted once">×${g.length} copies</span>` : ''}${J.unique === 1 ? html`<span class="cr-job-n">${plural(skills.filter(s => s.job_mentions > 0).length, 'radar skill')} found in it</span>` : ''}</div>
-          <p class="cr-excerpt">${j.excerpt}…</p>
-          <div class="cr-end"><button class="btn btn--ghost btn--sm" data-del-job="${j.id}">${g.length > 1 ? 'Delete one copy' : 'Delete'}</button></div>
-        </li>`; })}</ul>` : html`<p class="cr-note">None yet. Paste a posting below; job mentions count double in the ranking.</p>`}
-      </section>
-      ${(weekly?.persisted || []).length ? html`<section class="tile tile--static cr-card" aria-labelledby="cr-tp-h">
-        <div class="section-head"><h2 class="section-label" id="cr-tp-h">Story topics this week</h2><span class="section-meta">days seen of 7</span></div>
-        <ul class="cr-days cr-days--side">${weekly.persisted.slice(0, 3).map(p => { const sk = skills.find(x => x.skill.toLowerCase() === p.topic.toLowerCase()); return html`<li><span class="cr-days-t">${p.topic}${sk && jobsOnly(sk) ? html`<span class="cr-days-note" title="As a skill, only job posts name it">also a job-post skill</span>` : ''}</span>
-          <span class="cr-days-dots" aria-hidden="true">${Array.from({ length: 7 }, (_, i) => html`<i class="${i < p.days ? 'on' : ''}"></i>`)}</span><span class="cr-days-k">${p.days}<span class="sr-only"> of 7 days</span></span></li>`; })}</ul>
-      </section>` : ''}
-      <section class="tile tile--static cr-card" aria-labelledby="cr-jp-h">
-        <h2 class="section-label" id="cr-jp-h">Add a job description</h2>
-        <form class="cr-form" id="jp">
-          <label class="field">Title<input class="input cr-ph" name="title" placeholder="Job title"></label>
-          <label class="field">Employer<input class="input" name="employer"></label>
-          <label class="field cr-full">Posting URL<input class="input" name="url" placeholder="https://…" inputmode="url"></label>
-          <label class="field cr-full">Description *<textarea class="textarea" name="text" rows="3" required placeholder="Paste the full job description"></textarea></label>
-          <div class="cr-full cr-end"><button class="btn btn--primary" type="submit">Add to radar</button></div>
-        </form>
-      </section>
-    </aside>
+    <aside class="stack cr-side">${phone ? '' : sideHtml()}    </aside>
   </div>`);
   on(pane, 'click', '[data-tail]', (e, b) => { const open = b.getAttribute('aria-expanded') !== 'true'; b.setAttribute('aria-expanded', String(open)); pane.querySelector('#cr-tail').hidden = !open; });
-  pane.querySelector('#jp').addEventListener('submit', async (e) => {
+  const bindSide = () => pane.querySelector('#jp').addEventListener('submit', async (e) => {
     e.preventDefault();
     await act(e.submitter, async () => { await api.post('/jobposts', Object.fromEntries(new FormData(e.target))); toast('Job post added', 'ok'); again(); });
   });
+  if (!phone) bindSide();
+  else {
+    const side = pane.querySelector('.cr-side');
+    // One side card per painted frame (the job-post card alone is a full frame of style work at 4×).
+    afterSwap(side, ...sideParts.map((f, i) => () => { side.insertAdjacentHTML('beforeend', String(f())); if (i === sideParts.length - 1) bindSide(); }));
+  }
   on(pane, 'click', '[data-del-job]', (e, b) => { const id = b.dataset.delJob; strikeOut(b.closest('li'), { message: 'Job post deleted.', commit: () => api.del(`/jobposts/${id}`) }); });
   on(pane, 'click', 'tr[data-skill]', (e, tr) => {
     if (e.target.closest('[data-tail]')) return;

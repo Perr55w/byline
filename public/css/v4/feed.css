@@ -61,7 +61,7 @@
 .fd-main { min-width: 0; }
 .fd-h { margin: 0; font: var(--wt-title) var(--fs-title)/var(--lh-title) var(--font-serif); font-variation-settings: 'opsz' var(--op-title); letter-spacing: var(--tr-title); }
 .fd-h .tag { vertical-align: 3px; margin-left: 4px; }
-.fd-title { color: var(--text-1); text-decoration: none; }
+.fd-title { color: var(--text-1); text-decoration: none; overflow-wrap: anywhere; } /* F-4: "modelcontextprotocol/modelcontextprotocol" wraps inside its tile */
 .fd-title:hover { text-decoration: none; }
 .fd-title:focus-visible { box-shadow: var(--focus); border-radius: 4px; }
 /* F2: two lines at rest; three when line 2 would cut through a highlighted figure (feed.js clampCheck) */
@@ -89,12 +89,15 @@
 
 .fd-end { position: relative; display: grid; justify-items: start; align-items: center; height: 100%; } /* FD12: the date sits right after the meta block */
 .fd-end > * { grid-area: 1 / 1; }
-.fd-age { color: var(--text-3); font: 450 12px/1 var(--font-mono); font-variant-numeric: tabular-nums; white-space: nowrap; transition: opacity var(--dur-hover-out) var(--ease-fade); }
-/* the hover toolbar overlays the end of the row (the date column is a fixed 56 px, F3 / FD12) */
-.fd-acts { position: absolute; right: -8px; top: 50%; margin-top: -17px; display: flex; gap: 2px; padding: 2px; border-radius: var(--r-ctl); opacity: 0; transform: translateX(4px); pointer-events: none;
+/* F-2: the date and the toolbar are stacking contexts at rest (position + z-index), so the hover fade's opacity < 1
+   never turns them into new ones mid-hover (that cost a layout per row: 14 per 120 pointer moves, now 0) */
+.fd-age { position: relative; z-index: 0; color: var(--text-3); font: 450 12px/1 var(--font-mono); font-variant-numeric: tabular-nums; white-space: nowrap; transition: opacity var(--dur-hover-out) var(--ease-fade); }
+/* the hover toolbar overlays the end of the row (the date column is a fixed 56 px, F3 / FD12). Every row carries
+   one (feed.js armActs); the reveal is opacity only and never changes the row's size (F-2) */
+.fd-acts { position: absolute; z-index: 1; right: -8px; top: 50%; margin-top: -17px; display: flex; gap: 2px; padding: 2px; border-radius: var(--r-ctl); opacity: 0; pointer-events: none;
   background: var(--surface-solid); box-shadow: inset 0 0 0 1px var(--line), var(--shadow-1, none);
-  transition: opacity var(--dur-hover-out) var(--ease-fade), transform var(--dur-hover-out) var(--ease-settle); }
-.fd-row:hover .fd-acts, .fd-row:focus-within .fd-acts { opacity: 1; transform: none; pointer-events: auto; transition-duration: var(--dur-hover-in); }
+  transition: opacity var(--dur-hover-out) var(--ease-fade); }
+.fd-row:hover .fd-acts, .fd-row:focus-within .fd-acts { opacity: 1; pointer-events: auto; transition-duration: var(--dur-hover-in); }
 .fd-row:hover .fd-age, .fd-row:focus-within .fd-age { opacity: 0; transition-duration: var(--dur-hover-in); }
 .fd-acts .btn { color: var(--text-2); }
 .fd-acts .btn:hover { color: var(--text-1); background: var(--surface-solid); box-shadow: inset 0 0 0 1px var(--line-2); }
@@ -120,7 +123,10 @@
 
 /* ---------------------------------------------------------------- phone (F §4): chip + title, finding, one meta line */
 @media (max-width: 760px) {
-  .fd-topicbar { flex-wrap: nowrap; overflow-x: auto; margin: 0 -16px; padding: 0 16px 2px; scrollbar-width: none; }
+  /* F-4: the chip row scrolls sideways with a 24 px fade at its end and proximity snapping, like Search's chip rows */
+  .fd-topicbar { flex-wrap: nowrap; overflow-x: auto; margin: 0 -16px; padding: 0 16px 2px; scrollbar-width: none; scroll-snap-type: x proximity; scroll-padding-inline: 16px;
+    -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 24px), transparent); mask-image: linear-gradient(90deg, #000 calc(100% - 24px), transparent); }
+  .fd-topicbar .chip { scroll-snap-align: start; }
   .fd-showing { display: none; }
   .fd-viewbar { margin-bottom: 10px; }
   .fd-topicbar::-webkit-scrollbar { display: none; }
@@ -141,7 +147,10 @@
   .fd-divider { padding: 14px 16px 8px; }
   .fd-intake-row .select, .fd-intake-row .btn { flex: 1 1 auto; }
 }
-@media (prefers-reduced-motion: reduce) { .fd-acts { transform: none; } }
+/* F-1: the phone row measured at 390 px (stories in the 7-day feed: 133–229, median 198) */
+@media (max-width: 480px) {
+  .fd-row.cv-row { contain-intrinsic-size: auto 196px; }
+}
 
 /* local fixes for shared components (requested upstream): AA demo tag on white; visible focus on .btn */
 .fd-seg-btn:focus-visible { box-shadow: var(--focus); }

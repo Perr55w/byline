@@ -239,3 +239,4 @@ mark.pp-pd { padding: 0 2px; border-radius: 3px; background: var(--accent-soft);
    layout and paint until scrolled near. Sizes are the measured card heights (auto keeps the real one once seen). */
 .pp-person .pp-main > .pp-card:not(:first-child) { content-visibility: auto; contain-intrinsic-size: auto 480px; }
 @media (max-width: 1020px) { .pp-person .pp-aside > .pp-card { content-visibility: auto; contain-intrinsic-size: auto 320px; } }
+.pp-later { display: none; }   /* idle-chunk placeholders (PE-4): no box, no flex gap */

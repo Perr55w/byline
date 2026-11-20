@@ -25,6 +25,23 @@ const fmtDay = (ymd) => new Date(`${ymd}T12:00:00Z`).toLocaleDateString('en-GB',
 const ymdAdd = (ymd, d) => new Date(Date.parse(`${ymd}T12:00:00Z`) + d * 864e5).toISOString().slice(0, 10);
 const dowOf = (ymd) => new Date(`${ymd}T12:00:00Z`).toLocaleDateString('en-US', { weekday: 'short', timeZone: 'UTC' });
 
+/**
+ * Round 3 T-5: a label-length title. The text before ':' or ' — ' (or ' – '), then cut at a word boundary to at most
+ * `max` characters, trailing punctuation dropped: "Gemini at Work 2026", "Digital Standards Office". Never mid-word.
+ */
+function shortLabel(title, max = 28) {
+  let t = String(title || '').replace(/…$/, '').trim();
+  const cut = t.search(/: | [—–] /);
+  if (cut > 0) t = t.slice(0, cut);
+  if (t.length > max) {
+    const words = t.split(/\s+/);
+    let out = '';
+    for (const w of words) { const next = out ? `${out} ${w}` : w; if (next.replace(/[,;.]+$/, '').length > max) break; out = next; }
+    t = out || t.slice(0, max);
+  }
+  return t.replace(/[\s,;.:–—-]+$/, '');
+}
+
 /** A finding line with its number marks (API: [start, end) UTF-16 pairs; each slice escaped). */
 function marked(text, marks) {
   const t = String(text || '');
@@ -89,14 +106,20 @@ const storyHref = (it) => `#/story/${it.story_id ?? it.id}`;
 function mixBlock(it) {
   if (!it.source_line) return '';
   const n = (v) => (Number.isFinite(v) ? v : null);
-  const kinds = [[n(it.first_party), 'first-party'], [n(it.primary), 'primary research'], [n(it.commentary), 'commentary']].filter(([v]) => v != null); // independent is in the line itself
+  // round 3 T-6: one line, zero categories left out; a category that covers every post reads "all first-party"
+  const posts = n(it.posts), outlets = n(it.outlets);
+  const head = posts != null && outlets != null ? [plural(posts, 'post'), plural(outlets, 'outlet')] : [String(it.source_line).split(' · ').filter(x => !/^0 /.test(x)).join(' · ')];
+  const kinds = [[n(it.independent), 'independent'], [n(it.first_party), 'first-party'], [n(it.primary), 'primary research'], [n(it.commentary), 'commentary']]
+    .filter(([v]) => v > 0);
+  const all = posts > 1 ? kinds.find(([v, k]) => v === posts && k !== 'independent') : null;
+  const tail = all ? [`all ${all[1]}`] : posts != null ? kinds.map(([v, k]) => `${v} ${k}`) : [];
   const seen = it.first_seen ? fmtDay(String(it.first_seen).slice(0, 10)) : '';
   const origin = it.origin_domain ? html`From <b>${it.origin_domain}</b>${seen ? html`, first seen ${seen}` : ''}.` : seen ? html`First seen ${seen}.` : '';
   // two layouts of the same facts: with or without the origin line (the footer keeps the origin domain); fitLead
   // picks the one that brings the lead closest to the side column's height without passing it
   return html`<div class="td-mix">
     <h3 class="td-label">Source mix</h3>
-    <p class="td-mix-line"><span class="td-src">${it.source_line}</span>${kinds.length ? html`<span class="td-mix-kinds">${kinds.map(([v, k], i) => html`${i ? ' · ' : ''}<b>${v}</b> ${k}`)}</span>` : ''}</p>
+    <p class="td-mix-line">${[...head, ...tail].join(' · ')}</p>
     ${origin ? html`<p class="td-mix-extra">${origin}</p>` : ''}
   </div>`;
 }
@@ -117,7 +140,7 @@ function leadTile(it, T) {
       <h3 class="td-label">Why it ranked</h3>
       <ul>${why.map(w => html`<li>${w}</li>`)}</ul>
     </div>` : ''}
-    ${(it.companies || []).length ? html`<div class="td-named"><h3 class="td-label">Named</h3><span class="cluster">${it.companies.slice(0, 4).map(c => html`<span class="td-domain">${c}</span>`)}${it.companies.length > 4 ? html`<span class="td-meta">+${it.companies.length - 4}</span>` : ''}</span></div>` : ''}
+    ${(it.companies || []).length ? html`<div class="td-named"><h3 class="td-label">Named</h3><span class="cluster">${it.companies.slice(0, 4).map(c => html`<span class="td-domain td-name">${c}</span>`)}${it.companies.length > 4 ? html`<span class="td-meta">+${it.companies.length - 4}</span>` : ''}</span></div>` : ''}
     ${mixBlock(it)}
     <footer class="td-lead-foot">
       ${it.origin_domain ? html`<span class="td-domain" title="The origin: the site the story first came from">${it.origin_domain}</span>` : ''}
@@ -183,6 +206,46 @@ function weatherSentence(m) {
   return html`No topic is in half of the <b>${n}</b> ${n === 1 ? 'story' : 'stories'} above your bar${lead ? html`; <b>${lead.topic}</b> is in <b>${lead.above}</b>` : ''}${calmTail}.`;
 }
 
+/**
+ * Round 3 T-2 (R17): a 1-D beeswarm per row. Walk the dots by x (exact, never moved); a dot whose centre would sit
+ * under 9 px from a kept centre takes the first vertical lane (0, −4, +4, then ±8 for a dense stack) that clears 9 px,
+ * or else the lane that keeps it farthest away. `xs` are px, ascending. Returns the lifts in px.
+ */
+const dotX = (score) => Math.max(0, Math.min(100, Number(score) || 0)) / 100;
+const WX_TRACK_EST = 330; // the track's width at 1440 (the markup's first guess; fitSwarm refits to the real width)
+function swarm(xs, gap = 9) {
+  const lanes = [0, -4, 4, -8, 8];
+  const kept = [];
+  return xs.map((x) => {
+    let best = 0, bestD = -1;
+    for (const l of lanes) {
+      let d = Infinity;
+      for (const [kx, kl] of kept) if (x - kx < gap) d = Math.min(d, Math.hypot(x - kx, l - kl));
+      if (d >= gap) { best = l; break; }
+      if (d > bestD + 0.01) { bestD = d; best = l; }
+    }
+    kept.push([x, best]);
+    return best;
+  });
+}
+/** Refit the swarm to the real track width (ResizeObserver entry: no forced layout; --lift only moves a transform). */
+function fitSwarm(tile) {
+  const tr = tile?.querySelector('.td-wx-track');
+  if (!tr || !('ResizeObserver' in window)) return;
+  let last = WX_TRACK_EST;
+  const ro = track(tile, new ResizeObserver(([en]) => {
+    if (!tile.isConnected) { ro.disconnect(); return; }
+    const W = Math.round(en.contentRect.width);
+    if (!W || W === last) return;
+    last = W;
+    for (const row of tile.querySelectorAll('.td-wx-row')) {
+      const dots = [...row.querySelectorAll('.td-wx-dot')];
+      swarm(dots.map(d => dotX(d.dataset.qScore) * W)).forEach((l, i) => dots[i].style.setProperty('--lift', `${l}px`));
+    }
+  }));
+  ro.observe(tr);
+}
+
 /** T8: a priority weight ≤ 1 topic (Machine learning) keeps its dots but reads as the catch-all it is. */
 const catchAll = (r) => r.weight != null && r.weight <= 1;
 
@@ -205,12 +268,10 @@ function weatherTile(stories, t, weights) {
       <div class="td-wx-row" data-label="${r.label}"${catchAll(r) ? raw(' data-catchall') : ''}>
         <span class="td-wx-name">${r.topic}</span>
         <span class="td-wx-track">
-          ${r.stories.map((s, k) => {
-            const prev = r.stories[k - 1];
-            const near = prev && Math.abs(s.score - prev.score) < 2.6;
-            const lift = near ? (k % 2 ? -4 : 4) : 0;
-            return html`<a class="td-wx-dot" href="#/story/${s.id}" tabindex="-1" data-dossier-src data-s="${s.id}" data-q="${qualityTier(s.score, m.T)}" data-q-score="${s.score}" data-q-threshold="${m.T}" style="--x:${Math.max(0, Math.min(100, s.score)) / 100};--lift:${lift}px;--q:${qualityColor(s.score, m.T)}"><span class="td-wx-tip">${s.short_title || s.title} · ${round(s.score)}</span></a>`;
-          })}
+          ${((lifts) => r.stories.map((s, k) => {
+            const lift = lifts[k];
+            return html`<a class="td-wx-dot" href="#/story/${s.id}" tabindex="-1" data-dossier-src data-s="${s.id}" data-q="${qualityTier(s.score, m.T)}" data-q-score="${s.score}" data-q-threshold="${m.T}" data-tip="${shortLabel(s.title || s.short_title, 44)} · ${round(s.score)}" style="--x:${Math.max(0, Math.min(100, s.score)) / 100};--lift:${lift}px;--q:${qualityColor(s.score, m.T)}"></a>`;
+          }))(swarm(r.stories.map(s => dotX(s.score) * WX_TRACK_EST)))}
         </span>
         <span class="td-wx-label">${catchAll(r) ? 'catch-all' : LABEL[r.label]}</span>
       </div>`)}
@@ -228,7 +289,8 @@ function weatherTile(stories, t, weights) {
 // News map: a static drawing of the Map tab's own /api/map layout (same seeded positions). The geometry is fitted
 // once the canvas size is known (T7): node bounds fill the box with 12% padding, nodes are 6–9 px by score, the
 // cluster discs enclose their own nodes, and the top 3 nodes carry their short title outside the discs.
-// The top-3 hot regions sit beside it: "leads" = stories whose main topic it is, "in" = stories carrying it at all.
+// The top-3 hot regions sit beside it, in the Map tab's words: "main topic of N" = stories whose main topic it is,
+// "tagged on N" = stories carrying it at all.
 function mapTile(map, t) {
   const hot = map?.hot_topics || [];
   const n = map?.nodes?.length || 0;
@@ -236,7 +298,7 @@ function mapTile(map, t) {
       const inN = h.in_count ?? null;
       const recent = h.recent != null && h.recent !== h.count ? html` · ${h.recent} this week` : '';
       return html`
-      <li><a href="#/map" class="td-hot-row"><span class="td-hot-rank">${i + 1}</span><span class="td-hot-name">${h.topic}</span><span class="td-hot-meta">leads ${h.count}${inN != null ? html`, in ${inN}` : ''}${recent}</span></a></li>`;
+      <li><a href="#/map" class="td-hot-row"><span class="td-hot-rank">${i + 1}</span><span class="td-hot-name">${h.topic}</span><span class="td-hot-meta">main topic of ${h.count}${inN != null ? html` · tagged on ${inN}` : ''}${recent}</span></a></li>`;
     })}</ol>`
     : html`<p class="td-sub">No topic regions yet.</p>`;
   const ar = mapAspect(map);
@@ -251,7 +313,7 @@ function mapTile(map, t) {
       <div class="td-map-side">
         <h3 class="td-label" id="td-hot-h">Hottest regions</h3>
         ${list}
-        ${n ? html`<p class="td-caption">${plural(n, 'story', 'stories')}, ${plural(map.edges?.length || 0, 'connection')}. Ranked by heat: this week’s stories weighted by score. <b>Leads</b>: main topic · <b>in</b>: carries the topic. Labels name the three top-scoring stories.</p>` : ''}
+        ${n ? html`<p class="td-caption">${plural(n, 'story', 'stories')}, ${plural(map.edges?.length || 0, 'connection')}. Ranked by heat: this week’s stories weighted by score. <b>Main topic of</b>: stories whose main topic it is · <b>tagged on</b>: stories that carry it at all. Labels name the three top-scoring stories.</p>` : ''}
       </div>
     </div>
   </section>`;
@@ -280,13 +342,14 @@ function staticMap(map, T) {
     <g class="td-map-regions">${(map.clusters || []).filter(c => hotTopics.includes(c.topic)).map(c => `<circle cx="${c.x.toFixed(1)}" cy="${c.y.toFixed(1)}" r="0" data-topic="${esc(c.topic)}" style="opacity:${(0.35 + 0.65 * (c.heat || 0)).toFixed(2)}"/>`).join('')}</g>
     <path class="td-map-edges" d="${edges}"/>
     <g class="td-map-nodes">${nodes.map(nd => `<circle cx="${nd.x.toFixed(1)}" cy="${nd.y.toFixed(1)}" r="0" data-id="${nd.id}" data-q="${qualityTier(nd.score, T)}" data-q-score="${nd.score}" data-q-threshold="${T}" style="--q:${qualityColor(nd.score, T)}"/>`).join('')}</g>
-  </svg><span class="td-map-labels" aria-hidden="true"><svg class="td-map-leaders"></svg>${top.map(nd => `<span class="td-map-label" data-id="${nd.id}">${esc(nd.short_title || nd.title || '')}</span>`).join('')}</span>`);
+  </svg><span class="td-map-labels" aria-hidden="true"><svg class="td-map-leaders"></svg>${top.map(nd => `<span class="td-map-label" data-id="${nd.id}">${esc(shortLabel(nd.title || nd.short_title))}</span>`).join('')}</span>`);
 }
 
 /**
  * T7: fit the drawing to the canvas once its size is known (ResizeObserver entry: no forced layout), then place at most
- * three labels outside the cluster discs, toward the nearest edge, never over a node. Label widths are estimated from
- * the text (11px Geist ≈ 6.1px per character), capped at 46% of the canvas (the label ellipsises).
+ * three labels. Round 3 T-5: each label is a short title (shortLabel, ≤ 28 characters, never cut mid-word) set within
+ * 24 px of its own node; it flips sides rather than moving away, and avoids covering nodes or sitting nearer another
+ * node than its own. Label widths are the labels' real widths, read before any write in the callback.
  */
 function fitMap(host, map) {
   const box = host?.querySelector('.td-map-labels');
@@ -302,6 +365,8 @@ function fitMap(host, map) {
   const place = (W, H) => {
     if (!W || !H || (W === lastW && H === lastH)) return;
     lastW = W; lastH = H;
+    // the labels' real widths, read before any write (layout is clean in the observer callback, so nothing is forced)
+    const realW = new Map(labels.map(l => [l, l.offsetWidth]));
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
     for (const nd of nodes) { x0 = Math.min(x0, nd.x); y0 = Math.min(y0, nd.y); x1 = Math.max(x1, nd.x); y1 = Math.max(y1, nd.y); }
     const bw = Math.max(1, x1 - x0), bh = Math.max(1, y1 - y0);
@@ -326,36 +391,41 @@ function fitMap(host, map) {
     });
     const placed = [];
     let lines = '';
-    const maxW = Math.round(W * 0.46);
+    const maxW = Math.round(W * 0.66);
+    const topP = new Set(labels.map(l => pOf.get(String(l.dataset.id))).filter(Boolean));
+    const GAP = 22; // round 3 T-5 (≤ 24 px from the node's painted edge, stroke included): every label sits within 24 px of its node; it flips sides rather than moving away
     for (const s of labels) {
       const nd = byId.get(s.dataset.id);
       if (!nd) { s.hidden = true; continue; }
       const p = pOf.get(String(nd.id));
-      const w = Math.min(maxW, Math.round(s.textContent.length * 6.1 + 16)), h = 20;
-      s.style.maxWidth = `${w}px`;
+      const w = Math.min(maxW, realW.get(s) || Math.round(s.textContent.length * 6.2 + 16)), h = 20;
+      s.style.maxWidth = `${maxW}px`;
       // nearest edge first, then the other sides, then the corners
       const dists = [['l', p.x], ['r', W - p.x], ['t', p.y], ['b', H - p.y]].sort((a, b) => a[1] - b[1]).map(d => d[0]);
-      const dirs = [...dists, `${dists.includes('t') && p.y < H / 2 ? 't' : 'b'}${p.x < W / 2 ? 'l' : 'r'}`, 'tl', 'tr', 'bl', 'br'].filter((d, i, a) => a.indexOf(d) === i);
+      const dirs = [...dists, 'tl', 'tr', 'bl', 'br'];
       let best = null;
-      for (const strict of [true, false]) { if (best) break; for (const [rank, dir] of dirs.entries()) for (let step = 0; step < 10; step++) {
-        const off = p.r + 6 + step * 10;
+      // every side and distance up to GAP is scored: covering another node costs most, then a leader over a node, then
+      // sitting inside a region disc, then distance; only a collision with another label (or leaving GAP) rules a spot out
+      for (const [rank, dir] of dirs.entries()) for (let g = 4; g <= GAP; g += 4) {
+        const off = p.r + g;
         let x = p.x - w / 2, y = p.y - h / 2;
         if (dir.includes('l')) x = p.x - off - w; else if (dir.includes('r')) x = p.x + off;
         if (dir.includes('t')) y = p.y - off - h; else if (dir.includes('b')) y = p.y + off;
         if (dir.length === 2) { x = dir.includes('l') ? p.x - off * 0.7 - w : p.x + off * 0.7; y = dir.includes('t') ? p.y - off * 0.7 - h : p.y + off * 0.7; }
         x = Math.max(4, Math.min(W - w - 4, x)); y = Math.max(4, Math.min(H - h - 4, y));
-        const hitsNode = P.some(q => { const dx = Math.max(x - q.x, 0, q.x - (x + w)), dy = Math.max(y - q.y, 0, q.y - (y + h)); return dx * dx + dy * dy < (q.r + 2) ** 2; });
-        if (hitsNode) continue;
+        const lx = Math.max(x, Math.min(p.x, x + w)), ly = Math.max(y, Math.min(p.y, y + h));
+        const gapNow = Math.hypot(lx - p.x, ly - p.y) - p.r;
+        if (gapNow > GAP || gapNow < 1) continue; // clamped away from (or onto) its node
+        const hits = P.reduce((n, q) => { const dx = Math.max(x - q.x, 0, q.x - (x + w)), dy = Math.max(y - q.y, 0, q.y - (y + h)); return n + (dx * dx + dy * dy < (q.r + 2) ** 2 ? (dx * dx + dy * dy < (q.r - 2) ** 2 ? 1 : 0.4) : 0); }, 0);
         if (placed.some(q => x < q.x + q.w + 4 && x + w + 4 > q.x && y < q.y + q.h + 3 && y + h + 3 > q.y)) continue;
         const inDisc = D.reduce((n, d) => { const dx = Math.max(x - d.x, 0, d.x - (x + w)), dy = Math.max(y - d.y, 0, d.y - (y + h)); return n + (dx * dx + dy * dy < d.r * d.r ? 1 : 0); }, 0);
-        const lx = Math.max(x, Math.min(p.x, x + w)), ly = Math.max(y, Math.min(p.y, y + h));
         // a leader may not pass over another node
         const crosses = P.some(q => { if (q === p) return false; const vx = lx - p.x, vy = ly - p.y, L2 = vx * vx + vy * vy || 1; const u = Math.max(0, Math.min(1, ((q.x - p.x) * vx + (q.y - p.y) * vy) / L2)); return Math.hypot(p.x + u * vx - q.x, p.y + u * vy - q.y) < q.r + 1.5; });
-        if (crosses && strict) continue; // second pass: a leader may cross an edge-dense core rather than lose the label
-        const cost = inDisc * 40 + Math.hypot(lx - p.x, ly - p.y) * 1.2 + rank * 8;
+        // a label nearer another node than its own reads as that node's label: costly, most of all for a labelled node
+        const amb = P.reduce((n, q) => { if (q === p) return n; const dx = Math.max(x - q.x, 0, q.x - (x + w)), dy = Math.max(y - q.y, 0, q.y - (y + h)); return n + (Math.hypot(dx, dy) - q.r < gapNow + 2 ? (topP.has(q) ? 60 : 12) : 0); }, 0);
+        const cost = hits * 80 + amb + (crosses ? 25 : 0) + inDisc * 6 + gapNow * 1.5 + rank * 4;
         if (!best || cost < best.cost) best = { x, y, w, h, cost };
-        if (!inDisc) break; // outside every disc on this side: the nearest such spot wins
-      } }
+      }
       s.hidden = !best;
       if (!best) continue;
       placed.push(best);
@@ -376,7 +446,12 @@ function fitMap(host, map) {
   const ro = track(host, new ResizeObserver(([en]) => {
     if (!host.isConnected) { ro.disconnect(); return; }
     const W = Math.round(en.contentRect.width), H = Math.round(en.contentRect.height);
-    if (first) { first = false; place(W, H); return; }
+    if (first) {
+      first = false; place(W, H);
+      // the widths above were read in a fallback face: refit once the webfonts are in (rare: Today usually loads them)
+      if (document.fonts && document.fonts.status !== 'loaded') document.fonts.ready.then(() => requestAnimationFrame(() => { if (host.isConnected) { lastW = 0; place(W, H); } }));
+      return;
+    }
     clearTimeout(timer);
     timer = setTimeout(() => { if (host.isConnected) place(W, H); }, 160);
   }));
@@ -412,8 +487,9 @@ function suggestion(items, T, cals, t) {
   const drafted = new Set();
   for (const c of cals) for (const d of [...(c.drafts || []), ...(c.unplanned || []), ...(c.history || [])]) if (d?.story_id != null) drafted.add(String(d.story_id));
   const above = items.filter(it => Math.round(it.score) >= T).sort((a, b) => b.score - a.score);
-  const story = above.find(it => !drafted.has(String(it.story_id ?? it.id)));
-  if (story) return { kind: 'story', it: story };
+  const open = above.filter(it => !drafted.has(String(it.story_id ?? it.id)));
+  // round 3 T-1: the next ones in line (real content: the other above-bar stories still without a draft)
+  if (open.length) return { kind: 'story', it: open[0], more: open.slice(1, 2) };
   if (t.draft) return { kind: 'draft', d: t.draft };
   return null;
 }
@@ -425,13 +501,18 @@ function weekTile(w, t, T, sugg) {
   const suggRow = !sugg ? html`<p class="td-sub">No story above your bar is waiting for a draft.</p>`
     : sugg.kind === 'story' ? html`<h3 class="td-label td-week-label">Suggested next post</h3>
       <a class="td-row td-row--sugg" href="${storyHref(sugg.it)}" data-dossier-src><span class="td-row-title">${sugg.it.short_title || sugg.it.title}</span><span class="td-row-meta"><span class="td-num">${round(sugg.it.score)}</span><span>no draft yet</span><span class="td-sugg-go">Draft a post ${icon('arrow-right')}</span></span></a>
-      <p class="td-caption td-sugg-why">The top story above your bar of <b>${T}</b> with no draft. Opens its dossier; nothing is drafted yet.</p>`
+      <p class="td-caption td-sugg-why">The top story above your bar of <b>${T}</b> with no draft. Opens its dossier; nothing is drafted yet.</p>
+      ${sugg.more?.length ? html`<h3 class="td-label td-week-label td-sugg-then">Next without a draft</h3>
+      <ul class="td-list td-sugg-more">${sugg.more.map(it => html`<li><a class="td-row td-row--then" href="${storyHref(it)}" data-dossier-src><span class="td-num">${round(it.score)}</span><span class="td-row-title">${shortLabel(it.title, 40)}</span></a></li>`)}</ul>` : ''}`
     : html`<h3 class="td-label td-week-label">Suggested next post</h3>
       <a class="td-row td-row--sugg" href="#/draft/${sugg.d.id}"><span class="td-row-title">${sugg.d.title}</span><span class="td-row-meta">${statusTag(sugg.d.status)}<span>${channelLabel(sugg.d.channel, sugg.d.format)}</span></span></a>
       <p class="td-caption td-sugg-why">Every story above your bar already has a draft; this one is in review.</p>`;
-  // T1 (round 1): the 7-day strip and the posts (or the suggestion) side by side; T4: the tray line sits under the legend
+  // T1 (round 1): the 7-day strip and the posts (or the suggestion) side by side. Round 3 T-1 (R16): the day cells are
+  // 56 px (weekday, date, posting-day marker) and grow only by the posts they hold (one marker each); the tray line and
+  // the next open posting day sit right under the strip, and the side column (the suggestion or the posts) sets the height
+  const nextRow = left && w.next ? html`<a class="td-row td-week-next" href="#/calendar"><span class="td-label">Next open posting day</span> <span class="td-row-title">${fmtDay(w.next)}</span></a>` : '';
   return html`
-  <section class="tile td-week" data-tile="week" aria-labelledby="td-week-h">
+  <section class="tile td-week${total ? '' : ' td-week--empty'}" data-tile="week" aria-labelledby="td-week-h">
     <div class="td-tile-head">
       <h2 class="td-h2" id="td-week-h">This week</h2>
       <a class="btn btn--ghost btn--sm" href="#/calendar">Calendar ${icon('arrow-right')}</a>
@@ -444,16 +525,17 @@ function weekTile(w, t, T, sugg) {
             const dw = dowOf(d);
             const isPosting = w.postingDays.includes(dw);
             const has = w.posts.filter(p => p.day === d);
-            return html`<span class="td-day${d === w.today ? ' is-today' : ''}${d < w.today ? ' is-past' : ''}${isPosting ? ' is-posting' : ''}${has.length ? ' has-post' : ''}"><span class="td-day-name">${dw.slice(0, 2)}</span><span class="td-day-num">${Number(d.slice(8))}</span><i class="td-day-slot"${has.length ? raw(` style="--q:${qualityColor(has[0].score ?? T, T)}"`) : ''}></i></span>`;
+            const slots = has.length ? has.map(p => html`<i class="td-day-slot" style="--q:${qualityColor(p.score ?? T, T)}"></i>`) : html`<i class="td-day-slot"></i>`;
+            return html`<span class="td-day${d === w.today ? ' is-today' : ''}${d < w.today ? ' is-past' : ''}${isPosting ? ' is-posting' : ''}${has.length ? ' has-post' : ''}"><span class="td-day-name">${dw.slice(0, 2)}</span><span class="td-day-num">${Number(d.slice(8))}</span><span class="td-day-slots">${slots}</span></span>`;
           })}
         </div>
-        <p class="td-legend"><i class="td-day-slot"></i> Posting day, filled once a post is planned</p>
+        <p class="td-legend"><i class="td-day-slot"></i><span>${w.postingDays.length ? `Posting days (${listJoin(w.postingDays)}), filled once a post is planned` : 'Posting day, filled once a post is planned'}</span></p>
         ${!total ? html`<p class="td-week-empty">Nothing planned yet. <b>${w.unplanned >= 30 ? '30+' : w.unplanned}</b> ${w.unplanned === 1 ? 'draft is' : 'drafts are'} in the tray.</p>` : ''}
+        ${nextRow}
       </div>
       <div class="td-week-side">
         ${total ? html`<ul class="td-list">${w.posts.slice(0, 3).map(p => html`<li><a class="td-row" href="#/draft/${p.id}"><span class="td-row-day">${dowOf(p.day)}</span><span class="td-row-title">${p.title || p.story_title || 'Untitled draft'}</span><span class="td-row-meta">${statusTag(p.status)}<span>${channelLabel(p.channel)}</span></span></a></li>`)}</ul>${total > 3 ? html`<p class="td-more"><a href="#/calendar">All ${total} this week →</a></p>` : ''}`
           : suggRow}
-        ${left && w.next ? html`<a class="td-row td-week-next" href="#/calendar"><span class="td-label">Next open posting day</span><span class="td-row-title">${fmtDay(w.next)}</span></a>` : ''}
       </div>
     </div>
   </section>`;
@@ -542,7 +624,9 @@ function quietLead(t, items) {
 }
 
 // Run strip: the collection state and the last run, stated plainly (F: surface data problems honestly).
-function runStrip(t, s) {
+// Round 3 T-3 (R18): the run controls live in this band, beside Sources and Run log (running now acts on exactly the
+// state the band describes), so no control floats in the head band.
+function runStrip(t, s, actions = '') {
   const r = t.last_run_summary || s?.last_run;
   const allPaused = t.sources_total && t.sources_paused >= t.sources_total;
   const parts = [];
@@ -560,7 +644,10 @@ function runStrip(t, s) {
   return html`<div class="td-strip" data-tone="${tone}" role="note">
     <span class="dot ${tone}" aria-hidden="true"></span>
     <p>${parts.map((p, i) => html`${i ? ' ' : ''}${p}`)}</p>
-    <span class="td-strip-links">${allPaused || t.sources_paused ? html`<a href="#/sources">Sources</a>` : ''}<a href="#/runs">Run log</a></span>
+    <div class="td-strip-end">
+      <span class="td-strip-links">${allPaused || t.sources_paused ? html`<a href="#/sources">Sources</a>` : ''}<a href="#/runs">Run log</a></span>
+      ${actions}
+    </div>
   </div>`;
 }
 
@@ -577,12 +664,12 @@ function eyebrowOf(t, s, settings, b) {
 
 // ------------------------------------------------------------------ render
 // T1 (E1): the render task builds only the head, the run strip and the three story tiles. News weather, the map, This
-// week, Waiting on you and Also in the brief are fetched in parallel and appended one tile per idle task once the page
-// is on screen (byline:routed → rAF → setTimeout), each a .cv tile so off-screen ones skip style and layout.
+// week, Waiting on you and Also in the brief are fetched in parallel and appended in idle chunks once the page is on
+// screen (byline:routed → rAF → setTimeout → buildLater), each a .cv tile so off-screen ones skip style and layout.
 // Today's layout observers stop when the router starts the page's exit, so they never run inside the next
 // route's swap frame (their callbacks read layout).
 function track(node, ro) { const page = node.closest('.page'); if (page) (page.__tdObs ||= []).push(ro); return ro; }
-export function destroy(page) { for (const ro of page?.__tdObs || []) ro.disconnect(); if (page) page.__tdObs = []; }
+export function destroy(page) { for (const ro of page?.__tdObs || []) ro.disconnect(); if (page) { page.__tdObs = []; page.__tdGone = true; } }
 
 export async function render(view) {
   await useStyle('/css/v4/today.css');
@@ -613,6 +700,20 @@ export async function render(view) {
   const pick = { lead: b?.quiet ? null : items[0], s1: pool[0], s2: pool[1], rest: pool.slice(2) };
   const weights = Object.fromEntries([...(t.topic_counts || []).map(x => [x.topic, x.weight]), ...(settings?.priorities || []).map(p => [p.topic, p.weight])].filter(([, v]) => Number.isFinite(v)));
 
+  const actions = html`
+      <div class="td-actions">
+        ${!items.length ? html`<button type="button" class="btn btn--primary btn--sm" data-act="demo">Load demo data</button>` : ''}
+        <button type="button" class="btn btn--secondary btn--sm" data-act="run" data-key="R">Run today’s workflow</button>
+        ${b ? html`<div class="td-menu">
+          <button type="button" class="btn btn--ghost btn--sm btn--icon" data-act="menu" aria-haspopup="menu" aria-expanded="false" aria-controls="td-brief-menu" aria-label="Brief actions">${icon('more')}</button>
+          <div class="td-menu-pop" id="td-brief-menu" role="menu" aria-label="Brief actions" hidden>
+            <p class="td-menu-meta">${plural(items.length, 'story', 'stories')} · about ${Math.max(1, round(b.reading_minutes))} min read</p>
+            <button type="button" role="menuitem" data-act="digest">Email digest preview</button>
+            <button type="button" role="menuitem" data-act="deliver">Send email + push now</button>
+            <a role="menuitem" href="#/runs">Run log</a>
+          </div>
+        </div>` : ''}
+      </div>`;
   const el = document.createElement('div');
   el.className = 'today';
   el.innerHTML = String(html`
@@ -621,21 +722,8 @@ export async function render(view) {
       <p class="eyebrow">${eyebrow}</p>
       <h1><span class="sr-only">Today: </span>${h}</h1>
       <p class="lede">${l}</p>
-      <div class="page-head-actions">
-        ${!items.length ? html`<button type="button" class="btn btn--primary" data-act="demo">Load demo data</button>` : ''}
-        <button type="button" class="btn btn--secondary" data-act="run" data-key="R">Run today’s workflow</button>
-        ${b ? html`<div class="td-menu">
-          <button type="button" class="btn btn--ghost btn--icon" data-act="menu" aria-haspopup="menu" aria-expanded="false" aria-controls="td-brief-menu" aria-label="Brief actions">${icon('more')}</button>
-          <div class="td-menu-pop" id="td-brief-menu" role="menu" aria-label="Brief actions" hidden>
-            <p class="td-menu-meta">${plural(items.length, 'story', 'stories')} · about ${Math.max(1, round(b.reading_minutes))} min read</p>
-            <button type="button" role="menuitem" data-act="digest">Email digest preview</button>
-            <button type="button" role="menuitem" data-act="deliver">Send email + push now</button>
-            <a role="menuitem" href="#/runs">Run log</a>
-          </div>
-        </div>` : ''}
-      </div>
     </header>
-    ${runStrip(t, s)}
+    ${runStrip(t, s, actions)}
   </div>
   ${!items.length ? html`
   <div class="td-grid" data-no-count>
@@ -676,30 +764,45 @@ export async function render(view) {
   else { document.addEventListener('byline:routed', onRouted); setTimeout(() => { if (!started && view.classList.contains('current')) go(true); }, 2500); }
 }
 
-/** Append the deferred tiles one per task: the first after the swap frame has painted, then one per idle period. */
+/**
+ * Round 3 T-8: the swap frame holds only the head band and row 1. Once the data is in, News weather, the map, row 3 and
+ * Also in the brief are appended in idle chunks (requestIdleCallback, timeout 300 ms; see pump below). Each is a
+ * .cv tile with a reserved intrinsic height (today.css), and every one lands below row 1, so nothing on screen shifts.
+ * The choreography keeps C §2's order: each tile is timed against the routed moment, whenever its chunk runs.
+ */
 function buildLater(el, restData, later, ctl) {
   const grid = el.querySelector('.td-grid');
-  let i = 0, data = null;
-  const idle = (fn) => (window.requestIdleCallback ? requestIdleCallback(fn, { timeout: 160 }) : setTimeout(fn, 16));
-  const step = () => {
-    if (!el.isConnected || !grid) return;
-    if (i >= later.length) { settle(); return; }
-    const [key, build] = later[i++];
+  const page = el.closest('.page');
+  const alive = () => !!grid && el.isConnected && !page?.__tdGone; // stops once the router starts this page's exit
+  const idle = (fn) => (window.requestIdleCallback ? requestIdleCallback(fn, { timeout: 300 }) : setTimeout(fn, 16));
+  let data = null;
+  const append = ([key, build]) => {
     grid.insertAdjacentHTML('beforeend', String(build(data)));
     const tile = grid.lastElementChild;
     tile.classList.add('cv');
     if (key === 'map') fitMap(tile.querySelector('.td-map-canvas'), data.map);
+    if (key === 'weather') fitSwarm(tile);
     ctl.enter(tile);
-    idle(step);
   };
   // once the entrance is over, the tiles leave content-visibility one per idle period (their estimates match, so
   // nothing moves): scrolling and full-page captures then never meet a skipped tile
   const settle = () => setTimeout(() => {
     const cvs = [...grid.querySelectorAll(':scope > .cv')];
-    const next = () => { const c = cvs.shift(); if (!c || !el.isConnected) return; c.classList.remove('cv'); idle(next); };
+    const next = () => { const c = cvs.shift(); if (!c || !alive()) return; c.classList.remove('cv'); idle(next); };
     idle(next);
   }, Math.max(0, ctl.endsIn?.() ?? 0) + 400);
-  requestAnimationFrame(() => setTimeout(() => restData.then((d) => { data = d; setTimeout(step, 0); }, () => { data = { stories: [], map: null, slot: null, cals: [] }; setTimeout(step, 0); }), 0));
+  // one idle chunk holds as many tiles as fit a 6 ms script budget (and the idle deadline): on a desktop that is all of
+  // them at once; on a 4×-throttled phone it is about one per chunk, because the frame that follows also pays their style,
+  // layout and the map/swarm fits (all of them in one chunk measured 58–68 ms frames at phone 4×, E1's limit is 50)
+  const queue = later.slice();
+  const pump = () => idle((dl) => {
+    if (!alive()) return;
+    const t0 = performance.now();
+    do append(queue.shift()); while (queue.length && performance.now() - t0 < 6 && (!dl?.timeRemaining || dl.timeRemaining() > 12));
+    if (queue.length) pump(); else settle();
+  });
+  const run = (d) => { data = d; pump(); };
+  requestAnimationFrame(() => setTimeout(() => restData.then(run, () => run({ stories: [], map: null, slot: null, cals: [] })), 0));
 }
 
 /**
@@ -794,8 +897,7 @@ function choreographer(el, t, laterKeys) {
       mode = reducedMotion() || document.hidden ? 'still' : quick ? 'quick' : 'full';
       if (mode === 'still') { counts(); return; }
       const head = el.querySelector('.td-head');
-      const actions = head?.querySelector('.page-head-actions');
-      const strip = el.querySelector('.td-strip');
+      const strip = el.querySelector('.td-strip'); // carries the run controls (round 3 T-3)
       const tops = [...el.querySelectorAll('.td-grid > .tile, .td-grid > .empty, .td-side > .tile')];
       const keys = [...tops.map(n => n.dataset.tile), ...laterKeys].sort((a, b) => ORDER.indexOf(a) - ORDER.indexOf(b));
       if (mode === 'quick') { // a re-render after a run: one short cascade, no heading choreography
@@ -804,17 +906,16 @@ function choreographer(el, t, laterKeys) {
         counts();
         return;
       }
-      // the head's actions and the run strip: take them off the shell's generic enter classes (which would show them
-      // before the h1) and bring them in with the lede
-      for (const n of [actions, strip, ...(actions ? actions.querySelectorAll('.enter-head, .enter-item') : [])]) { n?.classList.remove('enter-item', 'enter-head'); n?.style.removeProperty('--i'); }
+      // the run strip (with the run controls): take it off the shell's generic enter classes (which would show it
+      // before the h1) and bring it in with the lede
+      for (const n of [strip, ...(strip ? strip.querySelectorAll('.enter-head, .enter-item') : [])]) { n?.classList.remove('enter-item', 'enter-head'); n?.style.removeProperty('--i'); }
       const ht = headTiming(el);
       const lede = head?.querySelector('.lede');
       let ledeAt = ht.line2 + 120;
       if (ht.animated && ht.start <= 80) ledeAt = Math.max(ledeAt, ht.start + 390); // first load: the long 'Settle' (≈450 ms)
       if (lede) { (ht.lede || lede.getAnimations()).forEach(a => a.cancel()); rise(lede, ledeAt, { y: 6, duration: 600, easing: EASE.fade }); }
       const fadeIn = (n, d) => rise(n, d, { y: 6, duration: 450, easing: EASE.fade });
-      fadeIn(actions, ledeAt);
-      fadeIn(strip, ledeAt + 90);
+      fadeIn(strip, ledeAt + 60);
       base = ledeAt + 200;
       keys.forEach((k, i) => at.set(k, base + i * 90));
       tops.forEach(tile => rise(tile, at.get(tile.dataset.tile), { y: 12, duration: 800 }));

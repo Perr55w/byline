@@ -117,7 +117,8 @@ void main(){
   float u = .5 + .5*W;
   float a = u_alpha.x*(.6 + .4*I) + (u_alpha.y - u_alpha.x)*I*u*u + .10*H + .16*L + .22*sheen + .072*P + .2*pr;
   // R3 S10: blue comes from heat (hot topics), the pool's edge band and a click pulse only; the pointer light is neutral
-  float hot = clamp(.85*H + .5*PE + .5*pr, 0., 1.);
+  // and only the cores of the hot topics turn blue (the wide heat skirt lifts density in neutral ink): ≤ 25% of the field
+  float hot = clamp(.85*smoothstep(.55, 1., H) + .5*PE + .5*pr, 0., 1.);
   a *= mix(1., u_alpha.z / max(u_alpha.y, .01), hot*hot);
   a = mix(a, max(a, u_alpha.y + .08), N);
   // S13b: under the page head (h1 + lede) the field steps back to ×0.35 with a 48px feather
@@ -280,7 +281,8 @@ function placeHeat() {
   const spots = heatInput.map((h, i) => {
     const x = h.x != null ? h.x : .18 + .7 * hash(h.topic + ':x');
     const y = h.y != null ? h.y : .2 + .65 * hash(h.topic + ':y' + i);
-    return { x: bx + x * bw, y: by + y * bh, h: Math.max(0, Math.min(1, h.heat)), s: 220 * (.6 + Math.max(0, Math.min(1, h.heat))) };
+    // R3 S10: tighter spots (σ 96–256 px, was 132–352), so a hot topic is a place on the field, not a third of it
+    return { x: bx + x * bw, y: by + y * bh, h: Math.max(0, Math.min(1, h.heat)), s: 160 * (.6 + Math.max(0, Math.min(1, h.heat))) };
   });
   const next = new Float32Array(64 * 40);
   for (let gy = 0; gy < 40; gy++) for (let gx = 0; gx < 64; gx++) {

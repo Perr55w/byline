@@ -1,6 +1,6 @@
 // Offline fallback for the app shell. Network first: whenever the server is reachable you get the
 // current version; the cached copy is used only when offline. Bump VERSION when the shell changes.
-const VERSION = 'byline-shell-v11';
+const VERSION = 'byline-shell-v12';
 const SHELL = ['/',
   '/css/v4/tokens.css', '/css/v4/shell.css', '/css/v4/components.css', '/css/v4/today.css', '/css/v4/feed.css', '/css/v4/dossier.css', '/css/v4/map.css', '/css/v4/search.css', '/css/v4/studio.css', '/css/v4/calendar.css', '/css/v4/campaigns.css', '/css/v4/performance.css', '/css/v4/career.css', '/css/v4/employers.css', '/css/v4/people.css', '/css/v4/sources.css', '/css/v4/runs.css', '/css/v4/settings.css',
   '/js/app.js', '/js/api.js', '/js/ui.js', '/js/motion.js', '/js/quality.js', '/js/bg.js', '/js/bg2d.js', '/js/bg2d-worker.js', '/js/dossier.js', '/js/index-menu.js', '/js/map-engine.js',

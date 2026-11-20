@@ -347,7 +347,9 @@ a.tile:focus-visible { box-shadow: var(--focus); border-radius: var(--r-tile); }
 /* R3 S5 (D, R5): with the rail collapsed ~330px of page shows right of the (constant-width) panel; a --bg layer over
    the .72 scrim fades to .5 (effective scrim ≈ .86) on the rail's own duration, opacity only, so no half-cut page
    text reads in that strip */
-.dossier-scrim::after { content: ""; position: absolute; inset: 0; pointer-events: none; background: var(--bg); opacity: 0;
+/* only the strip right of the collapsed-rail panel position (a full-viewport quad cost every frame of the collapse) */
+.dossier-scrim::after { content: ""; position: absolute; top: 0; bottom: 0; right: 0; pointer-events: none; background: var(--bg); opacity: 0;
+  left: calc(3 * var(--shell-inset) + var(--rail-collapsed) + min(1040px, calc(100vw - var(--rail-expanded) - 2 * var(--shell-inset) - 160px)));
   transition: opacity var(--dur-layout) var(--ease-fade); }
 html.rail-collapsed .dossier-scrim::after { opacity: .5; }
 .dossier-panel, .dossier-shadow {
@@ -379,14 +381,15 @@ html.rail-collapsed .dossier-scrim::after { opacity: .5; }
 .dossier.frosted .dossier-fill { opacity: 0; transition: none; }
 /* R2 S3/S4: closing and a rail reflow drop the backdrop-filter layer at once (no transition, no layout) and put the
    opaque flight fill straight back; it is never faded out visibly */
-.dossier.closing .dossier-frost, .dossier.is-reflowing .dossier-frost, .dossier.is-busy .dossier-frost { display: none; }
-.dossier.closing .dossier-fill, .dossier.is-reflowing .dossier-fill, .dossier.is-busy .dossier-fill { opacity: 1; transition: none; }
-/* R3 S1: .is-busy (dossier.busy(promise), in-panel expansions) holds the opaque fill while the expansion animates */
+.dossier.closing .dossier-frost, .dossier.is-reflowing .dossier-frost, .dossier.is-busy .dossier-frost, .dossier.is-active .dossier-frost { display: none; }
+.dossier.closing .dossier-fill, .dossier.is-reflowing .dossier-fill, .dossier.is-busy .dossier-fill, .dossier.is-active .dossier-fill { opacity: 1; transition: none; }
+/* R3 S1: .is-busy (dossier.busy(promise), in-panel expansions) and .is-active (the reader scrolls, points or types in
+   the panel; dossier.js) hold the opaque fill, so no frame re-blurs the backdrop under changing content: the frost is
+   live only at rest */
 .dossier.closing .dossier-scroll.is-gone { display: none; }
 /* R2 S3: the close's body cover (dossier.js fades its opacity in over 140ms, then the scroller goes) */
 .dossier.closing .dossier-panel::after { content: ""; position: absolute; inset: 0; z-index: 4; border-radius: inherit; pointer-events: none; background: var(--surface-flight); opacity: 0; }
-/* S3 / R3 S2: the most recent idle prebuild stays attached at the final geometry (hidden, inert, ids parked) until
-   open() un-hides it, so the click frame lays nothing out */
+/* S3: an idle prebuild, attached only while it is rendered and measured (R3 S2: an attached host was measured slower) */
 .dossier.is-prebuild { visibility: hidden; contain: strict; pointer-events: none; }
 /* R2 S12: the close button is a solid pill, and a top fade backs it once the body scrolls (class from a passive listener) */
 .dossier-bar { position: absolute; z-index: 3; top: 12px; right: 12px; display: flex; gap: 4px; }

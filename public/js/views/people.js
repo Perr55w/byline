@@ -25,6 +25,22 @@ const CSS = '/css/v4/people.css';
 export const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 export const listJoin = (a) => a.length <= 1 ? (a[0] ?? '') : a.length === 2 ? `${a[0]} and ${a[1]}` : `${a.slice(0, -1).join(', ')} and ${a[a.length - 1]}`;
 /** Demo rows are marked in their own text ("(demo)", "(fictional)", "DEMO · "); show a Demo tag instead. */
+/** Run fn(s) once this view's page has been swapped in and painted: byline:routed names the page → two rAFs →
+ *  idle time, one fn per painted frame. Queuing idle work straight from render() can land it before (or inside) the
+ *  swap frame, because the router inserts the page after render() resolves. Used by the E1 idle chunks on Campaigns,
+ *  Career and person/N. A 1.2 s fallback covers a routed event that never names the page. */
+export function afterSwap(el, ...fns) {
+  let done = false;
+  const idle = (f) => requestAnimationFrame(() => requestAnimationFrame(() => (window.requestIdleCallback ? requestIdleCallback(f, { timeout: 300 }) : setTimeout(f, 16))));
+  const run = () => { if (!el.isConnected) return; const f = fns.shift(); if (f) f(); if (fns.length) idle(run); };
+  const go = () => { if (done) return; done = true; document.removeEventListener('byline:routed', onRouted); idle(run); };
+  const onRouted = (e) => { if (!e.detail?.page || e.detail.page.contains(el)) go(); };
+  // Already swapped in (e.g. Career's tab switch re-renders a pane on the current page): no routed event will come.
+  const pg = el.closest?.('.page');
+  if (pg && !pg.classList.contains('is-pending') && !pg.classList.contains('is-building')) return go();
+  document.addEventListener('byline:routed', onRouted);
+  setTimeout(go, 1200);
+}
 export const isDemoText = (s) => /\((demo|fictional)\)|^\s*DEMO\s*[·:-]/i.test(String(s || ''));
 export const stripDemo = (s) => String(s || '').replace(/^\s*DEMO\s*[·:-]\s*/i, '').replace(/\s*\((demo|fictional)\)/ig, '').trim();
 export const demoTag = (on) => on ? html`<span class="tag tag--demo" title="Fictional sample data">Demo</span>` : '';
@@ -289,8 +305,76 @@ async function renderPerson(el, id, ctx) {
   const demo = isDemoText(c.name) || isDemoText(c.org);
   const sentN = c.outreach.filter(o => o.status === 'sent').length;
 
-  // PE-4 (E1): the swap frame builds the head, the research card and the side column; the outreach and interaction
-  // cards (below the fold) follow in one idle chunk. Their form handlers bind once they exist.
+  // PE-4 (E1): the swap frame builds the head and the first card; the rest follow in idle chunks, one per painted
+  // frame, and their form handlers bind once they exist. The first card depends on the layout: on desktop the
+  // research card with the side column beside it; on a phone (≤1020 px) people.css reorders the cards and puts
+  // Relationship first, so that is the one card built in the swap frame there.
+  const phone = matchMedia('(max-width: 1020px)').matches;
+  const relHtml = () => html`
+      <section class="tile tile--static pp-card" aria-labelledby="pp-rel-h">
+        <h2 class="section-label" id="pp-rel-h">Relationship</h2>
+        <form class="stack-sm" id="rel">
+          ${field('Stage', html`<select class="select" name="stage">${opts([...new Set([...STAGES, c.stage].filter(Boolean))].map(s => [s, label(s)]), c.stage)}</select>`)}
+          ${field('Next step', html`<input class="input" name="next_step" value="${c.next_step || ''}">`)}
+          <div class="field"><span class="pp-flabel" id="pp-nd-l">Next date</span>
+            <span class="pp-datepick"><button type="button" class="input pp-datebtn" data-datepick aria-labelledby="pp-nd-l pp-nd-v" aria-haspopup="dialog"><span id="pp-nd-v">${c.next_date ? dayLabel(c.next_date) : 'No date set'}</span>${icon('calendar')}</button>
+            <input class="input pp-date-native" name="next_date" type="date" value="${c.next_date || ''}" tabindex="-1" aria-hidden="true"></span></div>
+          <div class="pp-form-end"><button class="btn btn--sm" type="submit">Save</button></div>
+        </form>
+        <div class="pp-rule"></div>
+        <div class="pp-dnc"><span>${c.dnc ? 'Do-not-contact is on' : 'Do not contact'}</span><button class="btn btn--sm ${c.dnc ? '' : 'btn--danger'}" data-act="dnc">${c.dnc ? 'Clear do-not-contact' : 'Mark do not contact'}</button></div>
+      </section>
+
+`;
+  const asideRestHtml = () => html`
+      <section class="tile tile--static pp-card pp-private" aria-labelledby="pp-n-h">
+        <div class="pp-card-h"><h2 class="section-label" id="pp-n-h">Private note</h2><span class="tag tag--neutral">Private</span></div>
+        <p class="pp-note">Only you see this. It is never exported and never used to write drafts.</p>
+        <textarea class="textarea" id="pnote" rows="4" aria-labelledby="pp-n-h">${c.private_note || ''}</textarea>
+        <div class="pp-form-end"><button class="btn btn--sm" data-act="save-note">Save note</button></div>
+      </section>
+
+      <section class="tile tile--static pp-card" aria-labelledby="pp-p-h">
+        <div class="pp-card-h"><h2 class="section-label" id="pp-p-h">Meeting prep</h2><button class="btn btn--sm" data-act="prep">${prep ? 'Regenerate' : 'Prepare questions'}</button></div>
+        ${prep ? html`<ol class="pp-prep">${prep.map(q => html`<li>${q}</li>`)}</ol>` : html`<p class="pp-note">Two or three questions grounded in their sourced public work${details.length ? '' : ' (none recorded yet, so questions will be generic)'}.</p>`}
+      </section>
+
+      <section class="tile tile--static pp-card" aria-labelledby="pp-t-h">
+        <h2 class="section-label" id="pp-t-h">After the call</h2>
+        <textarea class="textarea" id="ty-notes" rows="3" aria-labelledby="pp-t-h" placeholder="What did you talk about? What advice will you act on?"></textarea>
+        <div class="pp-form-end"><button class="btn btn--sm" data-act="thankyou" ${c.dnc ? 'disabled' : ''}>Draft thank-you</button></div>
+      </section>
+`;
+  const researchHtml = () => html`
+      <section class="tile tile--static pp-card" aria-labelledby="pp-r-h">
+        <div class="section-head"><h2 class="t-h2" id="pp-r-h">Research card</h2><span class="section-meta">updated ${whenLabel(c.updated_at, tz)}</span></div>
+        <form class="pp-form" id="research">
+          ${field('Name', html`<input class="input" name="name" value="${c.name}">`)}
+          ${field('Public role', html`<input class="input" name="role" value="${c.role || ''}">`)}
+          ${field('Organisation', html`<input class="input" name="org" value="${c.org || ''}">`)}
+          ${field('Target employer', html`<input class="input" name="employer" value="${c.employer || ''}">`)}
+          ${field('Team', html`<input class="input" name="team" value="${c.team || ''}">`)}
+          ${field('LinkedIn', html`<input class="input" name="linkedin" value="${c.linkedin || ''}">`)}
+          ${field('Email', html`<input class="input" name="email" type="email" value="${c.email || ''}">`)}
+          ${field('Email published at', html`<input class="input" name="email_source" value="${c.email_source || ''}">`)}
+          ${field('Instagram', html`<input class="input" name="instagram" value="${c.instagram || ''}">`)}
+          ${field('Segment', html`<select class="select" name="segment">${Object.entries(SEGMENTS).map(([k, l]) => html`<option value="${k}" ${(c.segment || 'target_team') === k ? 'selected' : ''}>${l}</option>`)}</select>`)}
+          <label class="pp-check pp-check--end"><input type="checkbox" name="ksu_alumni" value="1" ${c.ksu_alumni ? 'checked' : ''}> KSU alumni</label>
+          ${field('Why connect', html`<textarea class="textarea" name="why" rows="2">${c.why || ''}</textarea>`, 'pp-full')}
+          <div class="pp-full pp-form-end"><button class="btn btn--sm" type="submit">Save research</button></div>
+        </form>
+        <div class="pp-rule"></div>
+        <div class="section-head"><h3 class="pp-h3">Sourced public details</h3><button class="btn btn--sm" data-act="add-detail">${icon('plus')}Detail</button></div>
+        <div id="details" class="pp-details">
+          ${details.length ? details.map((d, i) => html`<div class="pp-detail-row" data-i="${i}">
+            <input class="input" data-d value="${d.detail || ''}" aria-label="Public detail"><input class="input" data-s value="${d.source || ''}" placeholder="https://source…" aria-label="Source URL">
+            <button class="btn btn--ghost btn--sm btn--icon" data-act="rm-detail" aria-label="Remove detail">${icon('x')}</button></div>`)
+          : html`<p class="pp-note" data-none>No details yet. Personalisation needs at least one sourced detail.</p>`}
+        </div>
+        <div class="pp-form-end"><button class="btn btn--sm" data-act="save-details">Save details</button></div>
+      </section>
+
+`;
   const laterMain = () => html`
       <section class="tile tile--static pp-card" aria-labelledby="pp-o-h">
         <div class="section-head"><h2 class="t-h2" id="pp-o-h">Draft outreach</h2><span class="section-meta">${plural(c.outreach.length, 'message')}</span></div>
@@ -312,6 +396,8 @@ async function renderPerson(el, id, ctx) {
             <td>${status(o.status)}</td></tr>`)}</tbody></table>` : ''}
       </section>
 
+`;
+  const laterLog = () => html`
       <section class="tile tile--static pp-card" aria-labelledby="pp-i-h">
         <div class="section-head"><h2 class="t-h2" id="pp-i-h">Interaction log</h2><span class="section-meta">${plural(c.interactions.length, 'entry', 'entries')}</span></div>
         <form class="pp-ixform" id="ix">
@@ -345,99 +431,46 @@ async function renderPerson(el, id, ctx) {
 
   <div class="pp-cols">
     <div class="pp-main stack">
-      <section class="tile tile--static pp-card" aria-labelledby="pp-r-h">
-        <div class="section-head"><h2 class="t-h2" id="pp-r-h">Research card</h2><span class="section-meta">updated ${whenLabel(c.updated_at, tz)}</span></div>
-        <form class="pp-form" id="research">
-          ${field('Name', html`<input class="input" name="name" value="${c.name}">`)}
-          ${field('Public role', html`<input class="input" name="role" value="${c.role || ''}">`)}
-          ${field('Organisation', html`<input class="input" name="org" value="${c.org || ''}">`)}
-          ${field('Target employer', html`<input class="input" name="employer" value="${c.employer || ''}">`)}
-          ${field('Team', html`<input class="input" name="team" value="${c.team || ''}">`)}
-          ${field('LinkedIn', html`<input class="input" name="linkedin" value="${c.linkedin || ''}">`)}
-          ${field('Email', html`<input class="input" name="email" type="email" value="${c.email || ''}">`)}
-          ${field('Email published at', html`<input class="input" name="email_source" value="${c.email_source || ''}">`)}
-          ${field('Instagram', html`<input class="input" name="instagram" value="${c.instagram || ''}">`)}
-          ${field('Segment', html`<select class="select" name="segment">${Object.entries(SEGMENTS).map(([k, l]) => html`<option value="${k}" ${(c.segment || 'target_team') === k ? 'selected' : ''}>${l}</option>`)}</select>`)}
-          <label class="pp-check pp-check--end"><input type="checkbox" name="ksu_alumni" value="1" ${c.ksu_alumni ? 'checked' : ''}> KSU alumni</label>
-          ${field('Why connect', html`<textarea class="textarea" name="why" rows="2">${c.why || ''}</textarea>`, 'pp-full')}
-          <div class="pp-full pp-form-end"><button class="btn btn--sm" type="submit">Save research</button></div>
-        </form>
-        <div class="pp-rule"></div>
-        <div class="section-head"><h3 class="pp-h3">Sourced public details</h3><button class="btn btn--sm" data-act="add-detail">${icon('plus')}Detail</button></div>
-        <div id="details" class="pp-details">
-          ${details.length ? details.map((d, i) => html`<div class="pp-detail-row" data-i="${i}">
-            <input class="input" data-d value="${d.detail || ''}" aria-label="Public detail"><input class="input" data-s value="${d.source || ''}" placeholder="https://source…" aria-label="Source URL">
-            <button class="btn btn--ghost btn--sm btn--icon" data-act="rm-detail" aria-label="Remove detail">${icon('x')}</button></div>`)
-          : html`<p class="pp-note" data-none>No details yet. Personalisation needs at least one sourced detail.</p>`}
-        </div>
-        <div class="pp-form-end"><button class="btn btn--sm" data-act="save-details">Save details</button></div>
-      </section>
-
-      <div class="pp-later" data-later-main></div>
+      ${phone ? raw('<div class="pp-later" data-later-research></div>') : researchHtml()}
+      <div class="pp-later" data-later-main></div><div class="pp-later" data-later-log></div>
     </div>
 
-    <aside class="pp-aside stack">
-      <section class="tile tile--static pp-card" aria-labelledby="pp-rel-h">
-        <h2 class="section-label" id="pp-rel-h">Relationship</h2>
-        <form class="stack-sm" id="rel">
-          ${field('Stage', html`<select class="select" name="stage">${opts([...new Set([...STAGES, c.stage].filter(Boolean))].map(s => [s, label(s)]), c.stage)}</select>`)}
-          ${field('Next step', html`<input class="input" name="next_step" value="${c.next_step || ''}">`)}
-          <div class="field"><span class="pp-flabel" id="pp-nd-l">Next date</span>
-            <span class="pp-datepick"><button type="button" class="input pp-datebtn" data-datepick aria-labelledby="pp-nd-l pp-nd-v" aria-haspopup="dialog"><span id="pp-nd-v">${c.next_date ? dayLabel(c.next_date) : 'No date set'}</span>${icon('calendar')}</button>
-            <input class="input pp-date-native" name="next_date" type="date" value="${c.next_date || ''}" tabindex="-1" aria-hidden="true"></span></div>
-          <div class="pp-form-end"><button class="btn btn--sm" type="submit">Save</button></div>
-        </form>
-        <div class="pp-rule"></div>
-        <div class="pp-dnc"><span>${c.dnc ? 'Do-not-contact is on' : 'Do not contact'}</span><button class="btn btn--sm ${c.dnc ? '' : 'btn--danger'}" data-act="dnc">${c.dnc ? 'Clear do-not-contact' : 'Mark do not contact'}</button></div>
-      </section>
-
-      <section class="tile tile--static pp-card pp-private" aria-labelledby="pp-n-h">
-        <div class="pp-card-h"><h2 class="section-label" id="pp-n-h">Private note</h2><span class="tag tag--neutral">Private</span></div>
-        <p class="pp-note">Only you see this. It is never exported and never used to write drafts.</p>
-        <textarea class="textarea" id="pnote" rows="4" aria-labelledby="pp-n-h">${c.private_note || ''}</textarea>
-        <div class="pp-form-end"><button class="btn btn--sm" data-act="save-note">Save note</button></div>
-      </section>
-
-      <section class="tile tile--static pp-card" aria-labelledby="pp-p-h">
-        <div class="pp-card-h"><h2 class="section-label" id="pp-p-h">Meeting prep</h2><button class="btn btn--sm" data-act="prep">${prep ? 'Regenerate' : 'Prepare questions'}</button></div>
-        ${prep ? html`<ol class="pp-prep">${prep.map(q => html`<li>${q}</li>`)}</ol>` : html`<p class="pp-note">Two or three questions grounded in their sourced public work${details.length ? '' : ' (none recorded yet, so questions will be generic)'}.</p>`}
-      </section>
-
-      <section class="tile tile--static pp-card" aria-labelledby="pp-t-h">
-        <h2 class="section-label" id="pp-t-h">After the call</h2>
-        <textarea class="textarea" id="ty-notes" rows="3" aria-labelledby="pp-t-h" placeholder="What did you talk about? What advice will you act on?"></textarea>
-        <div class="pp-form-end"><button class="btn btn--sm" data-act="thankyou" ${c.dnc ? 'disabled' : ''}>Draft thank-you</button></div>
-      </section>
-    </aside>
+    <aside class="pp-aside stack">${relHtml()}${phone ? raw('<div class="pp-later" data-later-aside></div>') : asideRestHtml()}</aside>
   </div>`);
   el.replaceChildren(root);
 
   const again = () => renderPerson(el, id, ctx);
   const readDetails = () => [...root.querySelectorAll('#details .pp-detail-row')].map(r => ({ detail: r.querySelector('[data-d]').value.trim(), source: r.querySelector('[data-s]').value.trim() })).filter(d => d.detail || d.source);
 
-  root.querySelector('#research').addEventListener('submit', async (e) => {
+  const bindResearch = () => root.querySelector('#research').addEventListener('submit', async (e) => {
     e.preventDefault();
     const f = Object.fromEntries(new FormData(e.target));
     if (f.email && !f.email_source.trim()) return toast('Say where the email address was published (or that they gave it to you).', 'err');
     await act(e.submitter, async () => { await api.patch(`/contacts/${id}`, { ...f, ksu_alumni: !!f.ksu_alumni }); toast('Saved', 'ok'); again(); });
   });
-  root.querySelector('#rel').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const f = Object.fromEntries(new FormData(e.target));
-    await act(e.submitter, async () => { await api.patch(`/contacts/${id}`, { ...f, next_date: f.next_date || null }); toast('Saved', 'ok'); again(); });
-  });
+  if (!phone) bindResearch();
+  const bindAside = () => {
+    root.querySelector('#rel').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const f = Object.fromEntries(new FormData(e.target));
+      await act(e.submitter, async () => { await api.patch(`/contacts/${id}`, { ...f, next_date: f.next_date || null }); toast('Saved', 'ok'); again(); });
+    });
+    // PE-3: the Next date shows a formatted day on a button that opens the native picker; the input stays the value.
+    const dInput = root.querySelector('.pp-date-native'), dBtn = root.querySelector('[data-datepick]');
+    dBtn.addEventListener('click', () => { try { dInput.showPicker(); } catch (err) { dInput.classList.add('is-shown'); dInput.removeAttribute('aria-hidden'); dInput.tabIndex = 0; dInput.focus(); } });
+    dInput.addEventListener('change', () => { root.querySelector('#pp-nd-v').textContent = dInput.value ? dayLabel(dInput.value) : 'No date set'; });
+  };
+  bindAside();
   const bindLater = () => root.querySelector('#ix').addEventListener('submit', async (e) => {
     e.preventDefault();
     const f = Object.fromEntries(new FormData(e.target));
     await act(e.submitter, async () => { await api.post(`/contacts/${id}/interactions`, f); toast(f.kind === 'reply' ? 'Reply logged; follow-ups paused' : 'Logged', 'ok'); again(); });
   });
-  const slot = root.querySelector('[data-later-main]');
-  const fill = () => { if (!slot.isConnected && !el.contains(root)) return; slot.outerHTML = String(laterMain()); bindLater(); };
-  (window.requestIdleCallback ? requestIdleCallback(fill, { timeout: 300 }) : setTimeout(fill, 16));
-  // PE-3: the Next date shows a formatted day on a button that opens the native picker; the input stays the value.
-  const dInput = root.querySelector('.pp-date-native'), dBtn = root.querySelector('[data-datepick]');
-  dBtn.addEventListener('click', () => { try { dInput.showPicker(); } catch (err) { dInput.classList.add('is-shown'); dInput.removeAttribute('aria-hidden'); dInput.tabIndex = 0; dInput.focus(); } });
-  dInput.addEventListener('change', () => { root.querySelector('#pp-nd-v').textContent = dInput.value ? dayLabel(dInput.value) : 'No date set'; });
+  // Each chunk runs after a painted frame (two rAFs), then in idle time: an idle callback queued straight from render()
+  // can run before the swap frame renders and merge its work into it. One chunk per frame keeps each frame small.
+  const swap = (sel, h) => { const n = root.querySelector(sel); if (n) n.outerHTML = String(h); };
+  afterSwap(root, () => swap('[data-later-main]', laterMain()), () => { swap('[data-later-log]', laterLog()); bindLater(); },
+    ...(phone ? [() => swap('[data-later-aside]', asideRestHtml()), () => { swap('[data-later-research]', researchHtml()); bindResearch(); }] : []));
   on(root, 'click', 'tr[data-outreach]', (e, tr) => { e.preventDefault(); openOutreach(tr.dataset.outreach, again); });
   on(root, 'click', '[data-act]', async (e, btn) => {
     const a = btn.dataset.act;
