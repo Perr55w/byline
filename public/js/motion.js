@@ -168,6 +168,7 @@ export function enterHeading(el, { variant = 'load', lede = null, eyebrow = null
   if (key && seenHeadings.get(key) === text) {
     anims.push(el.animate([{ opacity: 0 }, { opacity: 1 }], opts(delay, 240, EASE.fade)));
     if (lede) anims.push(lede.animate([{ opacity: 0 }, { opacity: 1 }], opts(delay, 240, EASE.fade)));
+    el.__enter = { start: 0, line2: 0, animated: false, lede: lede ? anims.slice(1) : [] }; // read by views instead of getAnimations() (which flushes style)
     track(el, anims);
     return Promise.all(anims.map(a => a.finished.catch(() => {}))).then(() => {});
   }
@@ -194,10 +195,13 @@ export function enterHeading(el, { variant = 'load', lede = null, eyebrow = null
   });
   const extra = Math.max(0, lines.length - 1);
   if (eyebrow) anims.push(eyebrow.animate([{ opacity: 0 }, { opacity: 1 }], opts(delay, 500, EASE.fade)));
+  const lineDelay = (i) => delay + (load ? 60 : 0) + i * stagger;
+  el.__enter = { start: lines.length ? lineDelay(0) : 0, line2: lines.length ? lineDelay(Math.min(1, lines.length - 1)) : 0, animated: lines.length > 0, lede: [] };
   if (lede) {
     const d = delay + (load ? 420 + 120 * extra : 160);
     anims.push(lede.animate([{ opacity: 0 }, { opacity: 1 }], opts(d, load ? 600 : 450, EASE.fade)));
     anims.push(lede.animate([{ transform: `translateY(${load ? 6 : 4}px)` }, { transform: 'none' }], opts(d, load ? 800 : 450, EASE.settle)));
+    el.__enter.lede = anims.slice(-2);
   }
   track(el, anims);
   return Promise.all(anims.map(a => a.finished.catch(() => {}))).then(() => {

@@ -119,6 +119,11 @@ export async function render(page) {
   }
   const view = new MapView(page, data);
   view.mount();
+  // round-1 M7: the page lays out in its own frame before the engine and side panel are built, so neither the shell's
+  // layout nor the engine's setup has to share one frame with the other (E1 at phone 4×)
+  await new Promise((r) => { if (document.hidden) setTimeout(r, 0); else requestAnimationFrame(() => setTimeout(r, 0)); });
+  if (!view.alive || !page.isConnected) return;
+  view.mountRest();
   fresh.then((d) => { if (d && view.alive) view.update(d); }).catch(() => {});
 }
 
@@ -199,6 +204,10 @@ class MapView {
     this.twin = this.$('[data-twin]');
     this.live = this.$('[data-live]');
     this.side = this.$('[data-side]');
+  }
+
+  mountRest() {
+    const p = this.page;
     this.eng = mountMap(this.$('[data-host]'), {
       data: this.data,
       onPick: (n) => this.select(n ? n.id : null, { from: 'pointer' }),

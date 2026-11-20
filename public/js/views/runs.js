@@ -6,7 +6,7 @@
 import { api } from '../api.js';
 import { html, raw, on, act, toast, confirmBox, timeAgo, useStyle, statusMark, icon } from '../ui.js';
 import { stagedRun } from '../app.js';
-import { enterItems } from '../motion.js';
+// (history rows land below the fold after the swap, so they are appended without entrance motion)
 
 const STAGES = ['collect', 'cluster', 'rank', 'brief', 'draft'];
 const STAGE_LABEL = { collect: 'Collect', cluster: 'Cluster', rank: 'Rank', brief: 'Brief', draft: 'Draft' };
@@ -38,6 +38,8 @@ function afterEnter(view, el, fn) {
   setTimeout(run, 2500);
 }
 
+const idleSlice = (fn) => (window.requestIdleCallback ? requestIdleCallback(fn, { timeout: 300 }) : setTimeout(fn, 16));
+
 /** What a run did, from its stored stats (the list endpoint has no stage rows). */
 function facts(r) {
   const st = r.stats || {};
@@ -52,7 +54,9 @@ function facts(r) {
   if (r.status === 'running') { const i = stages.indexOf('running'); stages.forEach((s, j) => { if (s === 'running' && j !== i) stages[j] = 'pending'; }); }
   // U1: a finished run whose collect stage read 0 sources did nothing new; it must not look like a full success
   const empty = r.status === 'done' && c != null && !c.sources;
-  return { empty, sources: c?.sources ?? null, collected: c?.collected ?? null, fresh: c?.new ?? null, failed: c?.failed?.length ?? null, skipped: c?.skipped?.length ?? null, ranked: st.rank?.ranked ?? null, items: st.brief?.items ?? null, failedStage, stages };
+  // a run whose every polled source failed collected nothing either: same amber, its own words
+  const allFailed = !empty && r.status === 'done' && c != null && c.sources > 0 && (c.failed?.length || 0) >= c.sources;
+  return { empty, allFailed, sources: c?.sources ?? null, collected: c?.collected ?? null, fresh: c?.new ?? null, failed: c?.failed?.length ?? null, skipped: c?.skipped?.length ?? null, ranked: st.rank?.ranked ?? null, items: st.brief?.items ?? null, failedStage, stages };
 }
 
 /** F §2 Runs headline + one-liner. */
@@ -91,6 +95,7 @@ const STATUS_WORD = { done: 'Done', failed: 'Failed', running: 'Running' };
 function statusTag(run) {
   const collect = run.stats?.collect ?? run.stages?.find(x => x.stage === 'collect' && x.status === 'done')?.detail;
   if (run.status === 'done' && collect && !collect.sources) return html`<span class="tag tag--warn">Done · 0 sources read</span>`;
+  if (run.status === 'done' && collect && collect.sources > 0 && (collect.failed?.length || 0) >= collect.sources) return html`<span class="tag tag--warn">Done · ${collect.sources === 1 ? 'its 1 source' : `all ${collect.sources} sources`} failed</span>`;
   return html`<span class="tag ${run.status === 'done' ? 'tag--ok' : run.status === 'failed' ? 'tag--err' : 'tag--warn'}">${STATUS_WORD[run.status] || run.status}</span>`;
 }
 
@@ -109,9 +114,9 @@ function detailHtml(run, S) {
     ${run.error ? html`<div class="rn-flag" role="note"><b>Failed:</b> ${run.error}</div>` : ''}
     <ol class="rn-timeline">${(run.stages || []).map((s, i, arr) => {
       const attempt = arr.slice(0, i + 1).filter(x => x.stage === s.stage).length;
-      const empty = s.stage === 'collect' && s.status === 'done' && s.detail && !s.detail.sources;
+      const empty = s.stage === 'collect' && s.status === 'done' && s.detail && (!s.detail.sources || (s.detail.failed?.length || 0) >= s.detail.sources);
       return html`<li class="rn-stage" data-status="${s.status}">
-        <span class="rn-mark${empty ? ' rn-mark--empty' : ''}" data-mark="${s.status}" ${empty ? raw('data-empty title="Done, but read 0 sources"') : ''}></span>
+        <span class="rn-mark${empty ? ' rn-mark--empty' : ''}" data-mark="${s.status}" ${empty ? raw(`data-empty title="${s.detail.sources ? 'Done, but every source failed' : 'Done, but read 0 sources'}"`) : ''}></span>
         <div class="rn-stage-b">
           <div class="rn-stage-h"><span class="rn-stage-n">${STAGE_LABEL[s.stage] || s.stage}</span>${attempt > 1 ? html`<span class="tag tag--neutral">attempt ${attempt}</span>` : ''}<span class="rn-stage-t">${dur(s.started_at, s.finished_at)}</span></div>
           ${s.error ? html`<p class="rn-err-t">${s.error}</p>` : ''}
@@ -135,14 +140,15 @@ function detailHtml(run, S) {
   </section>`;
 }
 
-const FIRST_RUNS = 6; // history rows in the tab-change frame; the rest are appended after the swap (E1)
+const FIRST_RUNS = 0; // the history sits below the fold on every viewport: its rows (and their status marks) are built after the swap (E1)
 function runRow(r, S) {
-  const tz = S.tz, f = facts(r);
+  const tz = S.tz, f0 = facts(r), f = { ...f0, empty: f0.empty || f0.allFailed };
+  const emptyWord = f0.allFailed ? `Done · ${f0.sources === 1 ? 'its 1 source' : `all ${f0.sources} sources`} failed` : 'Done · 0 sources read';
   return html`<tr class="rn-row${r.id === S.selId ? ' is-selected' : ''}" data-run="${r.id}" data-row>
-          <td class="rn-c-st"><span class="rn-mark${f.empty ? ' rn-mark--empty' : ''}" data-mark="${r.status}" ${f.empty ? raw('data-empty') : ''}></span></td>
-          <td><a class="rn-link" href="#/runs/${r.id}" aria-current="${r.id === S.selId ? 'true' : 'false'}">#${r.id}<span>${dayLabel(r.run_date)}</span></a>${r.error ? html`<span class="rn-row-err">${r.error}</span>` : f.empty ? html`<span class="rn-row-empty">Done · 0 sources read</span>` : ''}</td>
+          <td class="rn-c-st"><span class="rn-mark${f.empty ? ' rn-mark--empty' : ''}" data-mark="${r.status}" ${f.empty ? raw(`data-empty title="${emptyWord}"`) : ''}></span></td>
+          <td><a class="rn-link" href="#/runs/${r.id}" aria-current="${r.id === S.selId ? 'true' : 'false'}">#${r.id}<span>${dayLabel(r.run_date)}</span></a>${r.error ? html`<span class="rn-row-err">${r.error}</span>` : f.empty ? html`<span class="rn-row-empty">${emptyWord}</span>` : ''}</td>
           <td class="rn-c-tr">${r.trigger}</td>
-          <td><span class="rn-strip" role="img" aria-label="${STAGES.map((s, i) => `${STAGE_LABEL[s]} ${i === 0 && f.empty ? 'done, 0 sources read' : f.stages[i] === 'done' ? 'done' : f.stages[i] === 'error' ? 'failed' : f.stages[i] === 'running' ? 'running' : 'not run'}`).join(', ')}">${STAGES.map((s, i) => html`<span class="rn-mark rn-mark--sm${i === 0 && f.empty ? ' rn-mark--empty' : ''}" data-mark="${f.stages[i]}" ${i === 0 && f.empty ? raw('data-empty') : ''} title="${STAGE_LABEL[s]}${i === 0 && f.empty ? ': read 0 sources' : ''}"></span>`)}</span></td>
+          <td><span class="rn-strip" role="img" aria-label="${STAGES.map((s, i) => `${STAGE_LABEL[s]} ${i === 0 && f.empty ? (f0.allFailed ? 'done, every source failed' : 'done, 0 sources read') : f.stages[i] === 'done' ? 'done' : f.stages[i] === 'error' ? 'failed' : f.stages[i] === 'running' ? 'running' : 'not run'}`).join(', ')}">${STAGES.map((s, i) => html`<span class="rn-mark rn-mark--sm${i === 0 && f.empty ? ' rn-mark--empty' : ''}" data-mark="${f.stages[i]}" ${i === 0 && f.empty ? raw('data-empty') : ''} title="${STAGE_LABEL[s]}${i === 0 && f.empty ? (f0.allFailed ? ': every source failed' : ': read 0 sources') : ''}"></span>`)}</span></td>
           <td class="num">${f.sources ?? '—'}</td>
           <td class="num${f.fresh ? ' rn-pos' : ''}">${f.fresh ?? '—'}</td>
           <td class="num${f.failed ? ' rn-neg' : ''}">${f.failed ?? '—'}</td>
@@ -152,7 +158,7 @@ function runRow(r, S) {
           <td class="num">${usd(r.cost_usd)}</td>
         </tr>`;
 }
-const markAll = (root) => root.querySelectorAll('.rn-mark[data-mark]').forEach(m => { const sm = statusMark(m, m.dataset.mark); if (m.hasAttribute('data-empty')) sm?.setAttribute('aria-label', 'Done, 0 sources read'); });
+const markAll = (root) => root.querySelectorAll('.rn-mark[data-mark]').forEach(m => { const sm = statusMark(m, m.dataset.mark); if (m.hasAttribute('data-empty')) sm?.setAttribute('aria-label', m.title?.includes('failed') ? 'Done, every source failed' : 'Done, 0 sources read'); });
 
 function historyHtml(S) {
   const tz = S.tz;
@@ -161,7 +167,7 @@ function historyHtml(S) {
     ${S.runs.length ? html`<div class="tile tile--flush tile--static rn-table-tile"><table class="table rn-table">
       <caption class="sr-only">Runs, newest first. Select a row to see its stages.</caption>
       <thead><tr><th class="rn-c-st"><span class="sr-only">Status</span></th><th>Run</th><th>Trigger</th><th>Stages</th><th class="num">Read</th><th class="num">New</th><th class="num">Failed</th><th class="num">Ranked</th><th>Started</th><th class="num">Time</th><th class="num">Cost</th></tr></thead>
-      <tbody data-rn-rows>${S.runs.slice(0, Math.max(FIRST_RUNS, S.runs.findIndex(r => r.id === S.selId) + 1)).map(r => runRow(r, S))}</tbody></table></div>` : html`<div class="empty"><h3>No runs yet.</h3><p>Use Run now, or enable the daily schedule in Settings.</p></div>`}
+      <tbody data-rn-rows>${S.runs.slice(0, S.rows ?? FIRST_RUNS).map(r => runRow(r, S))}</tbody></table></div>` : html`<div class="empty"><h3>No runs yet.</h3><p>Use Run now, or enable the daily schedule in Settings.</p></div>`}
   </section>`;
 }
 
@@ -218,7 +224,7 @@ export async function render(view, { params = [] } = {}) {
   ${S.allPaused || S.scheduleOff ? html`<div class="rn-callout" role="note">${icon('alert')}<p>${S.allPaused ? html`<b>Runs read 0 sources: all ${S.sourceCount} are paused.</b> ` : ''}${S.scheduleOff ? html`The daily schedule is off, so runs happen only when you start one. ` : ''}</p><div class="cluster">${S.allPaused ? html`<a class="btn btn--secondary btn--sm" href="#/sources">Open Sources</a>` : ''}${S.scheduleOff ? html`<a class="btn btn--ghost btn--sm" href="#/settings">Schedule settings</a>` : ''}</div></div>` : ''}
   <div class="rn-top">
     <div class="rn-main">${detailHtml(run, S)}</div>
-    <aside class="rn-aside" aria-label="Costs and feedback">${asideHtml(S)}</aside>
+    <aside class="rn-aside cv" aria-label="Costs and feedback">${asideHtml(S)}</aside>
   </div>
   ${historyHtml(S)}`);
 
@@ -227,13 +233,21 @@ export async function render(view, { params = [] } = {}) {
     const body = el.querySelector('[data-rn-rows]');
     if (!body) return;
     const rest = S.runs.slice(body.children.length);
-    if (!rest.length) return;
-    const tmp = document.createElement('tbody');
-    tmp.innerHTML = rest.map(r => String(runRow(r, S))).join('');
-    markAll(tmp);
-    const rows = [...tmp.children];
-    body.append(...rows);
-    enterItems(rows, { stagger: 24, y: 4, duration: 360, cap: 6 });
+    // a few rows per idle slice, so no single task builds the whole history (E1 at 4×)
+    const pump = (dl) => {
+      if (!body.isConnected) return;
+      do {
+        const chunk = rest.splice(0, 3);
+        if (!chunk.length) break;
+        const tmp = document.createElement('tbody');
+        tmp.innerHTML = chunk.map(r => String(runRow(r, S))).join('');
+        markAll(tmp);
+        const rows = [...tmp.children];
+        body.append(...rows);
+      } while (rest.length && dl && dl.timeRemaining() > 8);
+      if (rest.length) idleSlice(pump);
+    };
+    pump(null);
   });
 
   const go = (id) => { const h = `#/runs/${id}`; if (location.hash === h) render(view, { params: [String(id)] }); else location.hash = h; };

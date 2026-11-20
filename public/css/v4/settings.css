@@ -5,6 +5,8 @@
 
 .sg-layout { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 32px; align-items: start; }
 .sg-main { display: flex; flex-direction: column; gap: 16px; min-width: 0; max-width: 880px; }
+/* the post-swap block (Automation + folds) joins .sg-main's column so its tiles keep the same 16 px rhythm */
+.sg-rest { display: contents; }
 
 /* ---------------------------------------------------------------- section index */
 .sg-toc { position: sticky; top: calc(var(--topbar-h) + 12px); display: flex; flex-direction: column; gap: 1px; max-height: calc(100dvh - var(--topbar-h) - 24px); overflow-y: auto; scrollbar-width: none; }
@@ -17,7 +19,7 @@
 .sg-toc-a[aria-current]::before { content: ""; position: absolute; left: -1px; top: 8px; bottom: 8px; width: 2px; border-radius: 1px; background: var(--accent); }
 
 /* ---------------------------------------------------------------- sections */
-.sg-group { margin: 16px 2px -4px; color: var(--text-3); font: 500 var(--fs-label)/var(--lh-label) var(--font-mono); letter-spacing: var(--tr-label); text-transform: uppercase; }
+.sg-group { margin: 16px 2px -4px; color: var(--text-2); font: 500 13px/18px var(--font-sans); letter-spacing: 0; text-transform: none; }
 .sg-sec { padding: 0; scroll-margin-top: calc(var(--topbar-h) + 16px); }
 .sg-sec-head { padding: 22px 24px 0; }
 .sg-h { margin: 0; color: var(--text-1); font: var(--wt-title) 22px/28px var(--font-serif); font-variation-settings: 'opsz' 28; letter-spacing: var(--tr-title); }
@@ -128,7 +130,7 @@
 .sg-fold.is-open { display: flex; flex-direction: column; gap: 16px; margin-top: 16px; }
 .sg-fold-t { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .sg-fold-h { margin: 0; color: var(--text-1); font: var(--wt-title) 22px/28px var(--font-serif); font-variation-settings: 'opsz' 28; letter-spacing: var(--tr-title); }
-.sg-fold.is-open .sg-fold-h { color: var(--text-3); font: 500 var(--fs-label)/var(--lh-label) var(--font-mono); font-variation-settings: normal; letter-spacing: var(--tr-label); text-transform: uppercase; }
+.sg-fold.is-open .sg-fold-h { color: var(--text-2); font: 500 13px/18px var(--font-sans); font-variation-settings: normal; letter-spacing: 0; text-transform: none; }
 .sg-fold-btn .icon { width: 14px; height: 14px; margin: 0 -2px 0 2px; transform: rotate(90deg); transition: transform var(--dur-micro) var(--ease-move); }
 .sg-fold-btn[aria-expanded=true] .icon { transform: rotate(-90deg); }
 .sg-fold.is-open .sg-fold-btn { height: 26px; }

@@ -186,7 +186,7 @@ function detailHtml(s, S) {
     </form>
   </div>`;
 }
-const FIRST_ROWS = 12; // table rows in the tab-change frame; the rest are appended after the swap (E1)
+const FIRST_ROWS = 6; // table rows in the tab-change frame (the table starts near the fold at 1440×900 and below it on phone); the rest follow the swap (E1)
 function sourcesTab(S, { limit = Infinity } = {}) {
   const groups = [...new Set(S.sources.map(s => s.grp || 'General'))];
   const gCount = (g) => S.sources.filter(s => (s.grp || 'General') === g).length;
@@ -208,7 +208,7 @@ function sourcesTab(S, { limit = Infinity } = {}) {
       <label class="so-ctl-l so-find">${icon('search')}<span class="sr-only">Filter sources</span><input class="input" type="search" data-so-text value="${ui.text}" placeholder="Filter by name, URL or error"></label>
     </div>
   </div>
-  <div class="tile tile--flush tile--static so-table-tile">
+  <div class="tile tile--flush tile--static so-table-tile cv">
     ${S.sources.length ? html`<table class="table so-table">
       <caption class="sr-only">Sources: ${list.length} shown of ${S.sources.length}. Sortable columns.${d7 ? '' : ' Every collected article is from the past 7 days, so one Articles column stands for both.'}</caption>
       <thead><tr><th class="so-c-x"><span class="sr-only">Details</span></th><th class="so-c-h">Health</th>${sortTh('name', 'Source', 'so-c-name')}<th class="so-c-grp">Group</th><th class="so-c-ev">Evidence</th><th class="so-c-on">On</th>${sortTh('sync', 'Last sync', 'so-c-sync')}${d7 ? sortTh('d7', '7d', 'num') : ''}${sortTh('total', d7 ? 'Total' : 'Articles', 'num so-c-tot')}${sortTh('stories', 'Stories', 'num')}<th class="so-c-act"><span class="sr-only">Sync</span></th></tr></thead>
@@ -360,9 +360,19 @@ export async function render(view, ctx = {}) {
     const body = el.querySelector('[data-so-rows]');
     const rest = visibleSources(S).slice(FIRST_ROWS);
     if (!body || !rest.length) return;
-    const d7 = d7Shown, n = body.children.length;
-    body.insertAdjacentHTML('beforeend', rest.map(s => String(sourceRow(s, S, { d7 }))).join(''));
-    enterItems([...body.children].slice(n), { stagger: 24, y: 4, duration: 360, cap: 6 });
+    const d7 = d7Shown;
+    // a few rows per idle slice, so no single task builds the rest of the table (E1 at 4×)
+    // (they land below the fold, so they are not animated)
+    const pump = (dl) => {
+      if (!body.isConnected || ui.tab !== 'sources') return;
+      do {
+        const chunk = rest.splice(0, 5);
+        if (!chunk.length) break;
+        body.insertAdjacentHTML('beforeend', chunk.map(s => String(sourceRow(s, S, { d7 }))).join(''));
+      } while (rest.length && dl && dl.timeRemaining() > 8);
+      if (rest.length) (window.requestIdleCallback ? requestIdleCallback(pump, { timeout: 300 }) : setTimeout(pump, 16));
+    };
+    pump(null);
   });
 }
 

@@ -188,17 +188,7 @@ export async function render(view, ctx = {}) {
   const paint = ({ rest = true } = {}) => {
     const hd = headline(s, st, today, watch, summary);
     restIn = rest;
-    el.innerHTML = String(html`
-    <header class="page-head">
-      <p class="eyebrow">Control · each section saves on its own</p>
-      <h1>${hd.h}</h1>
-      <p class="lede">${hd.l}</p>
-    </header>
-    <div class="sg-layout">
-      <nav class="sg-toc" aria-label="Settings sections">${TOC.map(([g, items]) => html`<p class="sg-toc-g">${g}</p>${items.map(([id, t]) => html`<a href="#${id}" class="sg-toc-a" data-goto="${id}">${t}</a>`)}`)}</nav>
-      <div class="sg-main">
-      ${section('sg-overview', 'Source health & status', html`What feeds the ranking right now. Sources, watchlists and connectors live on the <a href="#/sources">Sources</a> page.`, healthHtml())}
-
+    const rankHtml = String(html`
       <p class="sg-group" aria-hidden="true">Ranking</p>
       ${section('sg-priorities', 'Priorities', html`Topics and the terms that signal them. Weight 0 ignores a topic, 1 is normal, 2 doubles it, below 0 de-emphasizes. Saving re-ranks the last 30 days of stories.`, html`
         <div class="sg-prio-head" aria-hidden="true"><span>Topic</span><span>Weight</span><span>Terms</span><span></span></div>
@@ -216,7 +206,19 @@ export async function render(view, ctx = {}) {
           <label class="field">Publishing threshold (0–100)<input class="input" type="number" min="0" max="100" data-f="publish_threshold" value="${s.publish_threshold}"></label>
           <label class="field">Brief size (stories)<input class="input" type="number" min="1" max="20" data-f="brief_size" value="${s.brief_size}"></label>
         </div>
-        ${today?.ranked != null ? html`<p class="sg-help">This week: <b>${today.cleared}</b> of ${today.ranked} ranked stories are at or above ${s.publish_threshold}.</p>` : ''}`, { save: 'threshold' })}
+        ${today?.ranked != null ? html`<p class="sg-help">This week: <b>${today.cleared}</b> of ${today.ranked} ranked stories are at or above ${s.publish_threshold}.</p>` : ''}`, { save: 'threshold' })}`);
+    el.innerHTML = String(html`
+    <header class="page-head">
+      <p class="eyebrow">Control · each section saves on its own</p>
+      <h1>${hd.h}</h1>
+      <p class="lede">${hd.l}</p>
+    </header>
+    <div class="sg-layout">
+      <nav class="sg-toc" aria-label="Settings sections">${TOC.map(([g, items]) => html`<p class="sg-toc-g">${g}</p>${items.map(([id, t]) => html`<a href="#${id}" class="sg-toc-a" data-goto="${id}">${t}</a>`)}`)}</nav>
+      <div class="sg-main">
+      ${section('sg-overview', 'Source health & status', html`What feeds the ranking right now. Sources, watchlists and connectors live on the <a href="#/sources">Sources</a> page.`, healthHtml())}
+
+      ${raw(rankHtml)}
 
       <div class="sg-rest" data-sg-rest>${raw((restHtml = String(html`<p class="sg-group" aria-hidden="true">Automation</p>
       ${section('sg-schedule', 'Schedule', 'The server checks every minute; a failed scheduled run is retried from its failed stage up to 3 times, 10 minutes apart. Any IANA zone name works.', html`
@@ -329,14 +331,19 @@ export async function render(view, ctx = {}) {
     io?.disconnect();
     spyCur = '';
     if (!('IntersectionObserver' in window)) return;
-    const live = new Set();
+    const live = new Map(); // target → visible height inside the band
     io = new IntersectionObserver((entries) => {
-      for (const en of entries) { if (en.isIntersecting) live.add(en.target); else live.delete(en.target); }
+      for (const en of entries) { if (en.isIntersecting) live.set(en.target, en.intersectionRect.height); else live.delete(en.target); }
       if (Date.now() < spyHold || !live.size) return;
-      let top = null;
-      for (const t of live) if (!top || (top.compareDocumentPosition(t) & Node.DOCUMENT_POSITION_PRECEDING)) top = t;
+      // topmost intersecting section, except one whose last few pixels are just leaving the band's top edge
+      let top = null, any = null;
+      for (const [t, h] of live) {
+        if (!any || (any.compareDocumentPosition(t) & Node.DOCUMENT_POSITION_PRECEDING)) any = t;
+        if (h >= 40 && (!top || (top.compareDocumentPosition(t) & Node.DOCUMENT_POSITION_PRECEDING))) top = t;
+      }
+      top ||= any;
       setCurrent(top.dataset.fold ? TOC.find(x => x[0] === top.dataset.fold)[1][0][0] : top.id);
-    }, { rootMargin: '-80px 0px -60% 0px' });
+    }, { rootMargin: '-80px 0px -60% 0px', threshold: [0, 0.02, 0.05, 0.1, 0.25, 0.5, 1] });
     el.querySelectorAll('.sg-sec').forEach(x => { if (!x.closest('.sg-fold-b[hidden]')) io.observe(x); });
     el.querySelectorAll('.sg-fold:not(.is-open)').forEach(x => io.observe(x));
   };

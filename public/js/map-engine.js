@@ -3,7 +3,7 @@
 //
 //   loadMap()                          cache-first payload: { data, fresh } (localStorage + ETag revalidation)
 //   mountMap(el, opts) → engine        the Map tab's interactive stage
-//   mountMiniMap(el, { onOpen }) → { destroy }   a small static drawing of the same layout (Today tile)
+//   mountMiniMap(el, { onOpen }) → { destroy }   a small static drawing of the same layout (no caller since round 1: Today draws its own SVG)
 //
 // Drawing order (E §4): topic regions (pre-rendered once to an offscreen canvas from a density field),
 // isobar contours (marching squares over the same field, cached Path2D, hairline at any zoom), edges in
@@ -167,7 +167,10 @@ export function shortTitle(title, { max = 34, always = false } = {}) {
   if (t.length <= max) return t;
   const cut = t.slice(0, max);
   const sp = t[max] === ' ' ? max : cut.lastIndexOf(' ');
-  return `${(sp > max * 0.5 ? cut.slice(0, sp) : cut).replace(/[\s,;:—–-]+$/, '')}…`;
+  // never end on a function word ('…publishes draft guidance on…' → '…publishes draft guidance…')
+  let head = (sp > max * 0.5 ? cut.slice(0, sp) : cut).replace(/[\s,;:—–-]+$/, '');
+  for (let i = 0; i < 3; i++) { const h2 = head.replace(/\s+(?:a|an|the|of|on|in|at|to|for|with|about|by|from|and|or|its|their)$/i, ''); if (h2 === head || h2.length < max * 0.5) break; head = h2; }
+  return `${head}…`;
 }
 // node label: from the full title (the server's short_title may itself be a mid-phrase cut)
 function labelText(n) {
@@ -217,7 +220,7 @@ class MapEngine {
     if (!this.mini) this.buildOverlays();
     this.ro = new ResizeObserver((entries) => this.onResize(entries[0].contentRect));
     this.ro.observe(host);
-    this.onTheme = () => { this.tok = null; this.qcol = null; this.regions = null; this.requestDraw(); };
+    this.onTheme = () => { this.tok = null; this.qcol = null; this.regions = null; this.regionJob = null; this.requestDraw(); };
     document.addEventListener('byline:theme', this.onTheme);
     if (!this.mini) this.bindInput();
     if (opts.data) this.setData(opts.data);
@@ -332,6 +335,7 @@ class MapEngine {
     this.hot = new Set((d?.hot_topics || []).map(h => h.topic));
     this.qcol = null;
     this.regions = null;
+    this.regionJob = null;
     this.labelW.clear();
     if (this.sel >= 0 && this.sel >= N) this.sel = -1;
     if (this.w && (!keep || this.mini)) this.fit({ animate: false });
@@ -356,7 +360,32 @@ class MapEngine {
   }
 
   // -------------------------------------------------------------------- regions + isobars (pre-rendered)
+  /** Build the regions now (theme switch, the mini map, reduced motion). */
   buildRegions() {
+    const job = this.regionJob;
+    this.regionJob = null;
+    const it = this.regionSteps();
+    while (!it.next().done);
+    if (job) job.cbs.forEach(f => f()); // a pending idle build is now done
+  }
+  /** round-1 M7: build the regions in idle slices (~1 cluster each), then cb(); the 4× phone budget can't take the
+   *  whole build (≈ 45 ms) inside one frame. A newer payload or theme drops the job (regionJob is replaced). */
+  prepareRegions(cb) {
+    if (this.regions) { cb(); return; }
+    if (this.regionJob) { this.regionJob.cbs.push(cb); return; }
+    const job = this.regionJob = { it: this.regionSteps(), cbs: [cb] };
+    const ric = window.requestIdleCallback || ((f) => setTimeout(() => f({ timeRemaining: () => 8 }), 16));
+    const step = (dl) => {
+      if (this.destroyed || this.regionJob !== job) return;
+      const t0 = performance.now();
+      // at least one step per slice; more while the slice has room (each step is a few ms at 4×)
+      do { if (job.it.next().done) { this.regionJob = null; job.cbs.forEach(f => f()); return; } }
+      while (performance.now() - t0 < 6 && dl.timeRemaining() > 6);
+      ric(step, { timeout: 120 });
+    };
+    ric(step, { timeout: 120 });
+  }
+  *regionSteps() {
     if (!this.tok) this.tok = tokens() || readTokens();
     const b = this.bounds;
     const pad = 120;
@@ -383,8 +412,11 @@ class MapEngine {
       }
       return [gx0, gy0, gx1, gy1];
     };
-    this.clusters.forEach((c, ci) => {
-      if (!c.members.length || c.topic == null) return;
+    const fields = [];
+    for (let ci = 0; ci < this.clusters.length; ci++) {
+      const c = this.clusters[ci];
+      if (!c.members.length || c.topic == null) continue;
+      yield;
       // a region's core is the same-topic stories that sit near each other; when none do, every story of the
       // topic is its core, so each topic gets a hull of its own (round-1 M5); outliers keep a faint halo
       const near = 3.2 * 40;
@@ -401,37 +433,8 @@ class MapEngine {
       };
       if (core.length) scan(fc, bb, coreMax, (v, k) => { if (v > coreMax[k]) { coreMax[k] = v; owner[k] = ci; } if (v > best) { best = v; bi = k; } });
       scan(fh, hb, haloMax, (v, k) => { if (v > haloMax[k]) { haloMax[k] = v; if (coreMax[k] < 0.2) owner[k] = ci; } if (!core.length && v > best) { best = v; bi = k; } });
-      // ripple anchor: the core's peak (where the topic's stories sit closest together); label anchor: the
-      // top-centre of the hull (the outer isobar's blob that holds the peak), found by a flood fill from the peak
-      if (bi >= 0) {
-        const lab = { ci, x: x0 + (bi % gw) * cell, y: y0 + Math.floor(bi / gw) * cell, peak: best };
-        const LV = 0.45;
-        // the label's blob is the one holding the topic's best-scoring story (a topic may have several blobs)
-        let top = core[0];
-        for (const i of core) if ((this.nodes[i].score || 0) > (this.nodes[top].score || 0)) top = i;
-        const tgx = clamp(Math.round((this.X[top] - x0) / cell), 0, gw - 1), tgy = clamp(Math.round((this.Y[top] - y0) / cell), 0, gh - 1);
-        const start = fc[tgy * gw + tgx] >= LV ? tgy * gw + tgx : bi;
-        if (core.length && fc[start] >= LV) {
-          const seen = new Uint8Array(gw * gh), stack = [start];
-          let gx0 = gw, gx1 = 0, gy0 = gh;
-          seen[start] = 1;
-          while (stack.length) {
-            const k = stack.pop(), gx = k % gw, gy = (k - gx) / gw;
-            if (gx < gx0) gx0 = gx; if (gx > gx1) gx1 = gx; if (gy < gy0) gy0 = gy;
-            const nb = [gx > 0 ? k - 1 : -1, gx < gw - 1 ? k + 1 : -1, gy > 0 ? k - gw : -1, gy < gh - 1 ? k + gw : -1];
-            for (const q of nb) if (q >= 0 && !seen[q] && fc[q] >= LV) { seen[q] = 1; stack.push(q); }
-          }
-          // interpolate the hull's top edge inside the topmost cell row's column at the bbox centre
-          const cx = Math.round((gx0 + gx1) / 2);
-          let ty = gy0;
-          for (let gy = gy0; gy < gh; gy++) { if (fc[gy * gw + cx] >= LV) { ty = gy; break; } }
-          const above = ty > 0 ? fc[(ty - 1) * gw + cx] : 0, at = fc[ty * gw + cx];
-          const fy = ty - (at - LV) / Math.max(1e-6, at - above);
-          lab.tx = x0 + ((gx0 + gx1) / 2) * cell;
-          lab.ty = y0 + Math.max(gy0 - 1, Math.min(ty, fy)) * cell;
-        } else { lab.tx = lab.x; lab.ty = lab.y; }
-        out.labels.push(lab);
-      }
+      // ripple anchor: the core's peak; the label anchor is found after every cluster has claimed its cells
+      if (bi >= 0) fields[ci] = { fc, core, bi, best };
       // isobars on the core field: the outer ring marks the region, inner rings show how tightly stories overlap
       if (core.length) {
         const levels = this.mini ? [0.45, 1.25] : [0.45, 1.25, 2.0, 2.9, 3.9];
@@ -440,7 +443,71 @@ class MapEngine {
           if (contour(fc, gw, gh, lv, x0, y0, cell, p, bb)) out.paths.push({ p, ci, li, heat: heatOf(c) });
         });
       }
-    });
+    }
+    yield;
+    // label anchors (round-1 M1): the top-centre of the territory a topic owns (cells inside its outer isobar where
+    // its field is the strongest), so overlapping regions get labels over their own ground instead of one stack
+    // over the shared centre; the component holding most of the topic's stories wins, then the larger. A topic that
+    // owns no clear ground keeps the top-centre of its whole outer isobar.
+    const LV = 0.45;
+    const topEdge = (inside, gx0, gx1, gy0, fc) => {
+      const cx = Math.round((gx0 + gx1) / 2);
+      let ty = -1;
+      for (let gy = gy0; gy < gh; gy++) if (inside(gy * gw + cx)) { ty = gy; break; }
+      if (ty < 0) return y0 + gy0 * cell;
+      const above = ty > 0 ? fc[(ty - 1) * gw + cx] : 0, at = fc[ty * gw + cx];
+      const fy = at > LV && at > above ? ty - (at - LV) / (at - above) : ty;
+      return y0 + Math.max(gy0 - 1, Math.min(ty, fy)) * cell;
+    };
+    const flood = (start, inside, seen, mark = 1) => {
+      const stack = [start], box = { gx0: gw, gx1: 0, gy0: gh, n: 0 };
+      seen[start] = mark;
+      while (stack.length) {
+        const k = stack.pop(), gx = k % gw, gy = (k - gx) / gw;
+        box.n++;
+        if (gx < box.gx0) box.gx0 = gx; if (gx > box.gx1) box.gx1 = gx; if (gy < box.gy0) box.gy0 = gy;
+        const nb = [gx > 0 ? k - 1 : -1, gx < gw - 1 ? k + 1 : -1, gy > 0 ? k - gw : -1, gy < gh - 1 ? k + gw : -1];
+        for (const q of nb) if (q >= 0 && !seen[q] && inside(q)) { seen[q] = mark; stack.push(q); }
+      }
+      return box;
+    };
+    const minCells = Math.max(6, (36 * 36) / (cell * cell)); // ground at least ~36 px square (world) to carry a label
+    for (let ci = 0; ci < fields.length; ci++) {
+      const F = fields[ci];
+      if (!F) continue;
+      const { fc, core, bi, best } = F;
+      const lab = { ci, x: x0 + (bi % gw) * cell, y: y0 + Math.floor(bi / gw) * cell, peak: best, tx: x0 + (bi % gw) * cell, ty: y0 + Math.floor(bi / gw) * cell };
+      let top = core[0];
+      for (const i of core) if ((this.nodes[i].score || 0) > (this.nodes[top].score || 0)) top = i;
+      const cellOf = (i) => clamp(Math.round((this.Y[i] - y0) / cell), 0, gh - 1) * gw + clamp(Math.round((this.X[i] - x0) / cell), 0, gw - 1);
+      const own = (k) => owner[k] === ci && fc[k] >= LV;
+      const seen = new Uint8Array(gw * gh);
+      let pick = null;
+      // the component holding the most of the topic's stories wins, then the larger one (seen[] holds 2 + its index)
+      const comps = [];
+      for (let k = 0; k < gw * gh; k++) {
+        if (seen[k] || !own(k) || comps.length > 250) continue;
+        const b = flood(k, own, seen, comps.length + 2);
+        b.m = 0;
+        comps.push(b);
+      }
+      for (const i of this.clusters[ci].members) { const id = seen[cellOf(i)]; if (id >= 2) comps[id - 2].m++; }
+      for (const b of comps) if (b.n >= minCells && (!pick || b.m > pick.m || (b.m === pick.m && b.n > pick.n))) pick = b;
+      if (pick) {
+        lab.tx = x0 + ((pick.gx0 + pick.gx1) / 2) * cell;
+        lab.ty = topEdge(own, pick.gx0, pick.gx1, pick.gy0, fc);
+      } else {
+        const blob = (k) => fc[k] >= LV;
+        const tk = cellOf(top), start = blob(tk) ? tk : bi;
+        if (blob(start)) {
+          const b = flood(start, blob, new Uint8Array(gw * gh));
+          lab.tx = x0 + ((b.gx0 + b.gx1) / 2) * cell;
+          lab.ty = topEdge(blob, b.gx0, b.gx1, b.gy0, fc);
+        }
+      }
+      out.labels.push(lab);
+    }
+    yield;
     // soft region fill: one tinted blob per cluster (owner of the strongest field at each cell)
     const off = document.createElement('canvas');
     off.width = gw; off.height = gh;
@@ -450,6 +517,7 @@ class MapEngine {
     const base = tok.night ? 0.065 : 0.06, hotA = tok.night ? 0.035 : 0.04;
     const ss = (e0, e1, v) => { const t = clamp((v - e0) / (e1 - e0), 0, 1); return t * t * (3 - 2 * t); };
     for (let k = 0; k < gw * gh; k++) {
+      if (k && k % 12000 === 0) yield;
       const ci = owner[k];
       if (ci < 0) continue;
       const c = this.clusters[ci];
@@ -814,6 +882,13 @@ class MapEngine {
   /** End the hold: full draw (regions, isobars, labels) in the next frame. */
   release() {
     if (!this.held || this.destroyed) return;
+    // over the cached frame, build the regions in idle slices first so the full draw fits a frame (round-1 M7)
+    if (this.snapShown && !this.regions && this.N && (this.tok || (this.tok = tokens()))) {
+      const go = () => { clearTimeout(this.holdT); if (this.held && !this.destroyed) { this.held = false; this.requestDraw(); } };
+      this.holdT = setTimeout(go, 1500); // a dropped job (new payload or theme mid-build) never strands the hold
+      this.prepareRegions(go);
+      return;
+    }
     this.held = false;
     this.requestDraw();
   }
@@ -949,9 +1024,10 @@ class MapEngine {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     if (!this.N) return;
-    if (!this.regions) this.buildRegions();
-    const R = this.regions;
     const intro = this.anim.intro;
+    // during the intro the regions fade in from 0 anyway: build them in idle slices and draw the nodes meanwhile
+    if (!this.regions) { if (intro && !this.mini) this.prepareRegions(() => this.requestDraw()); else this.buildRegions(); }
+    const R = this.regions;
     ctx.setTransform(dpr * k, 0, 0, dpr * k, dpr * (this.w / 2 - this.cam.x * k), dpr * (this.h / 2 - this.cam.y * k));
     // visible world rect (+ margin) for culling
     const vx0 = this.cam.x - this.w / 2 / k - 50, vx1 = this.cam.x + this.w / 2 / k + 50;
@@ -962,12 +1038,12 @@ class MapEngine {
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
     ctx.globalAlpha = regionA;
-    ctx.drawImage(R.img, R.x0 - R.cell / 2, R.y0 - R.cell / 2, R.gw * R.cell, R.gh * R.cell);
+    if (R) ctx.drawImage(R.img, R.x0 - R.cell / 2, R.y0 - R.cell / 2, R.gw * R.cell, R.gh * R.cell);
     // 2. isobars (hairline in screen space)
     ctx.lineWidth = (this.mini ? 0.8 : 1) / k;
     ctx.lineCap = 'round';
     const inkA = tok.night ? [0.2, 0.13, 0.1, 0.08, 0.07] : [0.17, 0.11, 0.085, 0.07, 0.06];
-    if (!lod) for (const P of R.paths) {
+    if (!lod && R) for (const P of R.paths) {
       const h = P.heat, a = inkA[P.li] * (this.mini ? 1.25 : 1) * regionA;
       ctx.strokeStyle = h > 0.45 ? `rgba(${tok.hot},${(a * (0.9 + h)).toFixed(3)})` : `rgba(${tok.ink},${a.toFixed(3)})`;
       ctx.globalAlpha = 1;
@@ -1130,18 +1206,23 @@ class MapEngine {
 
     // 1. the top-3 hot regions, always: at the top-centre of their hull, nudged off nodes, forced into view
     const tl = this.regions ? this.regions.labels : [];
-    while (this.topicPool.length < tl.length) { const s = document.createElement('span'); s.className = 'map-topic'; s.innerHTML = '<i></i><b></b>'; this.topicLayer.append(s); this.topicPool.push(s); }
-    const rank = new Map((this.data?.hot_topics || []).slice(0, 3).map((h, r) => [h.topic, r + 1]));
-    const fT = '500 12px Geist, system-ui, sans-serif';
+    while (this.topicPool.length < tl.length) { const s = document.createElement('span'); s.className = 'map-topic'; s.innerHTML = '<b></b><i></i>'; this.topicLayer.append(s); this.topicPool.push(s); }
+    // round-1 M2: the top-3 read '{topic} · leads {n}' (main-topic stories, the side panel's "Leads n"); others carry no number
+    const hot3 = (this.data?.hot_topics || []).slice(0, 3);
+    const rank = new Map(hot3.map((h, r) => [h.topic, r + 1]));
+    const leads = new Map(hot3.map(h => [h.topic, h.count]));
+    const fT = '500 12px Geist, system-ui, sans-serif', fS = '450 12px Geist, system-ui, sans-serif';
     const H = 22;
     const topics = tl.map((l, j) => ({ l, j, c: this.clusters[l.ci], rank: rank.get(this.clusters[l.ci].topic) || 0 }));
     const placeTopic = ({ l, j, c, rank: rk }, force) => {
       const el = this.topicPool[j];
       const name = c.label || c.topic;
-      const w = Math.ceil(this.measure(name, fT) + (rk ? 16 + 6 - 5 : 0) + 20);
-      if (el.dataset.t !== name || el.dataset.r !== String(rk)) {
-        el.dataset.t = name; el.dataset.r = String(rk);
-        el.firstChild.textContent = rk ? String(rk) : ''; el.lastChild.textContent = name;
+      const n = rk ? leads.get(c.topic) : null;
+      const sub = n != null && !phone ? `· leads ${n}` : ''; // a phone stage keeps the names only (room)
+      const w = Math.ceil(this.measure(name, fT) + (sub ? 6 + this.measure(sub, fS) : 0) + 20);
+      if (el.dataset.t !== name || el.dataset.s !== sub) {
+        el.dataset.t = name; el.dataset.s = sub;
+        el.firstChild.textContent = name; el.lastChild.textContent = sub;
         el.classList.toggle('is-hot', !!rk);
       }
       const ax = (l.tx - this.cam.x) * this.cam.k + this.w / 2 - w / 2, ay = (l.ty - this.cam.y) * this.cam.k + this.h / 2 - H / 2;
@@ -1193,7 +1274,8 @@ class MapEngine {
 
   destroy() {
     this.saveSnap();
-    clearTimeout(this.liveT);
+    clearTimeout(this.liveT); clearTimeout(this.holdT);
+    this.regionJob = null;
     this.destroyed = true;
     if (this.raf) cancelAnimationFrame(this.raf);
     if (this.hoverRaf) cancelAnimationFrame(this.hoverRaf);

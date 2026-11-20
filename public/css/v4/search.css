@@ -52,8 +52,9 @@
 
 .sr-group + .sr-group { margin-top: 28px; }
 .sr-group-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 28px; margin: 0 2px 10px; }
-.sr-gh { display: flex; align-items: baseline; gap: 10px; margin: 0; color: var(--text-2); font: 500 var(--fs-label)/var(--lh-label) var(--font-mono); letter-spacing: var(--tr-label); text-transform: uppercase; }
-.sr-gn { color: var(--text-3); font-variant-numeric: tabular-nums; }
+/* group heads are sentence-case Geist (ruling 7: mono caps stay on eyebrows, th and rail group names) */
+.sr-gh { display: flex; align-items: baseline; gap: 8px; margin: 0; color: var(--text-2); font: 500 13px/18px var(--font-sans); letter-spacing: 0; text-transform: none; }
+.sr-gn { color: var(--text-3); font: 450 12px/18px var(--font-mono); font-variant-numeric: tabular-nums; }
 .sr-gmore { color: var(--text-3); font: 450 12px/16px var(--font-sans); }
 .sr-group-head .btn .icon { width: 14px; height: 14px; }
 /* Q4: figures in the h1 keep the headline's weight (they only exist so a changed figure can fade alone) */
@@ -181,3 +182,6 @@ mark.sr-n { background: var(--accent-soft); color: var(--text-1); font-weight: 5
 @media (prefers-reduced-motion: reduce) { .sr-results[aria-busy=true] { transition: none; } }
 
 /* AA on this tab's status tags + danger text (the shared warn/ok/err tints sit just under 4.5:1 in Proof — see report) */
+
+/* result groups after the first skip layout while off screen (shared .cv) — E1. The first is always near the fold, so it renders normally (a .cv there costs a second style + layout pass). */
+.sr-group.cv { contain-intrinsic-size: auto 560px; }

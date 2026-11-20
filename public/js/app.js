@@ -153,7 +153,7 @@ if (!reducedMotion()) { root.classList.add('brand-draw'); setTimeout(() => root.
 
 // phone "More" sheet: same groups as the rail
 $('phone-more').addEventListener('click', () => {
-  const cur = location.hash.replace(/^#\/?/, '').split('/')[0] || 'today';
+  const cur = location.hash.replace(/^#\/?/, '').split(/[/?]/)[0] || 'today';
   const k = ALIAS[cur] || cur;
   const m = sheet(`<nav class="sheet-nav" aria-label="All sections">${NAV.map(([g, items]) => `<p class="eyebrow">${g}</p>${items.map(([key, label]) => `<a href="#/${key}"${key === k ? ' aria-current="page"' : ''}><svg class="icon"><use href="#i-${key}"/></svg>${label}</a>`).join('')}`).join('')}
     <p class="eyebrow">Display</p><a href="#" data-sheet-theme><svg class="icon"><use href="#i-${themeNow() === 'night' ? 'sun' : 'moon'}"/></svg>Switch to ${themeNow() === 'night' ? 'Proof' : 'Night'}</a></nav>`);
@@ -187,7 +187,7 @@ export async function refreshStatus({ flap = false, force = false } = {}) {
       paintPill(s, t, th);
       paintRailStatus(s);
       const badge = document.querySelector('.rail-item[data-nav="studio"] .rail-badge');
-      if (badge) { const n = s.counts?.awaiting || 0; badge.textContent = n; badge.hidden = !n; badge.title = `${n} draft${n === 1 ? '' : 's'} awaiting review`; }
+      if (badge) { const n = s.counts?.awaiting || 0; badge.textContent = n; badge.hidden = !n; const ir = s.counts?.in_review || 0; badge.title = `${n} open draft${n === 1 ? '' : 's'}${ir ? `, ${ir} in review` : ''}`; }
       heatFromToday(t, s);
     } catch (e) { /* server restarting: keep the last good pill */ }
   })();
@@ -368,7 +368,7 @@ async function routeTo(key, params, hash) {
   const seq = ++cur.seq;
   settleInFlight();
   setActive(key);
-  bg.setMode(BG_FULL.has(key) ? 'full' : key === 'draft' ? 'still' : 'dim'); // the draft editor is a writing surface: still field
+  bg.setMode(BG_FULL.has(key) ? 'full' : key === 'draft' || key === 'studio' ? 'still' : 'dim'); // Studio and the draft editor are writing surfaces: still field
   bg.hold(450);
   heatFromToday.last = null; // a view (Map) may have set its own heat: Today's comes back on the next status paint
   const old = cur.page && cur.page.isConnected ? cur.page : view.querySelector('.page.current');
@@ -407,7 +407,7 @@ async function route(ev) {
   if (history.state?.sheet) return; // a sheet's own history entry; the sheet handles it
   const hash = location.hash && location.hash !== '#' && location.hash !== '#/' ? location.hash : '#/today';
   const [n0, ...params] = hash.replace(/^#\/?/, '').split('/');
-  const name = n0 || 'today';
+  const name = (n0 || 'today').split('?')[0] || 'today'; // `#/feed?days=all` is the Feed with a query
   if (name === 'story' && params[0]) {
     if (!dossier.isOpen()) {
       if (!cur.page) { await routeTo('feed', [], '#/feed'); dz.back = false; dz.base = '#/feed'; }

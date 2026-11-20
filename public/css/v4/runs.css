@@ -115,3 +115,6 @@
 }
 
 /* AA on this tab's status tags + danger text (the shared warn/ok/err tints sit just under 4.5:1 in Proof — see report) */
+
+/* the aside skips layout while off screen (phone: far below the fold) — E1 */
+.rn-aside.cv { contain-intrinsic-size: auto 640px; }

@@ -219,3 +219,6 @@ th.num .so-sort { flex-direction: row-reverse; }
 @media (prefers-reduced-motion: reduce) { .so-x .icon, .so-tab::after { transition: none; } }
 
 /* AA on this tab's status tags + danger text (the shared warn/ok/err tints sit just under 4.5:1 in Proof — see report) */
+
+/* the table skips layout while off screen (phone: below the fold at tab change) — E1; rows are 56 px */
+.so-table-tile.cv { contain-intrinsic-size: auto 1500px; }

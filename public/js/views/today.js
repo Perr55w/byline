@@ -546,6 +546,7 @@ const rise = (n, delay, { y = 10, duration = 700, easing = EASE.settle } = {}) =
 /** The heading's timing as enterHeading set it: { start, line2 } (ms from now), read from its own animations. */
 function headTiming(el) {
   const h1 = el.querySelector('.td-head h1');
+  if (h1?.__enter) return h1.__enter; // set by enterHeading: no getAnimations() style flush in the swap frame (E1)
   const delays = [...new Set((h1?.getAnimations({ subtree: true }) || []).filter(a => a.effect?.target !== h1).map(a => Number(a.effect.getTiming().delay) || 0))].sort((x, y) => x - y);
   return { start: delays[0] ?? 0, line2: delays[1] ?? delays[0] ?? 0, animated: delays.length > 0 };
 }
@@ -585,7 +586,7 @@ function choreograph(el, { quick = false, t } = {}) {
   let ledeAt = ht.line2 + 120;
   if (ht.animated && ht.start <= 80) ledeAt = Math.max(ledeAt, ht.start + 390); // first load: the long 'Settle' (≈450 ms)
   // the lede: the shell's two lede animations become one (opacity + rise together), retimed after line 2
-  if (lede) { lede.getAnimations().forEach(a => a.cancel()); rise(lede, ledeAt, { y: 6, duration: 600, easing: EASE.fade }); }
+  if (lede) { (ht.lede || lede.getAnimations()).forEach(a => a.cancel()); rise(lede, ledeAt, { y: 6, duration: 600, easing: EASE.fade }); }
   const fadeIn = (n, d) => rise(n, d, { y: 6, duration: 450, easing: EASE.fade });
   fadeIn(actions, ledeAt);
   fadeIn(strip, ledeAt + 90);

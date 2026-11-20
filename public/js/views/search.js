@@ -18,7 +18,9 @@ const RANGES = [['', 'Any time'], ['7', 'Past 7 days'], ['30', 'Past 30 days'], 
 const EV = { announcement: 'first-party', reporting: 'reporting', research: 'research', commentary: 'commentary', community: 'community', application: 'release notes', own_work: 'my project' };
 const RECENT_KEY = 'byline-recent-searches';
 const PER_GROUP = 5;
-const FIRST_GROUPS = 2; // groups in the tab-change frame; the rest arrive after the swap (E1)
+// groups in the tab-change frame: on desktop the first is in view (the second starts below the fold at 1440×900);
+// on phone every group sits below the chips and Refine, so all of them arrive after the swap (E1)
+const firstGroups = () => (matchMedia('(max-width: 760px)').matches ? 0 : 1);
 const IDLE_PER_GROUP = { stories: 5, claims: 4, drafts: 3, notes: 3, contacts: 4, briefs: 2 };
 
 // filters survive tab switches within a session (the query comes from the route when given)
@@ -313,13 +315,13 @@ function resultsHtml(S, { from = 0, to = Infinity } = {}) {
       ${f.q ? html`<button type="button" class="btn btn--ghost" data-sr="clear-q">Clear the search</button>` : ''}</div></div>`;
   }
   const order = f.type === 'all' ? TYPES : TYPES.filter(([k]) => k === f.type);
-  return html`${order.filter(([k]) => (r[k] || []).length).slice(from, to).map(([k, label]) => {
+  return html`${order.filter(([k]) => (r[k] || []).length).slice(from, to).map(([k, label], gi) => {
     // drafts group by story and identical notes collapse (Q1); the head count stays the record count
     const list = k === 'drafts' ? groupDrafts(r[k]) : k === 'notes' ? groupNotes(r[k]) : r[k];
     const shown = f.type === 'all' ? list.slice(0, idle ? IDLE_PER_GROUP[k] : PER_GROUP) : list;
     const total = c[k] ?? r[k].length;
     const covered = k === 'drafts' ? shown.reduce((a, ds) => a + ds.length, 0) : k === 'notes' ? shown.reduce((a, n) => a + n.count, 0) : shown.length;
-    return html`<section class="sr-group" aria-labelledby="sr-g-${k}" data-group="${k}">
+    return html`<section class="sr-group${from + gi > 0 ? ' cv' : ''}" aria-labelledby="sr-g-${k}" data-group="${k}">
       <div class="sr-group-head">
         <h2 class="sr-gh" id="sr-g-${k}">${idle ? IDLE_TITLE[k] : label}<span class="sr-gn">${total}</span></h2>
         ${f.type === 'all' && total > covered ? html`<button type="button" class="btn btn--ghost btn--sm" data-sr-type="${k}">${idle ? `All ${total}` : `Show all ${total}`}${icon('arrow-right')}</button>` : ''}
@@ -402,7 +404,7 @@ function paint(el, S) {
     <div class="sr-quick" data-sr-quick>${chipsHtml(S)}</div>
   </section>
   <div class="sr-body">
-    <div class="sr-results" id="sr-results" data-sr-results aria-live="polite" aria-busy="false">${resultsHtml(S, { to: FIRST_GROUPS })}</div>
+    <div class="sr-results" id="sr-results" data-sr-results aria-live="polite" aria-busy="false">${resultsHtml(S, { to: S.first })}</div>
     <aside class="sr-aside" data-sr-aside aria-label="Refine and recent searches">${asideHtml(S)}</aside>
   </div>`);
 }
@@ -434,7 +436,7 @@ function repaint(el, S, { animate = true } = {}) {
   const wait = HEAD_QUIET_MS - (performance.now() - (S.lastKey || 0));
   const head = () => { const hd = headline(S); swapFigures(el.querySelector('[data-sr-h]'), String(hd.h)); swapFigures(el.querySelector('[data-sr-l]'), String(hd.l)); };
   if (wait > 0) S.headTimer = setTimeout(head, wait); else head();
-  S.rest = true; // a repaint renders every group
+  S.rest = true; S.repainted = true; // a repaint renders every group
   const out = el.querySelector('[data-sr-results]');
   out.innerHTML = String(resultsHtml(S));
   out.setAttribute('aria-busy', 'false');
@@ -467,19 +469,33 @@ export async function render(view, ctx = {}) {
   try { S.res = await fetchRes(f); } catch (e) { S.error = e.message; }
   if (f.q && S.res?.counts?.total) remember(f.q);
 
+  S.first = firstGroups();
   const el = document.createElement('div');
   el.className = 'sr';
   view.replaceChildren(el);
   paint(el, S);
   wire(el, S);
-  // the remaining result groups, appended below the first two once the tab change is over
+  // the remaining result groups, appended once the tab change is over
   afterEnter(view, el, () => {
     if (S.rest) return;
     S.rest = true;
     const out = el.querySelector('[data-sr-results]');
-    const before = out.children.length;
-    out.insertAdjacentHTML('beforeend', String(resultsHtml(S, { from: FIRST_GROUPS })));
-    enterItems([...out.children].slice(before), { stagger: 40, y: 6, duration: 420, fadeDuration: 320 });
+    const res = S.res;
+    // one result group per idle slice (E1 at 4×); a newer search (repaint) replaces the list and stops this
+    let at = S.first;
+    const pump = (dl) => {
+      if (!out.isConnected || S.res !== res || S.repainted || S.error || !res?.counts?.total) return;
+      do {
+        const part = String(resultsHtml(S, { from: at, to: at + 1 }));
+        if (!part) return;
+        at++;
+        const before = out.children.length;
+        out.insertAdjacentHTML('beforeend', part);
+        enterItems([...out.children].slice(before), { y: 6, duration: 420, fadeDuration: 320 });
+      } while (dl && dl.timeRemaining() > 8);
+      (window.requestIdleCallback ? requestIdleCallback(pump, { timeout: 300 }) : setTimeout(pump, 16));
+    };
+    pump(null);
   });
 }
 

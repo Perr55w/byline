@@ -196,7 +196,8 @@ export function timeAgo(d) {
 export const pct = (v) => Math.round((v || 0) * 100);
 
 const STATUS_TONE = { approved: 'ok', published: 'ok', done: 'ok', sent: 'ok', replied: 'ok', in_review: 'warn', scheduled: 'neutral', running: 'warn', failed: 'err', cancelled: 'err', rejected: 'err' };
-export const status = (s) => html`<span class="status tag tag--${STATUS_TONE[s] || 'neutral'} ${s || ''}">${(s || '').replace(/_/g, ' ')}</span>`;
+const sentence = (t) => t.charAt(0).toUpperCase() + t.slice(1);
+export const status = (s) => html`<span class="status tag tag--${STATUS_TONE[s] || 'neutral'} ${s || ''}">${sentence((s || '').replace(/_/g, ' '))}</span>`;
 const EV = { announcement: 'First-party', reporting: 'Independent', research: 'Research', commentary: 'Commentary', community: 'Community', application: 'Applied practice', own_work: 'My project' };
 export const evLabel = (k) => EV[k] || k;
 export const evChip = (k) => html`<span class="chip ev-${k}">${evLabel(k)}</span>`;

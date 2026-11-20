@@ -518,6 +518,7 @@ export const DEAD_INTERIOR = () => {
   for (const t of document.querySelectorAll('#view .page.current .tile')) {
     const r = t.getBoundingClientRect();
     if (r.width < 40 || r.height < 40) continue;
+    if (t.id === 'map-stage') continue; // the Map stage is a stack of positioned layers (canvas, overlays): no flow content to measure
     const cs = getComputedStyle(t);
     const inner = r.bottom - parseFloat(cs.paddingBottom) - parseFloat(cs.borderBottomWidth);
     let last = r.top + parseFloat(cs.paddingTop) + parseFloat(cs.borderTopWidth);
