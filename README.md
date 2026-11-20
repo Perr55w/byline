@@ -138,20 +138,33 @@ Then add this line:
 - `X_BEARER_TOKEN`: X recent-search sources.
 - `LINKEDIN_ACCESS_TOKEN` and `LINKEDIN_AUTHOR_URN`: direct text posting to LinkedIn.
 
+**v1 back end (hardening and hosting)**
+- Cross-site request (Origin) check, settings allow-list, SSRF guard on every fetched URL, 25 MB body cap, a general rate limit, read-only story GETs
+- Remote access needs `BYLINE_PASSWORD` (any proxy, LAN or non-local Host); works behind `tailscale serve` with a Secure cookie
+- Versioned database migrations, full-text (FTS5) search, a daily backup that keeps the last 7, and a catch-up run when the PC starts after 07:00
+- Windows autostart, macOS/Linux launcher, Raspberry Pi service scripts, `.env.example`, and a one-page runbook ([docs/DEPLOY.md](docs/DEPLOY.md))
+- `npm run go-live` to switch from demo data to real feeds, and a Settings card to install and compare Ollama
+- Morning digest to your phone through ntfy after each scheduled run
+
 **Still pending**
-- Uploading images to LinkedIn through the API
+- *Turn real data on, on your PC:* run `npm run go-live`. The build sandbox could reach only 3 of the 15 feeds (its proxy refuses the rest), so each feed is verified on first sync there; failures show per source in Sources
+- *v2:* real contacts, experiences and job posts (demo ones stay until then); the Claude wallet (code exists, off); a public internet host beyond your own devices
+- Uploading images to LinkedIn through the API (text posts work with your own LinkedIn developer token)
 - Instagram Graph API publishing and the comment/DM reply queue
-- Gmail sending for outreach (needs Google OAuth; today you copy the approved draft and click "mark as sent")
+- X sources (the API needs a paid token)
 - Metricool scheduling and analytics (needs a paid API plan)
 - Canva template export
-- Automatic analytics import from LinkedIn and Instagram
+- Automatic analytics import from LinkedIn and Instagram (CSV import works)
 - Synthetic narration generation (the opt-in gate exists, but no voice provider is wired up)
 
 ## Project layout
 
 ```
 server.js                 HTTP server + router
-src/db.js                 schema, settings, cache
+src/db.js                 schema, versioned migrations, FTS index, settings, cache
+src/net.js                SSRF guard for fetched URLs (safeFetch)
+src/backup.js             VACUUM INTO backups (daily, keep 7)
+src/scheduler.js          daily run with catch-up, backups, outreach sends
 src/pipeline.js           daily stages, clustering, ranking, intake
 src/editorial.js          editorial / affiliation checks
 src/visual.js             charts and cards (SVG)
@@ -162,6 +175,8 @@ src/publishers/           LinkedIn (optional), Instagram/email (manual)
 src/routes/               content, drafts/media/video, career/people/campaigns
 src/seed.js, src/demo.js  first-run defaults, fictional demo data
 public/                   frontend (views in public/js/views)
+deploy/                   Windows autostart, macOS/Linux launcher, Pi systemd scripts
+scripts/go-live.js        switch from demo data to real feeds (npm run go-live)
 test/acceptance.test.js   end-to-end acceptance checks
 docs/SPEC.md              condensed product spec
 ```

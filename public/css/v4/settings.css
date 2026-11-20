@@ -56,6 +56,22 @@
 .sg-inline { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .sg-inline .input { flex: 1 1 240px; min-width: 0; }
 .sg-inline--end { align-items: flex-end; }
+/* A5: Local AI (Ollama) card: numbered steps, the story picker, and the two drafts side by side */
+.sg-steps { display: grid; gap: 10px; max-width: 72ch; margin: 0; padding-left: 20px; color: var(--text-2); font: 400 13.5px/20px var(--font-sans); }
+.sg-steps li::marker { color: var(--text-3); font-family: var(--font-mono); font-size: 12px; }
+.sg-steps .sg-inline { margin-top: 6px; }
+.sg-cmp-bar { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px; }
+.sg-cmp-bar .field { flex: 1 1 320px; min-width: 0; }
+.sg-cmp { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.sg-cmp:empty { display: none; }
+.sg-cmp > .sg-status { grid-column: 1 / -1; }
+.sg-cmp-col { display: grid; align-content: start; gap: 12px; min-width: 0; padding: 14px 16px; border-radius: var(--r-ctl); background: var(--surface-solid); box-shadow: inset 0 0 0 1px var(--line); }
+.sg-cmp-h { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; margin: 0; color: var(--text-3); font: 450 12.5px/18px var(--font-sans); }
+.sg-cmp-h b { color: var(--text-1); font-weight: 600; font-size: 13.5px; }
+.sg-cmp-col--empty { align-self: start; }
+.sg-cmp-sec { display: grid; gap: 4px; }
+.sg-cmp-sec .section-label { margin: 0; }
+.sg-cmp-t { margin: 0; color: var(--text-1); font: 400 13.5px/21px var(--font-sans); white-space: pre-wrap; overflow-wrap: anywhere; }
 .sg-inline--end .field { flex: none; }
 .sg-code { width: 14ch; letter-spacing: .2em; font-family: var(--font-mono); }
 .mono { font-family: var(--font-mono); }
@@ -244,7 +260,7 @@ a.sg-ov-card:hover { text-decoration: none; background: var(--hover-row); box-sh
   .sg-sec-head { padding: 18px 18px 0; }
   .sg-sec-body { padding: 14px 18px 18px; }
   .sg-sec-foot { padding: 12px 18px; }
-  .sg-grid2, .sg-grid4, .sg-ov, .sg-themes, .sg-thr, .sg-sched, .sg-ai4 { grid-template-columns: 1fr; }
+  .sg-grid2, .sg-grid4, .sg-ov, .sg-themes, .sg-thr, .sg-sched, .sg-ai4, .sg-cmp { grid-template-columns: 1fr; }
   .sg-group { margin-left: 18px; }
   /* phone: title and Save share the first row, the dek runs full width under both */
   .sg-sec--hsave .sg-sec-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 0 12px; }

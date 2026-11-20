@@ -172,3 +172,27 @@ test('search: FTS5 trigram index, same results as the LIKE fallback when FTS is 
   assert.equal(b.stories.length, 1);
   assert.equal(b.counts.notes, 1);
 });
+
+test('morning digest: a brief is pushed to ntfy once per day when push is on and NTFY_TOPIC is set', async () => {
+  const { deliverBrief } = await import('../src/delivery.js');
+  dbm.run("INSERT INTO briefs(run_date, summary, items_json, quiet) VALUES('2031-04-01', 'Three stories cleared the bar today.', '[]', 0)");
+  dbm.setSetting('delivery', { email: false, push: true, email_to: '' });
+  const env0 = { ...process.env };
+  process.env.NTFY_TOPIC = 'byline-test-topic'; process.env.BYLINE_PUBLIC_URL = 'https://pc.tailnet.ts.net';
+  delete process.env.SMTP_USER; delete process.env.RESEND_API_KEY;
+  const realFetch = globalThis.fetch; const sent = [];
+  globalThis.fetch = async (url, init) => { sent.push({ url, init }); return new Response('{}', { status: 200 }); };
+  try {
+    const r = await deliverBrief('2031-04-01');
+    assert.equal(r.push, 'sent');
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].url, 'https://ntfy.sh/byline-test-topic');
+    assert.equal(sent[0].init.headers.Click, 'https://pc.tailnet.ts.net/#/today');
+    assert.match(sent[0].init.body, /Three stories/);
+    assert.match((await deliverBrief('2031-04-01')).push, /already sent/);
+    assert.equal(sent.length, 1, 'not sent twice');
+    dbm.setSetting('delivery', { email: false, push: false, email_to: '' });
+    dbm.run("INSERT INTO briefs(run_date, summary) VALUES('2031-04-02', 'x')");
+    assert.match((await deliverBrief('2031-04-02')).push, /off/);
+  } finally { globalThis.fetch = realFetch; for (const k of ['NTFY_TOPIC', 'BYLINE_PUBLIC_URL']) { if (env0[k] === undefined) delete process.env[k]; else process.env[k] = env0[k]; } }
+});

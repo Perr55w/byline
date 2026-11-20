@@ -16,7 +16,7 @@ const HEALTH = { ok: 'healthy', stale: 'stale', error: 'failing', paused: 'pause
 const TOC = [
   ['Overview', [['sg-overview', 'Source health & status']]],
   ['Ranking', [['sg-priorities', 'Priorities'], ['sg-threshold', 'Publishing threshold & brief']]],
-  ['Automation', [['sg-schedule', 'Schedule'], ['sg-ai', 'AI provider'], ['sg-budget', 'Budget']]],
+  ['Automation', [['sg-schedule', 'Schedule'], ['sg-ai', 'AI provider'], ['sg-ollama', 'Local AI'], ['sg-budget', 'Budget']]],
   ['Writing', [['sg-profile', 'Writing profile'], ['sg-editorial', 'Editorial rules'], ['sg-intro', 'Intro format']]],
   ['Publishing', [['sg-posting', 'Posting rhythm'], ['sg-delivery', 'Brief delivery'], ['sg-media', 'Media']]],
   ['System', [['sg-access', 'Calendar feed & access'], ['sg-display', 'Display'], ['sg-security', 'Security'], ['sg-demo', 'Demo data'], ['sg-about', 'About']]]
@@ -257,6 +257,21 @@ export async function render(view, ctx = {}) {
         <datalist id="ollama-models"></datalist>
         <p class="sg-status" id="ollama-status"><span class="spinner"><i aria-hidden="true"></i>Checking for Ollama…</span></p>`, { save: 'ai', headSave: true, cls: 'cv' })),
 
+    // A5: Ollama, the free local model: install state, the one command, and a side-by-side test on one story
+    () => String(section('sg-ollama', 'Local AI (Ollama)', html`A free app that runs an open model on this computer. Nothing leaves the machine and there is no bill. It needs about 5 GB of disk and 8 GB of memory while it runs, and takes 10–60 s per draft without a graphics card.`, html`
+        <p class="sg-status" id="ollama-card-status"><span class="spinner"><i aria-hidden="true"></i>Checking for Ollama…</span></p>
+        <ol class="sg-steps">
+          <li>Install Ollama from <a href="https://ollama.com/download" target="_blank" rel="noopener noreferrer">ollama.com</a>.</li>
+          <li>Download the model once:<div class="sg-inline"><input class="input mono" readonly id="ollama-cmd" value="ollama pull ${s.ai?.ollama_model || 'qwen2.5:7b'}" aria-label="Install command"><button class="btn btn--secondary btn--sm" type="button" data-act="copy-ollama">Copy</button></div></li>
+          <li>Compare it with the templates on one story below. If you prefer it, choose “Ollama local LLM” under AI provider and save. Any failure falls back to the templates.</li>
+        </ol>
+        <div class="sg-cmp-bar">
+          <label class="field">Story<select class="select" id="cmp-story"><option value="">Loading stories…</option></select></label>
+          <button class="btn btn--secondary" type="button" data-act="ai-compare">Compare</button>
+        </div>
+        <p class="sg-help">Writes the same story both ways, side by side. Nothing is saved.</p>
+        <div class="sg-cmp" id="cmp-out" aria-live="polite"></div>`, { cls: 'cv' })),
+
     () => String(section('sg-budget', 'Budget', html`When spending reaches a limit above $0, Byline switches to the local engine automatically. A $0 limit keeps paid AI off. Per-run usage is on the <a href="#/runs">Runs</a> page.`, html`
         <div class="sg-grid2">
           <label class="field">Monthly spending limit (USD)<input class="input" type="number" min="0" step="0.5" data-f="budget" value="${s.budget?.monthly_usd ?? 0}"></label>
@@ -355,7 +370,7 @@ export async function render(view, ctx = {}) {
       box.insertAdjacentHTML('beforeend', CHUNKS[i]());
       // the first two land in view on desktop: a short settle, never on the off-screen ones
       if (i < 2) enterItems([...box.children].slice(before).filter(x => !x.matches('.sg-group')), { stagger: 40, y: 6, duration: 420 });
-      if (i === 3) checkOllama();
+      if (i === 4) { checkOllama(); loadCmpStories(); }
     }
     paintSecurity();
     spy();
@@ -461,7 +476,7 @@ export async function render(view, ctx = {}) {
     for (const [f, v] of keep) { const i = el.querySelector(`[data-f="${f}"]`); if (i) i.type === 'checkbox' ? (i.checked = v) : (i.value = v); }
     for (const [d, v] of days) { const i = el.querySelector(`[data-day="${d}"]`); if (i) i.checked = v; }
     window.scrollTo({ top: y, behavior: 'instant' });
-    checkOllama();
+    checkOllama(); loadCmpStories();
     markClipped();
   };
   paint({ rest: false });
@@ -478,7 +493,22 @@ export async function render(view, ctx = {}) {
     const onRouted = (e) => { if (e.detail?.page?.contains(el)) { document.removeEventListener('byline:routed', onRouted); requestAnimationFrame(() => setTimeout(go, 0)); } };
     if (g || id) { document.addEventListener('byline:routed', onRouted); setTimeout(() => document.removeEventListener('byline:routed', onRouted), 4000); }
   }
+  // A5: the Compare picker lists the strongest recent stories (loaded once, when the section is on the page)
+  let cmpSel = null;
+  const loadCmpStories = () => {
+    const sel = el.querySelector('#cmp-story'); if (!sel || sel === cmpSel) return;
+    cmpSel = sel;
+    api.get('/stories?days=30&limit=12').then(list => {
+      sel.innerHTML = list.length ? list.map(x => String(html`<option value="${x.id}">${x.score} · ${x.title}</option>`)).join('') : '<option value="">No stories yet: load the demo or run go-live first</option>';
+    }).catch(() => { cmpSel = null; sel.innerHTML = '<option value="">Couldn’t load stories</option>'; });
+  };
+  const cmpCol = (title, meta, sections) => html`<div class="sg-cmp-col"><p class="sg-cmp-h"><b>${title}</b> <span>${meta}</span></p>${sections.filter(x => x.text && x.kind !== 'humor_variant').map(x => html`<div class="sg-cmp-sec"><p class="section-label">${x.label || x.kind}</p><p class="sg-cmp-t">${x.text}</p></div>`)}</div>`;
+  const secs = (ms) => ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)} s`;
   const checkOllama = () => api.get('/ollama').then(o => {
+    const card = el.querySelector('#ollama-card-status');
+    if (card) card.innerHTML = String(!o.reachable ? html`<span class="dot warn"></span><span>Not installed or not running (looked at <span class="mono">${o.host}</span>).</span>`
+      : o.model_installed ? html`<span class="dot ok"></span><span>Running, with <b>${o.model}</b> installed.${o.active ? ' In use for drafts now.' : ' Templates are in use for drafts.'}</span>`
+      : html`<span class="dot warn"></span><span>Running, but <b>${o.model}</b> isn’t downloaded yet: run the command below.</span>`);
     const box = el.querySelector('#ollama-status'); if (!box) return;
     box.innerHTML = o.reachable ? `<span class="dot ok"></span>Ollama is running · ${o.models.length} model(s): ${o.models.join(', ') || 'none; run “ollama pull qwen2.5:7b”'}`
       : '<span class="dot"></span>Ollama not detected: install it free from ollama.com, run <span class="mono">ollama pull qwen2.5:7b</span>, then pick “Ollama” above.';
@@ -624,6 +654,19 @@ export async function render(view, ctx = {}) {
       if (await confirmBox('Turn off two-step sign-in? Signing in will need only the password.', 'Turn off')) await act(btn, async () => {
         await api.post('/security/totp/disable', { code }); toast('Two-step sign-in is off', 'ok'); await loadSecurity();
       }, 'Turning off…');
+    }
+    if (a === 'copy-ollama') await copy(el.querySelector('#ollama-cmd').value);
+    if (a === 'ai-compare') {
+      const id = el.querySelector('#cmp-story')?.value;
+      if (!id) { toast('Pick a story first', 'err'); return; }
+      const out = el.querySelector('#cmp-out');
+      await act(btn, async () => {
+        out.innerHTML = String(html`<p class="sg-status"><span class="spinner"><i aria-hidden="true"></i>Writing both versions. Ollama can take up to a minute on a CPU…</span></p>`);
+        let r;
+        try { r = await api.post('/ai/compare', { story_id: Number(id) }); } catch (err) { out.innerHTML = ''; throw err; }
+        out.innerHTML = String(html`${cmpCol('Templates', `in use now · ${secs(r.template.ms)}`, r.template.sections)}${r.ollama ? cmpCol(`Ollama · ${r.model}`, secs(r.ollama.ms), r.ollama.sections)
+          : html`<div class="sg-cmp-col sg-cmp-col--empty"><p class="sg-cmp-h"><b>Ollama · ${r.model}</b></p><p class="sg-help">${r.ollama_error}</p></div>`}`);
+      }, 'Comparing…');
     }
     if (a === 'logout') { await fetch('/api/logout', { method: 'POST' }); location.href = '/login'; }
     if (a === 'roundup-now') await act(btn, async () => { const r = await api.post('/weekly-roundup', {}); if (r.draft_id) location.hash = `#/draft/${r.draft_id}`; else toast(r.reason, 'err'); }, 'Drafting…');

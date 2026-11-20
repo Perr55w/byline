@@ -52,10 +52,11 @@ async function sendEmail(date, to) {
 
 async function sendPush(date) {
   const b = get('SELECT summary, quiet FROM briefs WHERE run_date = ?', date);
-  const res = await fetch(`https://ntfy.sh/${encodeURIComponent(process.env.NTFY_TOPIC)}`, {
+  // ntfy.sh by default; NTFY_SERVER for a self-hosted ntfy. Runs after every daily run (pipeline.js → deliverBrief).
+  const res = await fetch(`${(process.env.NTFY_SERVER || 'https://ntfy.sh').replace(/\/$/, '')}/${encodeURIComponent(process.env.NTFY_TOPIC)}`, {
     method: 'POST', signal: AbortSignal.timeout(15000),
     headers: { Title: `Byline · ${b.quiet ? 'quiet day' : 'brief ready'}`, Click: `${appUrl()}/#/today`, Tags: 'newspaper' },
-    body: b.summary.slice(0, 300)
+    body: (b.summary || 'Your Byline brief is ready.').slice(0, 300)
   });
   if (!res.ok) throw new Error(`ntfy HTTP ${res.status}`);
 }

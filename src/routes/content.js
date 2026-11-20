@@ -5,7 +5,8 @@ import { connectors, connectorFor } from '../connectors/index.js';
 import { weeklyRoundup } from '../pipeline.js';
 import { deliverBrief, deliveryStatus, digestHtml } from '../delivery.js';
 import { icsFeed, icsToken } from '../ics.js';
-import { ollamaStatus } from '../ai/ollama.js';
+import { ollamaStatus, ollamaHost, makeOllama } from '../ai/ollama.js';
+const hasModel = (models = [], m) => models.includes(m) || models.includes(`${m}:latest`) || (!m.includes(':') && models.some(x => x.startsWith(`${m}:`)));
 import { ttsStatus, speak, chunk, VOICE } from '../tts.js';
 import { briefScript } from '../delivery.js';
 import { runDaily, submitUrl, ingestItem, clusterArticles, rankStories, evergreenDraft, todayIn, STAGES } from '../pipeline.js';
@@ -144,7 +145,30 @@ export function registerContent(route) {
   });
 
   route('GET', '/api/settings', () => getSettings());
-  route('GET', '/api/ollama', () => ollamaStatus());
+  route('GET', '/api/ollama', async () => {
+    const st = await ollamaStatus();
+    const model = getSettings().ai?.ollama_model || 'qwen2.5:7b';
+    return { ...st, host: ollamaHost(), model, model_installed: hasModel(st.models, model), active: providerStatus().active === 'ollama', install: `ollama pull ${model}` };
+  });
+  // A5: one story drafted by the templates and by Ollama, side by side. Nothing is saved (no draft, no usage row).
+  route('POST', '/api/ai/compare', async ({ body }) => {
+    const data = loadStory(need(body.story_id, 'Pick a story'));
+    if (!data) throw bad('Story not found', 404);
+    const model = String(body.model || getSettings().ai?.ollama_model || 'qwen2.5:7b');
+    const args = { ...data, format: 'long', angle: body.angle || 'tradeoff', notes: [], experiences: [], profile: getSettings().writing_profile, channel: 'linkedin' };
+    const t0 = Date.now();
+    const template = await local.draft(args);
+    const tTemplate = Date.now() - t0;
+    const st = await ollamaStatus();
+    const out = { story: { id: data.story.id, title: data.story.title }, model, template: { sections: template, ms: tTemplate }, ollama: null };
+    if (!st.reachable) return { ...out, ollama_error: `Ollama is not running at ${ollamaHost()}. Install it from ollama.com, then run: ollama pull ${model}` };
+    if (!hasModel(st.models, model)) return { ...out, ollama_error: `Ollama is running but ${model} is not installed. Run: ollama pull ${model}` };
+    let answered = false;
+    const t1 = Date.now();
+    const sections = await makeOllama({ model, onUsage: () => { answered = true; } }).draft(args); // falls back to templates on failure
+    if (!answered) return { ...out, ollama_error: `${model} did not return a usable draft (see the server log). Templates stay in use.` };
+    return { ...out, ollama: { sections, ms: Date.now() - t1 } };
+  });
   // ----- text-to-speech (Kokoro "Heart") -----
   route('GET', '/api/tts/status', () => ttsStatus());
   route('GET', '/api/briefs/:date/script', ({ params }) => {

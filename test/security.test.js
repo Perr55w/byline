@@ -11,7 +11,7 @@ const servers = [];
 async function boot(port, env = {}) {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'byline-sec-'));
   const child = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', 'server.js'], {
-    env: { ...process.env, PORT: String(port), BYLINE_DATA_DIR: dataDir, BYLINE_PASSWORD: '', BYLINE_TOTP_SECRET: '', BYLINE_PUBLIC_URL: '', BYLINE_ALLOWED_ORIGINS: '', ANTHROPIC_API_KEY: '', NTFY_TOPIC: '', ...env },
+    env: { ...process.env, PORT: String(port), BYLINE_DATA_DIR: dataDir, BYLINE_PASSWORD: '', BYLINE_TOTP_SECRET: '', BYLINE_PUBLIC_URL: '', BYLINE_ALLOWED_ORIGINS: '', ANTHROPIC_API_KEY: '', NTFY_TOPIC: '', OLLAMA_HOST: 'http://127.0.0.1:9', ...env },
     stdio: process.env.SEC_DEBUG ? 'inherit' : 'ignore'
   });
   servers.push({ child, dataDir });
@@ -121,4 +121,19 @@ test('a proxy that only sends X-Forwarded-Proto or the original Host still count
   assert.equal((await open('GET', '/status', { headers: { 'Tailscale-User-Login': 'me@example.com' } })).status, 403);
   assert.equal((await open('GET', '/status')).status, 200, 'plain localhost without a password still works');
   assert.deepEqual((await locked('GET', '/health')).data, { ok: true }, 'health is public');
+});
+
+test('Ollama card: status with the install command; Compare drafts one story both ways and saves nothing', async () => {
+  const o = (await open('GET', '/ollama')).data;
+  assert.equal(o.reachable, false);
+  assert.equal(o.install, 'ollama pull qwen2.5:7b');
+  const made = await open('POST', '/intake/manual', { body: { url: 'https://example.com/compare-me', title: 'Teams measure agent ROI with before/after logs', text: 'A survey of 40 teams found most measure agents with before/after time logs.' } });
+  const drafts0 = (await open('GET', '/search?q=&type=drafts')).data.counts.drafts;
+  const r = await open('POST', '/ai/compare', { body: { story_id: made.data.story_id } });
+  assert.equal(r.status, 200, JSON.stringify(r.data));
+  assert.ok(r.data.template.sections.length >= 3);
+  assert.equal(r.data.ollama, null);
+  assert.match(r.data.ollama_error, /not running/);
+  assert.equal((await open('GET', '/search?q=&type=drafts')).data.counts.drafts, drafts0, 'no draft saved');
+  assert.equal((await open('GET', '/settings')).data.ai.provider, 'local', 'the default provider stays local');
 });
