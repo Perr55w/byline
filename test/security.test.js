@@ -25,9 +25,9 @@ async function boot(port, env = {}) {
 }
 
 let open, locked;
-const LOCKED_PORT = 4392;
+const LOCKED_PORT = 4386;
 before(async () => {
-  open = await boot(4391);
+  open = await boot(4385);
   locked = await boot(LOCKED_PORT, { BYLINE_PASSWORD: 'pw', BYLINE_ALLOWED_ORIGINS: 'https://byline.example.org' });
 });
 after(() => { for (const s of servers) { s.child.kill(); fs.rmSync(s.dataDir, { recursive: true, force: true }); } });
@@ -37,8 +37,8 @@ test('Origin check: cross-site writes are refused, same-origin and header-less w
   assert.equal((await open('PUT', '/settings', { body, headers: { Origin: 'https://evil.example' } })).status, 403);
   assert.equal((await open('PUT', '/settings', { body, headers: { Origin: 'null' } })).status, 403);
   assert.equal((await open('PUT', '/settings', { body, headers: { Referer: 'https://evil.example/page' } })).status, 403);
-  assert.equal((await open('PUT', '/settings', { body, headers: { Origin: 'http://127.0.0.1:4391' } })).status, 200);
-  assert.equal((await open('PUT', '/settings', { body, headers: { Origin: 'http://localhost:4391' } })).status, 200);
+  assert.equal((await open('PUT', '/settings', { body, headers: { Origin: 'http://127.0.0.1:4385' } })).status, 200);
+  assert.equal((await open('PUT', '/settings', { body, headers: { Origin: 'http://localhost:4385' } })).status, 200);
   assert.equal((await open('PUT', '/settings', { body })).status, 200, 'no Origin/Referer (curl, scripts) passes');
   assert.equal((await open('GET', '/settings', { headers: { Origin: 'https://evil.example' } })).status, 200, 'reads are not blocked');
 });
@@ -56,7 +56,7 @@ test('settings allow-list: unknown and protected keys are refused, known keys sa
 });
 
 test('SSRF: intake and image import refuse loopback, private and metadata addresses', async () => {
-  for (const url of ['http://127.0.0.1:4391/api/settings', 'http://localhost:4391/', 'http://169.254.169.254/latest/meta-data/', 'http://10.0.0.1/', 'http://[::1]:4391/', 'file:///etc/passwd']) {
+  for (const url of ['http://127.0.0.1:4385/api/settings', 'http://localhost:4385/', 'http://169.254.169.254/latest/meta-data/', 'http://10.0.0.1/', 'http://[::1]:4385/', 'file:///etc/passwd']) {
     const r = await open('POST', '/intake/url', { body: { url } });
     assert.equal(r.status, 400, `${url} → ${r.status} ${JSON.stringify(r.data)}`);
   }
@@ -66,7 +66,7 @@ test('SSRF: intake and image import refuse loopback, private and metadata addres
 });
 
 test('body cap: requests over 25 MB are refused with 413', async () => {
-  const res = await fetch('http://127.0.0.1:4391/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json', 'Content-Length': String(26e6) }, body: 'x'.repeat(1024) }).catch(e => ({ status: e.cause?.code || 'reset' }));
+  const res = await fetch('http://127.0.0.1:4385/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json', 'Content-Length': String(26e6) }, body: 'x'.repeat(1024) }).catch(e => ({ status: e.cause?.code || 'reset' }));
   assert.ok(res.status === 413 || typeof res.status === 'string', `got ${res.status}`);
 });
 
@@ -116,7 +116,7 @@ test('a proxy that only sends X-Forwarded-Proto or the original Host still count
   assert.equal((await open('GET', '/status', { headers: { 'X-Forwarded-Proto': 'https' } })).status, 403);
   // fetch() won't send a custom Host, so this one goes through node:http
   const { request } = await import('node:http');
-  const viaHost = await new Promise((resolve, reject) => request({ host: '127.0.0.1', port: 4391, path: '/api/status', headers: { Host: 'pc-name.tailnet-abc.ts.net' } }, (r) => { r.resume(); resolve(r.statusCode); }).on('error', reject).end());
+  const viaHost = await new Promise((resolve, reject) => request({ host: '127.0.0.1', port: 4385, path: '/api/status', headers: { Host: 'pc-name.tailnet-abc.ts.net' } }, (r) => { r.resume(); resolve(r.statusCode); }).on('error', reject).end());
   assert.equal(viaHost, 403);
   assert.equal((await open('GET', '/status', { headers: { 'Tailscale-User-Login': 'me@example.com' } })).status, 403);
   assert.equal((await open('GET', '/status')).status, 200, 'plain localhost without a password still works');
