@@ -1,7 +1,7 @@
 // Local, deterministic provider. Works offline with no credentials.
 // It only rearranges facts found in the collected sources and the user's own notes;
 // it never invents experiences, opinions, or accomplishments.
-import { sentences, truncate, termHits, tokens, domainOf } from '../text.js';
+import { sentences, truncate, termHits, termHitsShadowed, tokens, domainOf, matchEmployers } from '../text.js';
 
 const pick = (arr, seed = 0) => arr[Math.abs(seed) % arr.length];
 const lower1 = (s = '') => s.charAt(0).toLowerCase() + s.slice(1);
@@ -31,6 +31,37 @@ const ROLE_LENS = {
   'Machine learning': { who: 'ML engineers and technical PMs', decision: 'which model and deployment option fit cost and latency targets', test: 'benchmark latency and cost per task for two models on the same prompt set' }
 };
 
+/**
+ * R2 S13: the employer that published the story's origin post itself, from the origin's domain: every word of the
+ * employer's name (parenthetical words dropped) must be a label of the domain; the most specific match wins
+ * (cloud.google.com → "Google Cloud", not "Google (other teams)"). Only an announcement-type origin counts.
+ */
+/** The names a source can use for an employer: its name, the name without a parenthetical, and terms that are
+ *  name-like (share a word with the name, e.g. "DeepMind", or spell its initials, e.g. "Amazon Web Services" → AWS). */
+export function nameAliases(e) {
+  const base = String(e.name || '').replace(/\s*\([^)]*\)\s*/g, ' ').trim();
+  const words = new Set(base.toLowerCase().split(/[^a-z0-9]+/).filter(w => w.length > 2));
+  const initials = (t) => t.split(/\s+/).filter(Boolean).map(w => w[0]).join('').toLowerCase();
+  const out = new Set([e.name, base].filter(Boolean));
+  for (const t of e.terms || []) {
+    const tw = String(t).split(/[^A-Za-z0-9]+/).filter(Boolean);
+    if (!tw.length || tw[0][0] !== tw[0][0].toUpperCase()) continue; // proper names only
+    if (tw.some(w => words.has(w.toLowerCase())) || (tw.length > 1 && initials(String(t)) === base.toLowerCase())) out.add(t);
+  }
+  return [...out];
+}
+
+export function firstPartyEmployer(origin, employers = []) {
+  if (!origin || origin.evidence_kind !== 'announcement' || !origin.domain) return null;
+  const labels = new Set(String(origin.domain).toLowerCase().replace(/^www\./, '').split('.'));
+  let best = null, bestN = 0;
+  for (const e of employers) {
+    const words = String(e.name || '').replace(/\([^)]*\)/g, ' ').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+    if (!words.length || !words.every(w => labels.has(w))) continue;
+    if (words.length > bestN) { best = e.name; bestN = words.length; }
+  }
+  return best;
+}
 export const local = {
   name: 'local',
 
@@ -156,28 +187,52 @@ export const local = {
       ? `What happened: ${trimDot(facts[seed % facts.length])}.` : section.text;
   },
 
-  async employerConnections({ story, articles, claims, employers }) {
+  async employerConnections({ story, articles, claims, employers, origin }) {
     const corpus = [...claims.map(c => ({ text: c.text, article_id: c.article_id })), ...articles.flatMap(a => sentences(`${a.title}. ${a.summary || ''}`).map(t => ({ text: t, article_id: a.id })))];
+    // R2 S13: "named" is judged over the whole story (every title, summary and claim, the story's companies and the
+    // origin's domain), not just the best-matching passage
+    const allText = [story?.title || '', ...articles.map(a => `${a.title || ''}. ${a.summary || ''}`), ...claims.map(c => c.text || '')].join(' \n ');
+    let companies = story?.companies || [];
+    if (typeof companies === 'string') { try { companies = JSON.parse(companies); } catch { companies = []; } }
+    const lc = (x) => String(x || '').toLowerCase();
+    const org = origin || articles.find(a => a.evidence_kind === 'announcement') || null;
+    const firstParty = firstPartyEmployer(org, employers);
     const out = [];
     for (const e of employers) {
       const terms = [...(e.terms || []), ...(e.topics || [])];
+      // R3 S12 (R14): among siblings sharing a parent the longest match wins ("Google" inside "Google Cloud" is Cloud's)
+      const shadow = e.parent ? employers.filter(o => o !== e && o.parent === e.parent).flatMap(o => [o.name, ...(o.terms || [])]) : [];
       let best = null, bestHits = [];
       for (const c of corpus) {
-        const hits = termHits(c.text, terms);
+        const hits = [...new Map(termHitsShadowed(c.text, terms, shadow).map(h => [h.toLowerCase(), h])).values()]; // "adoption" / "Adoption" once
         if (hits.length > bestHits.length) { best = c; bestHits = hits; }
       }
-      if (!best || !bestHits.length) continue;
-      const art = articles.find(a => a.id === best.article_id) || articles[0];
-      const nameHit = termHits(best.text, [e.name, ...(e.name.split(' ').length > 1 ? [] : [])]).length > 0;
+      const isOrigin = firstParty === e.name;
+      if ((!best || !bestHits.length) && !isOrigin) continue;
+      const art = (best && articles.find(a => a.id === best.article_id)) || (isOrigin ? org : null) || articles[0];
+      // A mention is supported only when a source names the company itself (its name, or a name-like alias such as
+      // "DeepMind" or "Amazon Web Services"). A product term ("Gemini") or the stored companies list (which is matched
+      // on product terms too) is topical overlap, not a named source.
+      const nameHit = isOrigin || termHits(allText, nameAliases(e)).length > 0;
+      // R3 S12: a hit on the employer's own name or its parent's ("Google") is a mention, not public work on a topic
+      const topical = bestHits.filter(h => lc(h) !== lc(e.name) && lc(h) !== lc(e.parent));
+      const where = art ? `${art.domain}` : 'the source';
       out.push({
         employer: e.name, matched: bestHits,
-        why: `${e.name} works publicly on ${bestHits.slice(0, 3).join(', ')}; ${art ? `${art.domain}` : 'the source'} says: “${truncate(best.text, 180)}”`,
+        why: best ? (topical.length ? `${e.name} works publicly on ${topical.slice(0, 3).join(', ')}; ${where} says: “${truncate(best.text, 180)}”` : `${where} names ${bestHits[0]}: “${truncate(best.text, 180)}”`) : `${e.name} published this story itself (${org?.domain || 'its own site'}).`,
         source: art ? { url: art.url, title: art.title, domain: art.domain } : null,
         mention_ok: nameHit,
-        mention_note: nameHit ? 'The source names this company directly, so a mention is supported.' : 'Topical overlap only — mention only if you add specific analysis of their public work.'
+        first_party: isOrigin,
+        mention_note: isOrigin ? `First-party: this is ${e.name}’s own post.` : nameHit ? 'The source names this company directly, so a mention is supported.' : 'Topical overlap only — mention only if you add specific analysis of their public work.'
       });
     }
-    return out.sort((a, b) => b.matched.length - a.matched.length);
+    out.sort((a, b) => (b.first_party - a.first_party) || (b.matched.length - a.matched.length));
+    // Employers on the story's company list that no title, summary or claim ties to the story (e.g. "AWS" only in a
+    // release note's body). Said honestly instead of a bare "no connection" next to a company chip.
+    const listed = new Set(out.map(c => c.employer));
+    const bodyNamed = new Set(matchEmployers(articles.map(a => `${a.title || ''} ${a.summary || ''} ${a.content || ''}`).join(' \n '), employers));
+    out.unlinked = companies.filter(n => !listed.has(n) && bodyNamed.has(n));
+    return out;
   },
 
   async outreach({ contact, purpose, channel, basis, profile, introFormat, seed = 0 }) {

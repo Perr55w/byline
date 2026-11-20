@@ -1,0 +1,144 @@
+/* =====================================================================
+   Byline v4 — Runs (views/runs.js). Selected run + cost/feedback aside, then the history table with
+   per-stage status marks. Tab-only layout; shared classes come from components.css. Tokens only.
+   ===================================================================== */
+
+.rn-runform { align-items: flex-end; }
+.rn-inline { display: inline-flex; align-items: center; gap: 8px; color: var(--text-3); font: 450 12.5px/1 var(--font-sans); }
+.rn-inline .input, .rn-inline .select { width: auto; height: 34px; font-size: 13px; }
+.rn-runform .rn-inline { flex-direction: column; align-items: flex-start; gap: 6px; }
+/* RU-1: a formatted date button over the native picker (the input stays in the form, invisible and inert) */
+.rn-date-box { position: relative; display: inline-flex; }
+.rn-date-btn { height: 34px; gap: 8px; font-size: 13px; font-variant-numeric: tabular-nums; }
+.rn-date-btn .icon { width: 15px; height: 15px; color: var(--text-3); }
+.rn-date-in { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; pointer-events: none; border: 0; padding: 0; }
+
+.rn-callout { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; margin: 0 0 20px; padding: 12px 16px; border-radius: var(--r-tile); background: var(--warn-soft); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--warn) 30%, transparent); }
+.rn-callout > .icon { color: var(--warn); }
+.rn-callout p { flex: 1 1 320px; margin: 0; color: var(--text-1); font: 400 14px/21px var(--font-sans); }
+.rn-callout b { font-weight: 600; }
+
+.rn-top { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: var(--gap); align-items: start; margin: 0 0 36px; }
+.rn-aside { display: flex; flex-direction: column; gap: var(--gap); }
+
+/* ---------------------------------------------------------------- run detail */
+.rn-detail { padding: 24px 26px; }
+.rn-dhead .eyebrow { margin-bottom: 6px; }
+.rn-dmeta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin: 10px 0 0; color: var(--text-3); font: 450 13px/18px var(--font-sans); font-variant-numeric: tabular-nums; }
+.rn-flag { margin: 16px 0 0; padding: 12px 14px; border-radius: var(--r-ctl); background: var(--err-soft); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--err) 30%, transparent); color: var(--text-1); font: 400 14px/21px var(--font-sans); }
+.rn-timeline { position: relative; margin: 22px 0 0; padding: 0; list-style: none; }
+.rn-stage { position: relative; display: grid; grid-template-columns: 24px minmax(0, 1fr); gap: 14px; padding: 0 0 18px; }
+.rn-stage::before { content: ""; position: absolute; left: 11.5px; top: 24px; bottom: 2px; width: 1px; background: var(--line-2); }
+.rn-stage:last-child { padding-bottom: 0; }
+.rn-stage:last-child::before { display: none; }
+.rn-stage .rn-mark .status-mark, .rn-stage .rn-mark .status-mark svg { width: 24px; height: 24px; }
+.rn-mark { display: inline-grid; place-items: center; }
+.rn-stage > .rn-mark { align-self: start; height: 24px; }
+.rn-stage-b { min-width: 0; padding-top: 2px; }
+.rn-stage-h { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 10px; }
+.rn-stage-n { color: var(--text-1); font: 500 15px/20px var(--font-sans); }
+.rn-stage-t { margin-left: auto; color: var(--text-3); font: 450 12px/16px var(--font-mono); font-variant-numeric: tabular-nums; }
+.rn-sum { margin: 4px 0 0; color: var(--text-2); font: 400 13.5px/20px var(--font-sans); font-variant-numeric: tabular-nums; }
+.rn-sum b { color: var(--text-1); font-weight: 500; }
+.rn-err-t { margin: 4px 0 0; color: var(--err); font: 450 13px/19px var(--font-sans); }
+.rn-fails { margin: 8px 0 0; padding: 10px 12px; border-radius: var(--r-ctl); background: var(--surface-nested); box-shadow: inset 0 0 0 1px var(--line); font: 400 13px/19px var(--font-sans); }
+.rn-fails summary { cursor: pointer; color: var(--text-2); font-weight: 500; }
+.rn-fails ul { display: flex; flex-direction: column; gap: 6px; margin: 8px 0 0; padding: 0; list-style: none; }
+.rn-fails li { display: grid; grid-template-columns: minmax(140px, 220px) minmax(0, 1fr); gap: 12px; }
+.rn-fails li b { color: var(--text-1); font-weight: 500; }
+.rn-fails li .rn-err-t, .rn-fails li span { margin: 0; font-family: var(--font-mono); font-size: 12px; overflow-wrap: anywhere; color: var(--text-2); }
+.rn-fails li .rn-err-t { color: var(--err); }
+.rn-code { max-width: 100%; overflow: auto; margin: 6px 0 0; padding: 10px; border-radius: var(--r-ctl); background: var(--inset); font: 450 12px/17px var(--font-mono); }
+.rn-retry { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 22px 0 0; padding-top: 18px; border-top: 1px solid var(--line); }
+.rn-retry .select { height: 28px; font-size: 12.5px; }
+.rn-note { margin: 10px 0 0; color: var(--text-3); font: 450 12.5px/18px var(--font-sans); }
+.rn-usage { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--line); }
+.rn-usage .section-label { margin: 0 0 6px; }
+#view .rn-utable td, #view .rn-utable th { padding: 0 10px; height: 36px; }
+
+/* ---------------------------------------------------------------- aside cards */
+.rn-card { padding: 18px 20px; }
+.rn-card .section-label { margin: 0 0 10px; }
+.rn-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 0 4px; }
+.rn-card-head .section-label { margin: 0; }
+.rn-engine { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; color: var(--text-1); font: 450 14px/20px var(--font-sans); }
+.rn-spend { display: flex; align-items: baseline; gap: 8px; margin: 0 0 8px; }
+.rn-spend-v { color: var(--text-1); font: 360 30px/34px var(--font-sans); letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.rn-spend-l { color: var(--text-3); font: 450 12.5px/16px var(--font-sans); }
+.rn-kv { margin-top: 12px; grid-template-columns: 64px 1fr; font-size: 13px; }
+.rn-fb-g { margin: 14px 0 4px; color: var(--text-3); font: 500 12.5px/16px var(--font-sans); }
+.rn-fb-row { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 6px 0; border-top: 1px solid var(--line); color: var(--text-1); font: 400 13.5px/19px var(--font-sans); }
+.rn-fb-row a { min-width: 0; color: var(--text-1); }
+.rn-fb-k { display: inline-flex; align-items: center; gap: 8px; flex: none; color: var(--text-3); font-size: 12px; }
+.rn-pos { color: var(--ok); } .rn-neg { color: var(--err); }
+
+/* ---------------------------------------------------------------- history table */
+.rn-table-tile { overflow-x: auto; }
+.rn-history { content-visibility: auto; contain-intrinsic-size: auto 1000px; }
+.rn-table { min-width: 900px; }
+/* U2: every column head is the one mono-caps th style (components.css), numeric heads included */
+#view .rn-table th, #view .rn-utable th { height: 38px; padding: 0 12px; background: var(--surface-solid); font: 500 var(--fs-label)/1 var(--font-mono); letter-spacing: var(--tr-label); text-transform: uppercase; color: var(--text-3); }
+#view .rn-table td { height: 56px; padding: 8px 12px; vertical-align: middle; font-variant-numeric: tabular-nums; }
+#view .rn-table td.num, #view .rn-table th.num { text-align: right; }
+.rn-c-st { width: 44px; }
+.rn-row { cursor: pointer; }
+.rn-row.is-selected { background: var(--accent-soft); box-shadow: inset 2px 0 0 var(--accent); }
+.rn-link { display: flex; align-items: baseline; gap: 10px; color: var(--text-1); font: 500 14px/20px var(--font-sans); text-decoration: none; white-space: nowrap; }
+.rn-link span { color: var(--text-2); font-weight: 450; }
+.rn-link:hover { text-decoration: none; color: var(--accent-text); }
+/* U1: a run that finished but read 0 sources: amber mark + text, never the green check of a real run */
+.rn-mark--empty .status-mark[data-state=done] { color: var(--warn); }
+.rn-row-empty { display: block; color: var(--warn-text); font: 450 12px/16px var(--font-sans); }
+.rn-row-err { display: block; max-width: 300px; color: var(--err); font: 450 12px/16px var(--font-sans); }
+.rn-c-tr { color: var(--text-2); }
+.rn-strip { display: inline-flex; align-items: center; gap: 3px; }
+.rn-mark--sm .status-mark, .rn-mark--sm .status-mark svg { width: 16px; height: 16px; }
+.rn-c-time { white-space: nowrap; }
+.rn-c-time span { display: block; color: var(--text-2); font: 450 12px/16px var(--font-sans); }
+
+/* ---------------------------------------------------------------- responsive */
+@media (max-width: 1100px) {
+  .rn-top { grid-template-columns: 1fr; }
+  .rn-aside { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 760px) {
+  .rn-runform { width: 100%; }
+  .rn-runform .rn-inline { flex: 1 1 140px; }
+  .rn-runform .rn-inline .input, .rn-runform .rn-inline .select, .rn-runform .rn-date-box, .rn-runform .rn-date-btn { width: 100%; }
+  .rn-runform .rn-date-btn { justify-content: flex-start; }
+  .rn-runform .btn { flex: 1 1 100%; }
+  .rn-detail { padding: 18px; }
+  .rn-aside { grid-template-columns: 1fr; }
+  .rn-fails li { grid-template-columns: 1fr; gap: 2px; }
+  .rn-table { min-width: 0; }
+  .rn-table thead { display: none; }
+  .rn-table tr { display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; gap: 4px 10px; padding: 12px 14px; border-top: 1px solid var(--line); }
+  .rn-table tbody tr:first-child { border-top: 0; }
+  #view .rn-table td { display: none; height: auto; padding: 0; border: 0; }
+  #view .rn-table td:nth-child(1), #view .rn-table td:nth-child(2), #view .rn-table td:nth-child(4) { display: block; }
+  #view .rn-table td:nth-child(4) { grid-column: 2 / 4; }
+  #view .rn-table td:nth-child(9) { display: block; grid-column: 3; grid-row: 1; text-align: right; }
+}
+
+/* AA on this tab's status tags + danger text (the shared warn/ok/err tints sit just under 4.5:1 in Proof — see report) */
+
+/* the aside skips layout while off screen (phone: far below the fold) — E1 */
+.rn-aside.cv { contain-intrinsic-size: auto 640px; }
+
+/* ---------------------------------------------------------------- SS10: repeated runs grouped into one expandable row */
+.rn-table tr[hidden] { display: none !important; }
+.rn-gbtn { display: inline-flex; align-items: baseline; gap: 10px; padding: 0; border: 0; background: none; color: var(--text-1); font: 500 14px/20px var(--font-sans); white-space: nowrap; cursor: pointer; }
+.rn-gbtn .icon { align-self: center; width: 14px; height: 14px; margin: 0 -4px 0 -2px; color: var(--text-3); transition: transform var(--dur-micro) var(--ease-move); }
+.rn-gbtn[aria-expanded=true] .icon { transform: rotate(90deg); }
+.rn-gbtn:hover .rn-gid { color: var(--accent-text); }
+.rn-gbtn:focus-visible { border-radius: 4px; box-shadow: var(--focus); outline: none; }
+.rn-gn { color: var(--text-2); font-weight: 450; }
+.rn-row-sub { display: block; color: var(--text-2); font: 450 12px/16px var(--font-sans); }
+.rn-grow.is-open { background: var(--tint-1); }
+.rn-member > td:nth-child(2) { padding-left: 34px !important; }
+.rn-member { background: var(--surface-nested); }
+.rn-member.is-selected { background: var(--accent-soft); }
+.rn-c-span .rn-span { display: inline; color: var(--text-1); font: inherit; }
+@media (prefers-reduced-motion: reduce) { .rn-gbtn .icon { transition: none; } }
+@media (max-width: 760px) { .rn-member > td:nth-child(2) { padding-left: 0 !important; } .rn-member { padding-left: 28px !important; } }
+#view .rn-table td.num { white-space: nowrap; }

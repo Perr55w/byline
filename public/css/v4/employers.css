@@ -1,0 +1,153 @@
+/* =====================================================================
+   Byline v4 — Employers (views/employers.js: #/employers coverage table, #/employers/:id activity).
+   One house palette: neutral-ink bars (blue is reserved for quality). Tokens only.
+   ===================================================================== */
+
+.em-pad { padding: 20px 24px 0; }
+.em-padb { padding-bottom: 22px; }
+.tile--flush > .section-head.em-pad { margin-bottom: 8px; }
+.em-card { padding: 22px 24px; }
+.em-card > .section-label { margin: 0 0 12px; }
+.em-card .section-head { margin-bottom: 10px; }
+.em-note { margin: 0; color: var(--text-2); font: 400 13.5px/20px var(--font-sans); text-wrap: pretty; }
+.em-sub { display: block; color: var(--text-3); font: 450 12.5px/18px var(--font-sans); }
+.em-mono { color: var(--text-3); font: 450 12px/16px var(--font-mono); font-variant-numeric: tabular-nums; }
+.em-h3 { margin: 18px 0 8px; color: var(--text-1); font: 500 13.5px/20px var(--font-sans); }
+.em-end { display: flex; justify-content: flex-end; }
+.em-foot { margin: 0; padding-top: 12px; padding-bottom: 18px; border-top: 1px solid var(--line); color: var(--text-3); font: 450 12.5px/18px var(--font-sans); }
+.em-back { display: inline-flex; align-items: center; gap: 4px; color: var(--text-3); text-decoration: none; }
+.em-back:hover { color: var(--text-1); }
+.em-back .icon { width: 14px; height: 14px; }
+.em-check { display: flex; align-items: center; gap: 10px; color: var(--text-1); font: 400 14px/20px var(--font-sans); }
+.em-check input { width: 16px; height: 16px; margin: 0; accent-color: var(--accent-fill); }
+.em-tagrow { margin: -14px 0 24px; }
+
+/* ---------------------------------------------------------------- coverage table */
+/* Three columns (E-2): Employer 34% · Stories 52% · Activity 14%. Watchlists fold into the employer cell. */
+#view .em-table { table-layout: fixed; width: 100%; font: 400 14px/20px var(--font-sans); }
+.em-c-emp { width: 34%; } .em-c-cov { width: 52%; } .em-c-act { width: 14%; }
+#view .em-table th { height: 36px; padding: 0 14px; background: transparent; position: static; border-bottom: 1px solid var(--line); }
+#view .em-table td { height: auto; padding: 14px; border-top: 1px solid var(--line); vertical-align: top; }
+#view .em-table tr:first-child td { border-top: 0; }
+#view .em-table th:first-child, #view .em-table td:first-child { padding-left: 24px; }
+#view .em-table th:last-child, #view .em-table td:last-child { padding-right: 24px; }
+.em-th-sub { margin-left: 4px; color: var(--text-3); text-transform: none; letter-spacing: 0; font: 450 11px/1 var(--font-sans); }
+/* Pinned rows carry no extra rule (E-3): the filled pin beside the name is the state and the toggle. */
+.em-table tbody tr:hover, .em-table tbody tr:focus-within, .em-table tbody tr.is-menu { background: var(--hover-row); }
+.em-table tbody tr.em-nonerow:hover, .em-table tbody tr.em-nonerow:focus-within { background: transparent; }
+.em-namerow { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.em-name { overflow: hidden; color: var(--text-1); font: 500 15px/21px var(--font-sans); text-decoration: none; text-overflow: ellipsis; white-space: nowrap; }
+.em-name:hover { color: var(--accent-text); text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 1px; }
+/* Pin: a 24 px icon toggle beside the name (CP2). Outline at rest, filled ink when pressed; always visible. */
+.em-pin { display: inline-grid; place-items: center; flex: none; width: 24px; height: 24px; padding: 0; border: 0; border-radius: var(--r-tag); background: transparent; color: var(--text-3); cursor: pointer; }
+.em-pin:hover { background: var(--tint-2); color: var(--text-1); }
+.em-pin:focus-visible { outline: 2px solid var(--focus-c); outline-offset: 1px; }
+.em-pin-i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linejoin: round; stroke-linecap: round; }
+.em-pin[aria-pressed=true] { color: var(--text-1); }
+.em-pin[aria-pressed=true] .em-pin-i { fill: currentColor; }
+.em-topics { display: block; overflow: hidden; margin-top: 2px; color: var(--text-2); font: 400 13px/19px var(--font-sans); text-overflow: ellipsis; white-space: nowrap; }
+/* Team watchlists as a subline (R15): "Following: Bedrock Agents". The ··· menu holds Follow / Remove / Add. */
+.em-wl { display: block; margin-top: 2px; color: var(--text-2); font: 450 12px/18px var(--font-sans); }
+.em-wl-part + .em-wl-part { margin-left: 0; }
+.em-team { color: var(--text-1); }
+/* Count, optional neutral bar, then up to two one-line titles. */
+.em-covrow { display: grid; grid-template-columns: 120px 22px minmax(0, 1fr); column-gap: 14px; align-items: start; }
+.em-nobars .em-covrow { grid-template-columns: 22px minmax(0, 1fr); }
+.em-meter { align-self: center; height: 6px; margin-top: 0; border-radius: 3px; background: var(--track); }
+.em-covrow > .em-meter { grid-row: 1; align-self: start; margin-top: 7px; }
+.em-meter > i { background: color-mix(in oklab, var(--text-3) 60%, transparent); }
+.em-count { color: var(--text-1); font: 500 13px/20px var(--font-sans); text-align: right; font-variant-numeric: tabular-nums; }
+.em-covlist { min-width: 0; }
+.em-stories { display: flex; flex-direction: column; gap: 0; margin: 0; padding: 0; list-style: none; }
+.em-stories li { min-width: 0; }
+.em-story-l { display: block; overflow: hidden; color: var(--text-2); font: 400 13px/20px var(--font-sans); text-decoration: none; text-overflow: ellipsis; white-space: nowrap; }
+.em-story-l:hover { color: var(--accent-text); text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 1px; }
+.em-story-l:focus-visible { outline: 2px solid var(--focus-c); outline-offset: 2px; border-radius: 2px; }
+.em-same { margin: 0; color: var(--text-2); font: 400 13px/20px var(--font-sans); }
+.em-more { display: inline-block; color: var(--text-3); font: 450 12px/18px var(--font-sans); }
+.em-more:hover { color: var(--text-1); }
+#view .em-table .em-act { white-space: nowrap; }
+.em-actrow { display: flex; align-items: center; justify-content: flex-end; gap: 6px; margin-top: -4px; }
+.em-activity { display: inline-flex; align-items: center; gap: 4px; color: var(--text-2); font: 450 13px/20px var(--font-sans); text-decoration: none; }
+.em-activity:hover { color: var(--text-1); text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 1px; }
+.em-activity .icon { width: 13px; height: 13px; }
+.em-activity:focus-visible { outline: 2px solid var(--focus-c); outline-offset: 2px; border-radius: 2px; }
+/* The no-stories employers on one line (E-4). Each name opens its Activity page; pinned ones carry the pin glyph. */
+#view .em-table td.em-nonerow, #view .em-table .em-nonerow td { padding-top: 12px; padding-bottom: 12px; }
+.em-none-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 0; margin: 0; color: var(--text-2); font: 400 13px/20px var(--font-sans); }
+.em-none-k { color: var(--text-3); font-weight: 450; }
+.em-none-g::before { content: '·'; margin: 0 8px; color: var(--text-3); }
+.em-none-l { color: var(--text-1); font-weight: 450; text-decoration: none; }
+.em-none-l:hover { color: var(--accent-text); text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 1px; }
+.em-none-l:focus-visible { outline: 2px solid var(--focus-c); outline-offset: 2px; border-radius: 2px; }
+.em-none-pin { display: inline-block; margin-left: 4px; color: var(--text-2); vertical-align: -2px; }
+.em-none-pin .em-pin-i { width: 13px; height: 13px; fill: currentColor; }
+/* Row menu (Edit, team Follow / Remove, Add team): the trigger fades in on hover / focus; keyboard reaches it. */
+.em-menu { position: relative; }
+.em-more-btn { opacity: 0; transition: opacity var(--dur-hover-out) var(--ease-fade); }
+.em-more-btn .icon { width: 16px; height: 16px; }
+tr:hover .em-more-btn, tr:focus-within .em-more-btn, .em-more-btn[aria-expanded=true] { opacity: 1; transition-duration: var(--dur-hover-in); }
+@media (hover: none) { .em-more-btn { opacity: 1; } }
+.em-menu-pop { position: absolute; right: 0; top: calc(100% + 6px); z-index: 30; min-width: 232px; padding: 6px; border-radius: var(--r-tile); background: var(--raised); box-shadow: inset 0 0 0 1px var(--line-2), var(--shadow-2); text-align: left; white-space: nowrap; }
+.em-menu-pop [role=menuitem] { display: flex; align-items: center; width: 100%; height: 34px; padding: 0 10px; border: 0; border-radius: var(--r-ctl); background: transparent; color: var(--text-1); font: 450 14px/1 var(--font-sans); text-align: left; cursor: pointer; }
+.em-menu-pop [role=menuitem]:hover { background: var(--tint-2); }
+.em-menu-pop [role=menuitem]:focus-visible { background: var(--tint-2); outline: none; box-shadow: inset 0 0 0 1px var(--focus-c); }
+.em-menu-sep { height: 1px; margin: 6px 4px; background: var(--line); }
+/* Activity page head: pin toggle + Edit (the home for no-stories employers' controls). */
+.em-headacts { display: flex; gap: 8px; }
+.em-pinbtn { gap: 6px; }
+.em-pinbtn .em-pin-i { width: 14px; height: 14px; }
+.em-pinbtn[aria-pressed=true] .em-pin-i { fill: currentColor; }
+
+/* ---------------------------------------------------------------- activity */
+.em-cols { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: var(--gap); align-items: start; }
+.em-cols > * { min-width: 0; }
+.em-list { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
+.em-list > li { padding: 12px 0; border-top: 1px solid var(--line); }
+.em-list > li:first-child { border-top: 0; padding-top: 2px; }
+.em-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 14px; }
+.em-row a, .em-row b { color: var(--text-1); font: 500 14px/20px var(--font-sans); }
+.em-list .em-note { margin-top: 6px; }
+.em-story { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 14px; align-items: start; }
+.em-story-t { color: var(--text-1); font: var(--wt-title) 18px/24px var(--font-serif); font-variation-settings: 'opsz' var(--op-title); text-decoration: none; }
+.em-story-t:hover { color: var(--accent-text); }
+.em-story .em-sub { margin-top: 4px; }
+.em-none { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px 24px; margin: 0; }
+.em-none dt { color: var(--text-1); font: 500 14px/20px var(--font-sans); }
+.em-none dd { margin: 4px 0 0; color: var(--text-2); font: 400 13px/19px var(--font-sans); }
+.em-tcounts { display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.em-tcounts li { display: grid; grid-template-columns: minmax(0, 1fr) 80px 20px auto; align-items: center; gap: 10px; color: var(--text-1); font: 450 13px/18px var(--font-sans); }
+.em-tcounts .meter > i { background: var(--text-3); }
+.em-tcounts b { font: 500 13px/1 var(--font-mono); text-align: right; }
+.em-evform { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-bottom: 14px; }
+.em-full { grid-column: 1 / -1; }
+.em-events { padding-top: 12px; border-top: 1px solid var(--line); }
+
+@media (max-width: 1100px) { .em-cols { grid-template-columns: 1fr; } }
+@media (max-width: 760px) {
+  .em-pad { padding: 16px 18px 0; }
+  .em-card { padding: 18px; }
+  .tile--flush > .section-head.em-pad { flex-wrap: wrap; }
+  #view .em-table, #view .em-table tbody { display: block; }
+  #view .em-table colgroup, #view .em-table thead { display: none; }
+  #view .em-table tbody tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 12px; padding: 14px 18px; border-top: 1px solid var(--line); }
+  #view .em-table tbody tr:first-child { border-top: 0; }
+  #view .em-table tbody td { display: block; padding: 0 !important; border: 0; width: auto; }
+  #view .em-table tbody td.em-emp { grid-column: 1; grid-row: 1; }
+  #view .em-table tbody td.em-act { grid-column: 2; grid-row: 1; }
+  #view .em-table tbody td.em-cov { grid-column: 1 / -1; grid-row: 2; }
+  #view .em-table .em-nonerow td { grid-column: 1 / -1; }
+  .em-covrow { grid-template-columns: 64px 18px minmax(0, 1fr); column-gap: 10px; }
+  .em-nobars .em-covrow { grid-template-columns: 18px minmax(0, 1fr); }
+  .em-actrow { margin: -2px -8px 0 0; }
+  .em-activity { font-size: 0; gap: 0; width: 32px; height: 32px; justify-content: center; }
+  .em-activity .icon { width: 16px; height: 16px; }
+  .em-evform { grid-template-columns: 1fr; }
+  .em-tagrow { margin: -8px 0 18px; }
+}
+
+/* AA for status tags inside this tab (Proof): shared --ok/--warn tag text is ~3:1 on its soft fill; darkened toward
+   ink with color-mix (tokens only). Shared-file request: fix .tag--ok/--warn/--demo in components.css. */
+:is(.cp-ok, .pp-note--ok) { color: var(--ok-text); }
+:is(.pp-note--warn, .pp-dupnote, .pp-date.is-today) { color: var(--warn-text); }
+

@@ -1,170 +1,155 @@
-# Running Byline everywhere you are
+# Running Byline: one-page runbook
 
-Your priorities, in order, were **accessibility, speed, flexibility**: one app on desktop and phone that stays fast and doesn't duplicate data. The setup below meets that for $0 and keeps everything in one place.
+Byline is one Node process and one SQLite file, with no required dependencies. It runs on your PC now and can move to a
+Raspberry Pi or home box later by copying one folder. Everything here is $0.
 
 ```
- phone (installed app) ─┐
- laptop browser ────────┼──►  Cloudflare (login + HTTPS)  ──►  tunnel  ──►  Byline on your laptop or home box
- Google Calendar feed ──┘                                                   (one SQLite file = one source of truth)
+ phone (home-screen app) ─┐                      ┌──────────── your PC ─────────────┐
+ PC browser (bookmark) ───┼─► https://pc.tailnet.ts.net ─► tailscale serve ─► Byline :3000 ─► data/byline.db
+                          │      (Tailscale: only your devices)            daily backup ─► backups/ (keeps 7)
 ```
 
-There is only one database, so there's nothing to sync and nothing to conflict. Every device sees the same data the moment it changes.
+There is one database, so there is nothing to sync. Every device sees the same data as soon as it changes.
 
-## Free options, compared
+---
 
-| Need | Recommended (free) | Free alternatives | Notes |
-|---|---|---|---|
-| Reach Byline from your phone | **Tailscale** (free Personal plan, up to 100 devices) | Cloudflare Tunnel (free, needs a domain ≈ $10–12/yr) · ZeroTier (free tier) | Tailscale is private (only your devices), needs no domain, and takes about 5 minutes to set up. Cloudflare Tunnel is the choice for a public URL that Google Calendar can fetch |
-| Always-on server (laptop can sleep) | **Oracle Cloud Always Free** ARM VM (up to 4 cores / 24 GB RAM, free indefinitely) | A spare laptop or Raspberry Pi in your home lab (only the electricity) · Google Cloud e2-micro (free tier, small) | Runs Byline and ffmpeg fine; put it on your tailnet or behind the tunnel |
-| Database | **SQLite file (what Byline already uses)** | Turso (libSQL, SQLite-compatible, free tier) · Supabase free tier (Postgres, pauses after a week idle) · Cloudflare D1 (free tier, needs a Workers port) | With one server reached from every device, a hosted database adds nothing yet. Turso is the closest drop-in if you ever need one |
-| Backups | **`npm run backup`** → copy the folder to Google Drive or OneDrive | Cloudflare R2 (10 GB free) · Backblaze B2 (10 GB free) | Backups use `VACUUM INTO`, which takes a consistent snapshot even while Byline is running |
-| Email | **Gmail + app password (SMTP)** | Resend (3,000/month free) · Brevo (300/day free) | Gmail covers both the digest and approved outreach, from your own address |
-| Push notifications | **ntfy** (free app) | Pushover (one-time $5) · Telegram bot (free) | |
-| Better drafting without paying | **Ollama** (local LLM) | LM Studio (free) | Runs on your laptop or home-lab box; see section 9 |
-| CI / tests | **GitHub Actions** (2,000 free min/month on private repos) | | Included: `.github/workflows/test.yml` |
+## A. On your PC (now)
 
-### Tailscale in 5 minutes (recommended for v1)
-1. Install Tailscale on the computer running Byline and on your phone, and sign in with the same account on both.
-2. On the computer, start Byline so it listens on the tailnet, and set a password (a good habit, even on a private network):
+### 1. Install (once)
+1. Install **Node.js 22 or newer** (<https://nodejs.org>, LTS) and **Git**.
+2. Get the code and enter the folder:
+   ```
+   git clone https://github.com/Perr55w/byline.git
+   cd byline
+   ```
+3. Create your settings file and set a password (a long passphrase **without spaces**):
+   ```
+   copy .env.example .env        (Windows)      cp .env.example .env      (macOS / Linux)
+   ```
+   Open `.env`, remove the `#` in front of `BYLINE_PASSWORD=` and type the passphrase after the `=`.
+   Every setting Byline reads is listed in `.env.example`, with a one-line explanation.
 
-```bash
-BYLINE_PASSWORD='your passphrase' HOST=0.0.0.0 npm start
+### 2. Start it at every sign-in
+**Windows** (PowerShell in the Byline folder):
 ```
-
-3. On your phone, open `http://<computer-name>:4317`, where `<computer-name>` is shown in the Tailscale app, then add it to your home screen.
-4. Optional: `tailscale serve 4317` gives you an HTTPS address. The service worker (offline app shell) needs HTTPS on any address other than localhost.
-
-## 1. Run locally (no setup)
-
-```bash
-npm install
+powershell -ExecutionPolicy Bypass -File deploy\windows\install-autostart.ps1
 ```
+This registers a Task Scheduler task "Byline": it starts at log-on in a hidden window and restarts if it stops. It
+prints the local address, the log file (`logs\byline.log`) and the Tailscale command for step 3.
+To remove it: `powershell -ExecutionPolicy Bypass -File deploy\windows\uninstall-autostart.ps1` (your data stays).
+To run it once by hand instead: double-click `deploy\windows\start-byline.cmd`.
 
-```bash
-npm start
+**macOS / Linux desktop:** `./deploy/macos-linux/start.sh` (add it to your login items, or run it with `nohup … &`).
+
+Byline now answers on `http://127.0.0.1:3000` on the PC itself.
+
+### 3. Your bookmarkable HTTPS link (phone and PC) with Tailscale
+1. Install Tailscale on the PC and on your phone (<https://tailscale.com/download>, free Personal plan) and sign in to
+   the same account on both.
+2. On the PC, once:
+   ```
+   tailscale serve --bg 3000
+   ```
+   The first time, Tailscale may print a link to turn on **HTTPS certificates** for your tailnet: open it, click
+   enable, run the command again. `--bg` keeps serving after reboots; `tailscale serve status` shows it,
+   `tailscale serve reset` removes it.
+3. Your link is `https://<pc-name>.<your-tailnet>.ts.net` (the PC's name is in the Tailscale app; `tailscale status`
+   shows it too). Put it in `.env` so notification links open it, then restart Byline (sign out and in, or rerun the
+   install script):
+   ```
+   BYLINE_PUBLIC_URL=https://<pc-name>.<your-tailnet>.ts.net
+   ```
+4. **Bookmark it** on the PC. On the phone, open it and install it as an app:
+   - iPhone (Safari): Share → **Add to Home Screen**.
+   - Android (Chrome): ⋮ menu → **Install app** (or Add to Home screen).
+   - PC (Chrome or Edge): the install icon at the right of the address bar.
+5. Sign in with your password, then go to **Settings → Security** and turn on **two-step sign-in** (any authenticator
+   app). Remote sign-ins then need the 6-digit code.
+
+**Why HTTPS, and not `http://pc-name:3000`:** service workers (the instant-loading app shell) and "install as an app"
+only work in a *secure context*: HTTPS, or `localhost` on the same machine. A plain `http://` address over Tailscale is
+not one, so the phone would get a slow, non-installable page, and the password would cross the network unencrypted.
+`tailscale serve` gives a real certificate and keeps Byline listening only on `127.0.0.1`, so nothing else on your
+Wi-Fi can reach it. Leave `HOST` unset; don't use `HOST=0.0.0.0`.
+
+What Byline checks behind `tailscale serve`: requests arrive from the local proxy with `X-Forwarded-For` and
+`X-Forwarded-Proto: https`, so they count as remote. Without `BYLINE_PASSWORD` they are refused (403). With it, sign-in
+works and the session cookie is marked `Secure`. Changes are accepted only from Byline's own origin (the `ts.net`
+address, `BYLINE_PUBLIC_URL`, `BYLINE_ALLOWED_ORIGINS`, or localhost); cross-site requests get 403.
+
+### 4. Turn real data on (once)
 ```
-
-Open http://127.0.0.1:4317. With no password set, Byline refuses any request that arrives through a proxy or tunnel. That way it can't be exposed by accident.
-
-## 2. Turn on the password
-
-```bash
-export BYLINE_PASSWORD='a long passphrase you do not use elsewhere'
+npm run go-live -- --dry-run      # shows what it would do, changes nothing
+npm run go-live                   # does it
 ```
+It backs up first, removes the demo sources and demo stories (demo contacts, experiences and job posts stay until you
+replace them), unpauses your real sources, syncs each one and prints an OK / failed table, and turns on the daily
+schedule at 07:00 (your time zone in Settings). Run it while Byline is running or not; it is safe to run twice. A
+source that fails is left as is with its error shown in **Sources**, where you can fix the URL or pause it.
 
-```bash
-npm start
-```
+### 5. Morning digest on your phone (free, optional)
+1. Install the **ntfy** app and subscribe to a long, hard-to-guess topic name.
+2. Put the same name in `.env` as `NTFY_TOPIC=…`, restart Byline, and turn on **Push** in Settings → Brief delivery
+   (go-live does that for you when `NTFY_TOPIC` is set).
+3. After each scheduled run, Byline sends one notification ("brief ready" or "quiet day") that opens Today. It is sent
+   at most once a day; Settings → Brief delivery can resend it.
 
-Sessions last 30 days. Login attempts are rate-limited to 10 per 15 minutes.
+Email instead (or as well): a Gmail **app password** (Google account → Security → 2-Step Verification → App passwords)
+in `SMTP_USER` / `SMTP_PASS`, then turn on Email in Settings.
 
-## 3. Reach it from your phone with Cloudflare Tunnel (free)
+### 6. What happens every day
+- **07:00** (Settings → Schedule): collect → cluster → rank → brief → draft, then the digest. Nothing is ever posted or
+  sent without your approval in Byline.
+- **PC off or asleep at 07:00?** Byline checks a few seconds after it starts. If it is past 07:00 and today hasn't run,
+  it runs once, right away. A failed run is retried twice, 10 minutes apart, from the stage that failed.
+- **Backup:** once a day Byline writes `backups/byline-<date>/` (database + media) and keeps the last 7. For an
+  off-machine copy, set `BYLINE_BACKUP_DIR` to a folder inside OneDrive or Google Drive (or let that app sync
+  `backups/`). Manual backup any time: `npm run backup`.
+- **Restore:** stop Byline, copy `byline.db` and `media/` from a backup folder into `data/`, start Byline.
 
-1. Add a domain to Cloudflare (about $10–12 a year if you buy it there), or use one you already have.
-2. Install `cloudflared` on the computer that runs Byline: <https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/>
-3. Create the tunnel:
+### 7. Better drafts without paying (optional): Ollama
+Settings → **Local AI (Ollama)** shows whether Ollama is installed, the install command (`ollama pull qwen2.5:7b`,
+about 5 GB of disk and 8 GB of RAM while it runs) and a **Compare** button that writes one story both ways (templates and
+Ollama) side by side without saving anything. If you prefer Ollama's version, pick it under Settings → AI provider. Any
+Ollama failure falls back to the templates.
 
-```bash
-cloudflared tunnel login
-```
-
-```bash
-cloudflared tunnel create byline
-```
-
-```bash
-cloudflared tunnel route dns byline byline.yourdomain.com
-```
-
-4. Create `~/.cloudflared/config.yml`:
-
-```yaml
-tunnel: byline
-credentials-file: /Users/you/.cloudflared/<tunnel-id>.json
-ingress:
-  - hostname: byline.yourdomain.com
-    service: http://127.0.0.1:4317
-  - service: http_status:404
-```
-
-5. Run it:
-
-```bash
-cloudflared tunnel run byline
-```
-
-To start it on every boot instead, run this once:
-
-```bash
-cloudflared service install
-```
-
-6. Optional but recommended: add **Cloudflare Access** (Zero Trust → Access → Applications → Self-hosted) for `byline.yourdomain.com`, with a one-time PIN sent to your email. That puts a second login in front of Byline's own password. It's free for up to 50 users.
-7. Tell Byline its public address, so links in emails and notifications open the right place:
-
-```bash
-export BYLINE_PUBLIC_URL='https://byline.yourdomain.com'
-```
-
-## 4. Install it as an app
-
-- **iPhone (Safari):** Share → Add to Home Screen.
-- **Android (Chrome):** menu → Install app.
-- **Desktop (Chrome or Edge):** the install icon in the address bar.
-
-The installed app opens straight to Today and launches instantly, because the interface is cached. Your data always loads fresh.
-
-## 5. Brief delivery (all free tiers)
-
-| Channel | Setup |
+### 8. Check and fix
+| Symptom | Look at |
 |---|---|
-| In-app | Nothing to set up |
-| Email digest | Create a free Resend account (3,000 emails/month) and verify your domain. Set `RESEND_API_KEY` and `RESEND_FROM='Byline <brief@yourdomain.com>'`, then turn on email under Settings → Brief delivery |
-| Phone push | Install the free **ntfy** app and subscribe to a hard-to-guess topic name. Set `NTFY_TOPIC` to that same name, then turn on push in Settings |
-| Audio | On Today, tap **Listen to the brief**. It uses your device's built-in voice, so it's free and works offline |
+| Is it running? | `http://127.0.0.1:3000/api/health` → `{"ok":true}` |
+| It stopped / won't start | `logs\byline.log` (Windows launcher) or the terminal; port in use → change `PORT` in `.env` and in `tailscale serve` |
+| Phone says 403 "no password is set" | Set `BYLINE_PASSWORD` in `.env` and restart |
+| Phone says "Cross-site request blocked" | Set `BYLINE_PUBLIC_URL` to the exact `https://…ts.net` address |
+| No brief this morning | The **Runs** tab (failed stage and error) and **Sources** (per-source errors) |
 
-## 6. Google Calendar
+Updating: `git pull`, then restart Byline (Windows: sign out and in, or `Stop-ScheduledTask Byline; Start-ScheduledTask Byline`). The database upgrades itself on start (versioned migrations) and the daily backup covers you.
 
-Settings → Calendar feed & access → copy the link. In Google Calendar, go to Other calendars → **From URL** and paste it. Google needs to reach the link over the internet, so this works once step 3 is done. Treat the link like a password.
+---
 
-## 7. Daily schedule while the laptop sleeps
+## B. Later: a Raspberry Pi or home box (always on)
+A Pi 5 (4 GB) is a one-time $60–80 and draws about 5 W, so the 07:00 run happens even when the PC is off.
+1. Install Raspberry Pi OS Lite (64-bit) or Ubuntu Server, then on the box:
+   ```
+   git clone https://github.com/Perr55w/byline.git && cd byline
+   ./deploy/linux/setup.sh
+   ```
+   It installs Node 22 and ffmpeg if missing, creates `.env` from `.env.example`, installs the `byline` systemd service
+   (`deploy/linux/byline.service`: starts at boot, restarts on failure) and prints the Tailscale command.
+2. Install Tailscale on the box (`curl -fsSL https://tailscale.com/install.sh | sh && sudo tailscale up`), then
+   `sudo tailscale serve --bg 3000`. Bookmark the new `https://<box>.<tailnet>.ts.net` link.
+3. **Move your data:** stop Byline on the PC (uninstall-autostart), copy the PC's `data/` folder and `.env` to the box's
+   Byline folder, then `sudo systemctl restart byline`. Nothing else moves.
+4. **Updates:** `./deploy/linux/update.sh` (backup, `git pull`, restart, health check). Logs: `journalctl -u byline -f`.
 
-The built-in scheduler only runs while Byline is running. If the laptop is asleep at your scheduled time, the run happens when it wakes, and retries from the failed stage if needed. For runs that happen no matter what, use an always-on machine: a Raspberry Pi or mini PC in your home lab (about $0 to run), or a small VPS (about $4–6/month) with the same tunnel setup.
+---
 
-## 8. Gmail sending (free)
-1. Turn on 2-Step Verification on your Google account.
-2. Create an **app password** at https://myaccount.google.com/apppasswords. It's 16 characters.
-3. Set the following, then restart Byline:
+## C. Other free options considered
+| Option | Why not (for now) |
+|---|---|
+| Render / Fly.io / Railway free tiers | Free disks are wiped on deploy or the app sleeps, so the SQLite file is lost or the 07:00 run never fires |
+| Oracle Cloud Always Free / Google Cloud e2-micro | Free and always on, but your notes and contacts would live on a cloud VM you have to secure and patch |
+| Cloudflare Tunnel | Free and gives a public URL (needed only if Google Calendar must fetch the ICS feed), but needs a domain (~$10–12/yr). If you add one later: `cloudflared tunnel` to `http://127.0.0.1:3000`, keep the password + two-step sign-in, put Cloudflare Access in front, and set `BYLINE_PUBLIC_URL` |
+| Tailscale Funnel | Makes the app public on the internet; not needed for your own devices |
+| Cloudflare Workers + D1 | Free, but needs a port (SQLite → D1, media → R2, scheduler → Cron Triggers, ffmpeg off the server). A v2 project |
 
-```bash
-export SMTP_USER='you@gmail.com'
-export SMTP_PASS='abcd efgh ijkl mnop'
-```
-
-Byline can now:
-- send the daily digest, if you switch it on under Settings → Brief delivery;
-- send outreach emails you've approved, at their approved send time. A queued send is cancelled automatically if you edit the message, the recipient, or the time.
-
-Gmail allows about 500 messages a day, which is far more than you'll need.
-
-## 9. Free local AI with Ollama
-1. Install Ollama from https://ollama.com.
-2. Pull a model. `qwen2.5:7b` is about 4.7 GB and runs on 16 GB of RAM; `llama3.1:8b` is similar:
-
-```bash
-ollama pull qwen2.5:7b
-```
-
-3. In Settings → AI provider, choose **Ollama local LLM** and Save. The rail shows "Ollama (model)" when it's active.
-
-If Ollama isn't running, each call falls back to the template engine, so nothing breaks. If Ollama runs on another machine (your home lab), set `OLLAMA_HOST=http://that-machine:11434`.
-
-## 10. Later (v2): Cloudflare Workers + D1
-
-A full serverless port would need these changes:
-- Swap SQLite for D1.
-- Move media to R2.
-- Replace the in-process scheduler with Cron Triggers.
-- Move video rendering off the server (Workers can't run ffmpeg).
-
-It's worth doing only if the laptop/home-box setup becomes the bottleneck. The current code keeps storage, connectors and the scheduler behind small modules to make that move easier.
+PC now, then a Pi, gives the best privacy for $0, so that is the path.

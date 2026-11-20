@@ -72,6 +72,47 @@ export const termHits = (text, terms) => {
   return terms.filter(term => t.includes(` ${term.toLowerCase()} `) || t.includes(` ${term.toLowerCase()}s `));
 };
 
+/**
+ * R3 S12 (F, R14): which employers a text names. Each employer's terms (by default its name and its capitalised terms,
+ * as refreshStoryMeta always matched them) are found as word spans with termHits' normalisation. Among employers that
+ * share a `parent`, the longest match wins: a hit lying inside a longer sibling's hit ("Google" inside "Google Cloud"
+ * or "Google DeepMind", "Gemini" inside "Gemini Enterprise") doesn't count for the shorter sibling.
+ */
+// a term names the company only when it is a proper-noun phrase (every word capitalised: "IBM Consulting",
+// "Kelley Blue Book"); "AI adoption" starts with a capital but is a topic, not a name
+// termHits' normalisation, plus a sentence-final period becomes a space ("on Google Cloud." still ends the name),
+// one char for one char so spans line up; "v2.7.0" and "1.2" keep their dots
+const spanText = (text) => ` ${String(text || '').toLowerCase().replace(/[^a-z0-9\-\. ]/g, ' ').replace(/\.(?=\s|$)/g, ' ')} `;
+export const employerTerms = (e) => [e.name, ...(e.terms || []).filter(t => String(t).split(/\s+/).every(w => /^[A-Z0-9]/.test(w)))];
+export function matchEmployers(text, employers, termsOf = employerTerms) {
+  const t = spanText(text);
+  const spansOf = (terms) => {
+    const out = [];
+    for (const term of terms) {
+      const k = String(term || '').toLowerCase();
+      if (!k) continue;
+      for (const pat of [` ${k} `, ` ${k}s `]) for (let i = t.indexOf(pat); i >= 0; i = t.indexOf(pat, i + 1)) out.push([i + 1, i + 1 + k.length]);
+    }
+    return out;
+  };
+  const hits = employers.map(e => ({ e, spans: spansOf(termsOf(e)) }));
+  return hits.filter(h => {
+    if (!h.spans.length) return false;
+    if (!h.e.parent) return true;
+    const sibs = hits.filter(o => o !== h && o.e.parent === h.e.parent && o.spans.length);
+    return h.spans.some(([s, en]) => !sibs.some(o => o.spans.some(([s2, e2]) => s2 <= s && e2 >= en && e2 - s2 > en - s)));
+  }).map(h => h.e.name);
+}
+
+/** termHits, minus hits that lie inside a longer hit of any `shadow` term (R3 S12: sibling employers' terms). */
+export function termHitsShadowed(text, terms, shadow = []) {
+  if (!shadow.length) return termHits(text, terms);
+  const t = spanText(text);
+  const spans = (k) => { const out = []; if (!k) return out; for (const pat of [` ${k} `, ` ${k}s `]) for (let i = t.indexOf(pat); i >= 0; i = t.indexOf(pat, i + 1)) out.push([i + 1, i + 1 + k.length]); return out; };
+  const long = shadow.flatMap(s => spans(String(s || '').toLowerCase()));
+  return terms.filter(term => spans(String(term || '').toLowerCase()).some(([s, e]) => !long.some(([s2, e2]) => s2 <= s && e2 >= e && e2 - s2 > e - s)));
+}
+
 export const readingMinutes = (words) => Math.max(1, Math.round((words / 230) * 10) / 10);
 
 export const truncate = (s = '', n = 200) => s.length > n ? s.slice(0, n - 1).replace(/\s+\S*$/, '') + '…' : s;

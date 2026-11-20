@@ -86,7 +86,12 @@ export function loadDemo() {
   return runDaily({ date: todayIn(getSettings().timezone), trigger: 'demo' }).then(r => ({ loaded: true, run: r }));
 }
 
-export function clearDemo() {
+/**
+ * Remove the demo data. keepPeople (go-live): demo contacts, experiences and job posts stay until real ones replace
+ * them (v2); only demo sources, articles, their stories/drafts and demo briefs go. Their ids stay recorded so a later
+ * full clear can still remove them.
+ */
+export function clearDemo({ keepPeople = false } = {}) {
   const ids = getSettings().demo || { sources: [], contacts: [], jobs: [] };
   tx(() => {
     const storyIds = all('SELECT DISTINCT story_id FROM articles WHERE is_demo = 1 AND story_id IS NOT NULL').map(r => r.story_id);
@@ -98,10 +103,13 @@ export function clearDemo() {
       }
     }
     for (const id of ids.sources || []) run('DELETE FROM sources WHERE id = ? AND is_demo = 1', id);
-    for (const id of ids.contacts || []) run('DELETE FROM contacts WHERE id = ?', id);
-    for (const id of ids.jobs || []) run('DELETE FROM job_posts WHERE id = ?', id);
+    run('DELETE FROM sources WHERE is_demo = 1');
+    if (!keepPeople) {
+      for (const id of ids.contacts || []) run('DELETE FROM contacts WHERE id = ?', id);
+      for (const id of ids.jobs || []) run('DELETE FROM job_posts WHERE id = ?', id);
+    }
     run("DELETE FROM briefs WHERE items_json LIKE '%\"is_demo\":true%'");
   });
-  setSetting('demo', null);
-  return { cleared: true };
+  setSetting('demo', keepPeople ? { ...ids, sources: [] } : null);
+  return { cleared: true, kept_people: keepPeople };
 }

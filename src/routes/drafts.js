@@ -9,6 +9,7 @@ import { generateVisual, saveSvg, cardSvg, diagramSvg } from '../visual.js';
 import { publishers } from '../publishers/index.js';
 import { sentences, truncate } from '../text.js';
 import { hashFile } from '../blurhash.js';
+import { safeFetch } from '../net.js';
 
 const bad = (msg, status = 400) => Object.assign(new Error(msg), { status });
 
@@ -195,9 +196,15 @@ export function registerDrafts(route) {
     return fullDraft(d.id);
   });
   route('POST', '/api/drafts/:id/plan', ({ params, body }) => {
-    // Calendar drag: changes the planned date only; scheduled posts stay approved (content unchanged).
-    run('UPDATE drafts SET planned_date = ? WHERE id = ?', body.date || null, params.id);
-    return { ok: true };
+    // Calendar drag-to-day: changes planned_date only. Status, approval and content are untouched, so a scheduled
+    // post stays scheduled and approved. body.date = 'YYYY-MM-DD' to plan, or null/'' to move back to the tray.
+    const d = get('SELECT id, status, planned_date FROM drafts WHERE id = ?', params.id);
+    if (!d) throw bad('Draft not found', 404);
+    const date = body.date || null;
+    if (date !== null && !/^\d{4}-\d{2}-\d{2}$/.test(String(date))) throw bad('Date must be YYYY-MM-DD, or null to unplan.');
+    if (d.status === 'published') throw bad('Published posts cannot be moved.', 409);
+    run('UPDATE drafts SET planned_date = ? WHERE id = ?', date, d.id);
+    return { ok: true, id: d.id, planned_date: date, previous_date: d.planned_date || null, status: d.status };
   });
   route('POST', '/api/drafts/:id/publish', async ({ params, body }) => {
     const d = loadDraft(params.id);
@@ -311,12 +318,15 @@ export function registerDrafts(route) {
   route('POST', '/api/images/import', async ({ body }) => {
     if (!/^https?:\/\//.test(body.url || '')) throw bad('Image URL required');
     if (!body.attribution || !body.license) throw bad('Attribution and license are required for sourced images.');
-    const res = await fetch(body.url, { signal: AbortSignal.timeout(15000) });
+    let res;
+    try { res = await safeFetch(body.url, { signal: AbortSignal.timeout(15000) }); }
+    catch (e) { throw bad(e.code === 'EBLOCKED' ? e.message : `Could not download image (${e.message})`, e.status || 502); }
     if (!res.ok) throw bad(`Could not download image (HTTP ${res.status})`, 502);
     const mime = res.headers.get('content-type')?.split(';')[0] || 'image/jpeg';
     if (!mime.startsWith('image/')) throw bad('URL is not an image');
     const ext = { 'image/png': '.png', 'image/webp': '.webp', 'image/gif': '.gif', 'image/svg+xml': '.svg' }[mime] || '.jpg';
     const filename = `src-${Date.now()}${ext}`;
+    if (Number(res.headers.get('content-length') || 0) > 20e6) throw bad('Image is larger than 20 MB');
     fs.writeFileSync(path.join(MEDIA_DIR, filename), Buffer.from(await res.arrayBuffer()));
     const r = run('INSERT INTO images(filename, mime, origin, source_url, attribution, license, generated, alt, created_at) VALUES(?,?,?,?,?,?,0,?,?)', filename, mime, 'sourced', body.source_url || body.url, body.attribution, body.license, body.alt || '', now());
     const bh = hashFile(path.join(MEDIA_DIR, filename));
@@ -370,10 +380,12 @@ export function registerDrafts(route) {
   route('GET', '/api/calendar', ({ query }) => {
     const m = query.month || now().slice(0, 7);
     return {
-      drafts: all("SELECT id, title, channel, format, status, planned_date, published_at FROM drafts WHERE status != 'archived' AND (substr(planned_date,1,7) = ? OR substr(published_at,1,7) = ?)", m, m),
-      unplanned: all("SELECT id, title, channel, format, status FROM drafts WHERE planned_date IS NULL AND status IN ('draft','in_review','approved') ORDER BY updated_at DESC LIMIT 30"),
+      month: m,
+      drafts: all("SELECT d.id, d.title, d.channel, d.format, d.status, d.planned_date, d.published_at, d.story_id, s.score, s.title AS story_title, d.approved_hash IS NOT NULL AS approved FROM drafts d LEFT JOIN stories s ON s.id = d.story_id WHERE d.status != 'archived' AND (substr(d.planned_date,1,7) = ? OR substr(d.published_at,1,7) = ?) ORDER BY COALESCE(d.planned_date, d.published_at), d.id", m, m).map(d => ({ ...d, approved: !!d.approved })),
+      unplanned: all("SELECT d.id, d.title, d.channel, d.format, d.status, d.story_id, s.score, s.title AS story_title FROM drafts d LEFT JOIN stories s ON s.id = d.story_id WHERE d.planned_date IS NULL AND d.status IN ('draft','in_review','approved') ORDER BY d.updated_at DESC LIMIT 30"),
+      unplanned_total: get("SELECT COUNT(*) AS n FROM drafts WHERE planned_date IS NULL AND status IN ('draft','in_review','approved')").n,
       outreach: all("SELECT o.id, o.channel, o.status, o.send_at, c.name FROM outreach o JOIN contacts c ON c.id = o.contact_id WHERE substr(o.send_at,1,7) = ?", m),
-      history: all("SELECT id, title, channel, format, published_at FROM drafts WHERE status = 'published' ORDER BY published_at DESC LIMIT 20")
+      history: all("SELECT d.id, d.title, d.channel, d.format, d.published_at, d.story_id, s.score FROM drafts d LEFT JOIN stories s ON s.id = d.story_id WHERE d.status = 'published' ORDER BY d.published_at DESC LIMIT 20")
     };
   });
   route('PATCH', '/api/drafts/:id/metrics', ({ params, body }) => {

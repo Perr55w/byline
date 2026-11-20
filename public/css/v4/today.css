@@ -1,0 +1,413 @@
+/* =====================================================================
+   Today (today.js). Tab-specific layout only; every colour is a token
+   (the inline --q from quality.js is the one exception, per DECISIONS).
+   Responsive by container width (the rail changes the column, not the viewport):
+     wide  ≥ 900px  lead 7 | side 5 · weather 7 | map 5 · week 7 | desk 5 (one bottom line) · rest 12
+     mid   < 900px  lead · side as two columns · weather · map · week · desk · rest
+     narrow< 620px  one column, phone type (≤ 480px: the lead ring sits beside the topic pills)
+   ===================================================================== */
+
+.today { container: today / inline-size; }
+.today-top { position: relative; z-index: 3; }
+.td-head h1 { max-width: 20ch; }
+.td-head .lede { max-width: 72ch; }
+/* round 3 T-3 (R18): the run controls sit in the run strip beside Sources and Run log; the head band holds no control */
+
+
+/* ---------------------------------------------------------------- run strip (collection state + last run) */
+.td-strip {
+  display: flex; align-items: baseline; gap: 10px; margin: -10px 0 22px; padding: 10px 14px; border-radius: var(--r-ctl);
+  background: var(--surface); box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--text-2); font: 450 13.5px/20px var(--font-sans); font-variant-numeric: tabular-nums;
+}
+/* round 3 T-4: opaque tints (--surface-solid is alpha 1 in Proof and Night), so the field never shows through the text */
+.td-strip[data-tone=warn] { background: color-mix(in oklab, var(--warn) 8%, var(--surface-solid)); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--warn) 28%, transparent); }
+.td-strip[data-tone=err] { background: color-mix(in oklab, var(--err) 8%, var(--surface-solid)); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--err) 28%, transparent); }
+.td-strip .dot { align-self: flex-start; margin-top: 6.5px; }
+.td-strip p { flex: 1; margin: 0; min-width: 0; }
+.td-strip b { color: var(--text-1); font-weight: 550; }
+.td-strip-end { display: flex; align-items: center; gap: 14px; flex: none; align-self: center; margin: -5px -6px -5px 0; }
+.td-strip-links { display: flex; gap: 14px; flex: none; }
+.td-actions { display: flex; align-items: center; gap: 2px; padding-left: 14px; border-left: 1px solid var(--line); }
+.td-actions .btn--secondary { margin-right: 2px; }
+.td-strip-links a { color: var(--accent-text); font-weight: 500; text-decoration: none; }
+.td-strip-links a:hover { text-decoration: underline; text-underline-offset: 3px; }
+
+/* ---------------------------------------------------------------- brief menu (run controls) */
+.td-menu { position: relative; }
+.td-menu-pop {
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 20; min-width: 244px; padding: 6px; border-radius: var(--r-tile);
+  background: var(--raised); box-shadow: inset 0 0 0 1px var(--line-2), var(--shadow-2);
+}
+.td-menu-pop [role=menuitem] {
+  display: flex; align-items: center; width: 100%; height: 34px; padding: 0 10px; border: 0; border-radius: var(--r-ctl);
+  background: transparent; color: var(--text-1); font: 450 14px/1 var(--font-sans); text-align: left; text-decoration: none; cursor: pointer;
+}
+.td-menu-pop [role=menuitem]:hover, .td-menu-pop [role=menuitem]:focus-visible { background: var(--tint-2); outline: none; box-shadow: inset 0 0 0 1px var(--focus-c); }
+.td-menu-pop [role=menuitem]:hover { box-shadow: none; }
+.td-menu-meta { margin: 0 0 4px; padding: 6px 10px 8px; border-bottom: 1px solid var(--line); color: var(--text-3); font: 450 12.5px/16px var(--font-sans); }
+.modal .td-menu-meta { border: 0; padding: 0; margin: 0 0 14px; }
+.td-digest { display: block; width: 100%; height: 60vh; border: 1px solid var(--line); border-radius: var(--r-ctl); background: var(--surface-solid); }
+
+/* ---------------------------------------------------------------- grid */
+.td-grid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: var(--gap); align-items: stretch; }
+.td-grid > .td-lead { grid-column: span 7; }
+.td-grid > .td-side { grid-column: span 5; display: flex; flex-direction: column; gap: var(--gap); }
+.td-grid > .td-lead:only-child, .td-grid > .td-lead:not(:has(+ .td-side)) { grid-column: span 12; }
+.td-side > .tile { flex: 1 1 auto; }
+.td-side > .td-story--lg { flex-grow: 1.2; }
+.td-grid > .td-wx { grid-column: span 7; }
+.td-grid > .td-map { grid-column: span 5; }
+/* row 3: This week 7 | Waiting on you 5. T4: both stretch to the row; This week's day cells take the extra height */
+.td-grid > .td-week { grid-column: span 7; }
+.td-grid > .td-desk { grid-column: span 5; }
+/* T1: the deferred tiles skip style + layout while off screen (shared .cv); the estimates are the measured content
+   heights (content box: tile height − padding − border) at 1440 here and at 390 in the narrow block below */
+.td-wx.cv, .td-map.cv { contain-intrinsic-size: auto 495px; }
+.td-week.cv, .td-desk.cv { contain-intrinsic-size: auto 370px; }
+.td-rest.cv { contain-intrinsic-size: auto 336px; }
+.td-grid > .td-cv-hold, .td-wx-chart.td-cv-hold { content-visibility: hidden; } /* round 3 T-8: held until near the screen (today.js buildLater) */
+.td-wx-chart.td-cv-hold { contain-intrinsic-size: auto 339px; }
+.td-grid > .td-rest, .td-grid > .td-empty { grid-column: span 12; }
+
+/* shared tile type */
+.td-tile-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 28px; margin: -2px 0 6px; }
+.td-tile-head .btn { margin-right: -8px; }
+.td-h2 { margin: 0; color: var(--text-1); font: var(--wt-title) var(--fs-title)/var(--lh-title) var(--font-serif); font-variation-settings: 'opsz' var(--op-title); letter-spacing: var(--tr-title); }
+/* T8: labels are sentence-case Geist (mono caps stay on the page eyebrow only, DECISIONS) */
+.td-label { margin: 0 0 8px; color: var(--text-2); font: 560 12.5px/18px var(--font-sans); letter-spacing: 0; text-transform: none; }
+.td-sub { margin: 0; color: var(--text-2); font: 400 14px/21px var(--font-sans); text-wrap: pretty; }
+.td-sub b { color: var(--text-1); font-weight: 550; }
+.td-caption { margin: 14px 0 0; color: var(--text-3); font: 450 12.5px/18px var(--font-sans); text-wrap: pretty; }
+.td-caption b { color: var(--text-2); font-weight: 550; }
+.td-meta { color: var(--text-3); font: 450 var(--fs-meta)/var(--lh-meta) var(--font-sans); font-variant-numeric: tabular-nums; }
+.td-src { color: var(--text-2); font: 450 12.5px/16px var(--font-mono); font-variant-numeric: tabular-nums; }
+.td-kicker { display: flex; align-items: center; gap: 2px; margin: 0 0 12px; color: var(--text-2); font: 560 12.5px/18px var(--font-sans); }
+.td-grid .demo-flag { vertical-align: 3px; }
+
+/* the whole tile is one link (stretched); the tile, not the link, shows focus (F §5: tiles focus as one unit) */
+.td-stretch, .td-stretch:hover { color: inherit; text-decoration: none; } /* T8: tint, lift and light pool; no underline */
+.td-stretch::after { content: ""; position: absolute; inset: 0; z-index: 1; border-radius: inherit; }
+.td-stretch:focus-visible { outline: none; }
+.tile:has(.td-stretch:focus-visible), .td-rest-row:has(.td-stretch:focus-visible) { box-shadow: var(--focus); }
+.td-stretch:hover { color: inherit; }
+
+/* ---------------------------------------------------------------- lead tile */
+/* T3 (ruling R8): fixed 24 px gaps between the sections; nothing spreads. The source mix is real content that makes up
+   the height of the side column; when the lead is still > 32 px short, it stops stretching (.is-short, set by fitLead) */
+.td-lead { display: flex; flex-direction: column; gap: 24px; }
+.td-lead.is-short { align-self: start; }
+/* T2: pills / title / dek in column 1, the ring beside them; the last row takes any extra height the ring
+   needs, so the dek always sits 12px under the title */
+.td-lead-top {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: auto auto 1fr;
+  grid-template-areas: "pills ring" "title ring" "dek ring"; column-gap: 28px; align-items: start;
+}
+.td-lead-top > .td-pills { grid-area: pills; }
+.td-lead-top > .td-title-lg { grid-area: title; }
+.td-lead-top > .td-dek { grid-area: dek; }
+.td-lead-top > .td-lead-ring { grid-area: ring; }
+.td-pills { margin: 0 0 16px; }
+.td-title-lg {
+  margin: 0; max-width: 21ch; color: var(--text-1); text-wrap: balance;
+  font: var(--wt-title-lg) var(--fs-title-lg)/var(--lh-title-lg) var(--font-serif); font-variation-settings: 'opsz' var(--op-title-lg); letter-spacing: var(--tr-title-lg);
+}
+.td-lead-ring { margin-top: -2px; padding: 0 2px 22px; }
+.td-dek { margin: 12px 0 0; max-width: 58ch; color: var(--text-2); font: 400 16px/25px var(--font-sans); letter-spacing: -0.004em; text-wrap: pretty; }
+.td-dek b { color: var(--text-1); font-weight: 550; }
+.td-dek a { color: var(--text-1); }
+.td-why { margin: 0; padding-top: 18px; border-top: 1px solid var(--line); }
+.td-why ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; }
+.td-why li { position: relative; padding-left: 20px; color: var(--text-1); font: 400 15px/22px var(--font-sans); text-wrap: pretty; }
+.td-why li::before { content: ""; position: absolute; left: 2px; top: 11px; width: 9px; height: 1.5px; border-radius: 1px; background: var(--accent); }
+.td-named { display: flex; align-items: center; gap: 10px 14px; flex-wrap: wrap; margin: 0; }
+.td-mix .td-label { margin-bottom: 6px; }
+/* round 3 T-6: one Geist 13 px tabular line, zero categories left out */
+.td-mix-line { margin: 0; color: var(--text-2); font: 450 13px/20px var(--font-sans); font-variant-numeric: tabular-nums; }
+.td-mix-extra { margin: 4px 0 0; color: var(--text-2); font: 400 14px/21px var(--font-sans); }
+.td-mix-extra b { color: var(--text-1); font-weight: 550; }
+/* compact: no origin line (the footer carries the origin domain) */
+.td-lead.mix-compact .td-mix-extra { display: none; }
+.td-named .td-label { margin: 0; }
+.td-named .cluster { gap: 6px; }
+.td-named .td-name { font: 450 12px/1 var(--font-sans); } /* names, not code (T-6) */
+.td-why--sm { margin: 4px 0 8px; padding-top: 14px; }
+.td-why--sm li { font-size: 13.5px; line-height: 20px; padding-left: 16px; }
+.td-why--sm li::before { top: 9.5px; width: 7px; }
+.td-lead-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding-top: 16px; border-top: 1px solid var(--line); }
+.td-lead-foot:not(:has(.td-domain)) .td-open { margin-left: auto; }
+.td-domain { display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: var(--r-tag); background: var(--tint-1); color: var(--text-2); font: 450 12px/1 var(--font-mono); }
+.td-open {
+  position: relative; z-index: 2; display: inline-flex; align-items: center; gap: 6px; margin: -6px -8px -6px auto; padding: 6px 8px; border-radius: var(--r-ctl);
+  color: var(--accent-text); font: 500 13.5px/1 var(--font-sans); cursor: pointer;
+  transition: background-color var(--dur-hover-out) var(--ease-fade);
+}
+.td-open .icon { width: 15px; height: 15px; transition: transform var(--dur-hover-out) var(--ease-settle); }
+.td-lead:hover .td-open .icon { transform: translateX(2px); transition-duration: var(--dur-hover-in); }
+.td-open:hover { background: var(--accent-soft); transition-duration: var(--dur-hover-in); }
+.td-open:hover .icon { transform: translateX(4px); }
+
+/* quiet day lead */
+.td-quiet .td-title-lg { max-width: 26ch; }
+.td-ever { margin: 0; padding: 0; list-style: none; }
+.td-ever li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); font: 450 14.5px/20px var(--font-sans); }
+.td-ever li:first-child { border-top: 0; }
+
+/* ---------------------------------------------------------------- secondary story tiles (sized by importance) */
+.td-story { display: flex; flex-direction: column; gap: 10px; }
+.td-story-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; min-height: 52px; }
+.td-story .td-pills { margin: 2px 0 0; }
+.td-story .score-ring { margin: -2px -2px 0 0; }
+.td-title { margin: 0; color: var(--text-1); text-wrap: pretty; font: var(--wt-title) var(--fs-title)/var(--lh-title) var(--font-serif); font-variation-settings: 'opsz' var(--op-title); letter-spacing: var(--tr-title); }
+.td-title--lg { font-size: 24px; line-height: 29px; font-variation-settings: 'opsz' 28; font-weight: 440; letter-spacing: -0.01em; }
+.td-finding { margin: 0; color: var(--text-2); font: 400 14px/21px var(--font-sans); text-wrap: pretty; }
+.td-finding mark.num-hl { font-weight: 550; }
+.td-story-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-top: auto; padding-top: 6px; }
+.td-q { color: var(--text-3); font: 450 11.5px/1 var(--font-mono); white-space: nowrap; }
+
+/* ---------------------------------------------------------------- news weather (one dot per story, score axis, per topic) */
+.td-wx { display: flex; flex-direction: column; }
+.td-wx-toggle[aria-pressed=true] { background: var(--tint-2); color: var(--text-1); }
+.td-wx-chart { --name-w: 152px; --label-w: 58px; --col-gap: 14px; position: relative; display: flex; flex-direction: column; margin-top: 14px; }
+.td-wx-axis, .td-wx-scale { position: relative; margin-left: calc(var(--name-w) + var(--col-gap)); margin-right: calc(var(--label-w) + var(--col-gap)); }
+.td-wx-axis { height: 18px; }
+.td-wx-bar-label { position: absolute; left: calc(var(--x) * 100%); bottom: 3px; transform: translateX(-50%); color: var(--text-3); font: 500 11.5px/1 var(--font-sans); white-space: nowrap; }
+.td-wx-scale { display: flex; justify-content: space-between; margin-top: 4px; color: var(--text-3); font: 450 11px/1 var(--font-mono); font-variant-numeric: tabular-nums; }
+.td-wx-scale span:nth-child(2) { position: absolute; left: 50%; transform: translateX(-50%); }
+.td-wx-row { display: grid; grid-template-columns: var(--name-w) minmax(0, 1fr) var(--label-w); align-items: center; column-gap: var(--col-gap); height: 30px; }
+/* when the map beside it is taller, the rows share the extra height (up to 44 px each) instead of a band over the caption */
+@container today (min-width: 900px) {
+  .td-wx-chart { flex: 1 1 auto; }
+  .td-wx-row { flex: 1 0 30px; height: auto; max-height: 44px; }
+}
+.td-wx-name { overflow: hidden; color: var(--text-1); font: 450 13.5px/18px var(--font-sans); white-space: nowrap; text-overflow: ellipsis; }
+.td-wx-row[data-label=calm] .td-wx-name { color: var(--text-2); }
+.td-wx-row[data-catchall] .td-wx-name { color: var(--text-3); } /* T8: weight ≤ 1, never leads */
+.td-wx-track { position: relative; height: 100%; }
+.td-wx-track::before { content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 1px; background: var(--line); }
+.td-wx-track::after { content: ""; position: absolute; left: calc(var(--th) * 100%); top: 3px; bottom: 3px; border-left: 1px dashed var(--line-ctl); opacity: .55; }
+.td-wx-row:first-of-type .td-wx-track::after { top: -6px; }
+.td-wx-dot {
+  position: absolute; z-index: 1; left: calc(var(--x) * 100%); top: 50%; width: 10px; height: 10px; margin: -5px 0 0 -5px; border-radius: 50%;
+  background: var(--q); transform: translate(0px, var(--lift, 0px));
+  box-shadow: 0 0 0 1px var(--surface-solid); /* T-2 (R17): every dot carries a 1 px surface ring, so neighbours never merge */
+  transition: box-shadow var(--dur-micro) var(--ease-fade);
+}
+.td-wx-dot::before { content: ""; position: absolute; inset: -7px; border-radius: 50%; }
+.td-wx-dot:hover { text-decoration: none; }
+.td-wx-dot[data-q=below] { background: var(--surface-solid); box-shadow: inset 0 0 0 1.5px var(--q), 0 0 0 1px var(--surface-solid); }
+.td-wx-dot[data-q=top] { box-shadow: 0 0 0 1px var(--surface-solid), 0 0 0 2px var(--q), 0 0 0 3px var(--surface-solid); }
+.td-wx-dot:hover, .td-wx-dot.is-echo { z-index: 4; box-shadow: 0 0 0 3px var(--surface-solid), 0 0 0 5px var(--accent-line); }
+.td-wx-dot[data-q=below]:hover, .td-wx-dot[data-q=below].is-echo { box-shadow: inset 0 0 0 1.5px var(--q), 0 0 0 3px var(--surface-solid), 0 0 0 5px var(--accent-line); }
+/* the tip is the dot's own ::after, built only while hovered (no 43 hidden tip boxes to lay out on insert, T-8) */
+.td-wx-dot:hover::after {
+  content: attr(data-tip); position: absolute; left: 50%; bottom: calc(100% + 9px); z-index: 5; padding: 5px 8px; border-radius: var(--r-ctl); pointer-events: none; white-space: nowrap;
+  background: var(--raised); box-shadow: inset 0 0 0 1px var(--line-2), var(--shadow-2); color: var(--text-1); font: 500 12px/16px var(--font-sans);
+  opacity: 1; transform: translate(-50%, 0); transition: opacity var(--dur-micro) var(--ease-fade), transform var(--dur-hover-in) var(--ease-settle);
+}
+@starting-style { .td-wx-dot:hover::after { opacity: 0; transform: translate(-50%, 3px); } }
+.td-wx-label { color: var(--text-3); font: 500 12px/1 var(--font-sans); text-align: right; }
+.td-wx-row[data-label=hot] .td-wx-label { color: var(--accent-text); }
+.td-wx-row[data-label=warm] .td-wx-label { color: var(--text-2); }
+.td-wx-row[data-catchall] .td-wx-label { color: var(--text-3); }
+.td-wx .td-caption { margin-top: auto; padding-top: 14px; }
+.td-wx.show-table .td-wx-chart { display: none; }
+.td-wx-table.is-visible { position: static !important; width: 100% !important; height: auto !important; margin: 12px 0 0 !important; overflow: visible !important; clip: auto !important; clip-path: none !important; white-space: normal !important;
+  border-collapse: collapse; font: 400 13.5px/19px var(--font-sans); color: var(--text-1); }
+.td-wx-table.is-visible caption { caption-side: bottom; padding-top: 8px; color: var(--text-3); font-size: 12.5px; text-align: left; }
+.td-wx-table.is-visible th, .td-wx-table.is-visible td { padding: 7px 8px; border-top: 1px solid var(--line); text-align: left; vertical-align: top; }
+.td-wx-table.is-visible thead th { border-top: 0; color: var(--text-3); font: 500 10.5px/1 var(--font-mono); letter-spacing: var(--tr-label); text-transform: uppercase; }
+.td-wx-table.is-visible tbody th { font-weight: 500; }
+.td-wx-table.is-visible .num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; text-align: right; }
+
+/* ---------------------------------------------------------------- news map (static drawing of /api/map, fitted to the node bounds) */
+.td-map { display: flex; flex-direction: column; container: tdmap / inline-size; }
+.td-map-body { display: grid; grid-template-columns: minmax(0, 1fr); align-content: start; gap: 14px; flex: 1; margin-top: 8px; }
+@container tdmap (min-width: 620px) { .td-map-body { grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 20px; } }
+/* T6: the canvas keeps the layout's own aspect (set inline, clamped 1.35–2.1) and a height cap, so no band is left above the list */
+.td-map-canvas {
+  position: relative; z-index: 2; display: block; width: 100%; aspect-ratio: var(--ar, 1.7); max-height: 232px; overflow: hidden; border-radius: 10px;
+  background: var(--inset); box-shadow: inset 0 0 0 1px var(--line); color: inherit; text-decoration: none;
+  transition: box-shadow var(--dur-micro) var(--ease-fade);
+}
+.td-map-canvas:hover { box-shadow: inset 0 0 0 1px var(--hover-line); text-decoration: none; }
+.td-map-canvas:focus-visible { outline: none; box-shadow: var(--focus); }
+.td-map-svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; visibility: hidden; }
+.td-map-canvas.is-fit .td-map-svg { visibility: visible; } /* fitted in a ResizeObserver callback, before first paint */
+.td-map-regions circle { fill: var(--accent-soft); }
+.td-map-edges { fill: none; stroke: var(--line-3); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.td-map-nodes { transform-box: fill-box; transform-origin: 50% 50%; }
+.td-map-nodes circle { fill: var(--q); stroke: var(--surface-solid); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.td-map-nodes circle[data-q=below] { fill: var(--surface-solid); stroke: var(--q); }
+.td-map-nodes circle.is-labelled { stroke: var(--text-1); stroke-width: 1.5; }
+.td-map-leaders { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.td-map-leaders path { fill: none; stroke: var(--line-ctl); stroke-width: 1; }
+.td-map-labels { position: absolute; inset: 0; pointer-events: none; visibility: hidden; } /* placed before the page shows (ResizeObserver) */
+.td-map-labels.is-placed { visibility: visible; }
+.td-map-label {
+  position: absolute; left: 0; top: 0; padding: 2px 7px; border-radius: 999px; background: var(--surface-solid); box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--text-1); font: 500 11px/16px var(--font-sans); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.td-map-empty { position: absolute; inset: 0; display: grid; place-items: center; padding: 16px; color: var(--text-2); font: 450 13px/18px var(--font-sans); text-align: center; }
+.td-map-side { display: flex; flex-direction: column; min-width: 0; }
+.td-map-side .td-caption { margin-top: auto; padding-top: 10px; }
+.td-map-side .td-label { margin-bottom: 2px; }
+.td-hot { margin: 0; padding: 0; list-style: none; }
+.td-hot-row {
+  position: relative; z-index: 2; display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; column-gap: 10px; align-items: baseline;
+  padding: 8px 0; border-top: 1px solid var(--line); color: inherit; text-decoration: none;
+}
+.td-hot-row:hover { text-decoration: none; }
+li:first-child > .td-hot-row { border-top: 0; }
+.td-hot-rank { color: var(--text-3); font: 500 12.5px/18px var(--font-sans); font-variant-numeric: tabular-nums; }
+.td-hot-name { min-width: 0; overflow-wrap: anywhere; color: var(--text-1); font: 500 14px/18px var(--font-sans); transition: color var(--dur-micro) var(--ease-fade); }
+.td-hot-meta { color: var(--text-2); font: 450 12.5px/18px var(--font-sans); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.td-hot-row:hover .td-hot-name { color: var(--accent-text); }
+.td-hot-row:focus-visible { outline: none; box-shadow: var(--focus); border-radius: var(--r-ctl); }
+
+/* ---------------------------------------------------------------- this week (T1: strip | posts side by side) */
+.td-week, .td-desk { display: flex; flex-direction: column; }
+.td-week-body { display: grid; grid-template-columns: minmax(0, 1fr); align-items: start; margin-top: 14px; }
+.td-week-strip { display: flex; flex-direction: column; min-width: 0; }
+.td-week-side { min-width: 0; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
+.td-cadence { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; margin: 0 0 8px; }
+/* round 3 T-1 (R16): a day is 56 px (weekday, date, posting-day marker); it grows only by the posts it holds (one
+   marker each). It never stretches to the row, so an empty week has no tall empty columns */
+.td-day { display: flex; flex-direction: column; align-items: center; gap: 1px; min-height: 56px; padding: 4px 0 6px; border-radius: var(--r-ctl); background: var(--tint-1); }
+.td-day-slots { display: flex; flex-direction: column; align-items: center; gap: 3px; margin-top: auto; padding-top: 2px; }
+.td-day-slots .td-day-slot { margin: 0; }
+.td-day-name { color: var(--text-3); font: 500 11.5px/14px var(--font-sans); }
+.td-day-num { color: var(--text-1); font: 450 15px/20px var(--font-sans); font-variant-numeric: tabular-nums; }
+.td-day.is-past .td-day-num { color: var(--text-3); }
+.td-day.is-today { background: var(--accent-soft); }
+.td-day.is-today .td-day-num { color: var(--accent-text); font-weight: 600; }
+.td-day.is-today .td-day-name { color: var(--accent-text); }
+.td-day-slot { display: block; flex: none; width: 8px; height: 8px; margin-top: 3px; border-radius: 50%; background: transparent; }
+.td-day.is-posting .td-day-slot, .td-legend .td-day-slot { box-shadow: inset 0 0 0 1.5px var(--line-ctl); }
+.td-day.has-post .td-day-slot { background: var(--q, var(--accent)); box-shadow: none; }
+.td-legend { display: flex; align-items: baseline; gap: 6px; margin: 0; color: var(--text-3); font: 450 12px/16px var(--font-sans); }
+.td-legend .td-day-slot { margin: 0; flex: none; transform: translateY(-1px); }
+.td-week-empty { margin: 8px 0 0; color: var(--text-2); font: 400 14px/21px var(--font-sans); } /* right under the strip */
+.td-week-empty b { color: var(--text-1); font-weight: 550; }
+.td-week-label { margin-bottom: 0; }
+.td-row.td-row--sugg { padding-top: 6px; padding-bottom: 0; border-top: 0; }
+.td-num { color: var(--text-1); font-weight: 550; font-variant-numeric: tabular-nums; }
+.td-sugg-go { display: inline-flex; align-items: center; gap: 4px; color: var(--accent-text); font-weight: 500; }
+.td-sugg-go .icon { width: 13px; height: 13px; transition: transform var(--dur-hover-out) var(--ease-settle); }
+.td-row--sugg:hover .td-sugg-go .icon { transform: translateX(3px); transition-duration: var(--dur-hover-in); }
+.td-sugg-why { margin: 10px 0 0; }
+.td-sugg-then { margin-top: 16px; }
+.td-row.td-row--then { grid-template-columns: 26px minmax(0, 1fr); column-gap: 8px; align-items: baseline; padding: 6px 0; }
+.td-sugg-more li:first-child > .td-row { padding-top: 4px; }
+.td-row--then .td-row-title { font-size: 15px; line-height: 20px; }
+.td-row--then .td-num { font: 550 12.5px/20px var(--font-sans); }
+.td-week-side { display: flex; flex-direction: column; }
+.td-row.td-week-next { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; margin-top: 12px; padding: 10px 0 0; border-top: 1px solid var(--line); }
+.td-week-next .td-label { margin: 0; }
+/* round 3 T-1 (R16): This week is one column: the 56 px day strip runs the full width (cells grow only by the posts they
+   hold), the tray line and the next open posting day sit right under it, then the posts or "Suggested next post".
+   No column is left shorter than its neighbour, so the tile has no inner band at any width; its height is its content */
+.td-week .td-cadence { gap: 6px; }
+.td-week-tray { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 14px; margin: 10px 0 0; }
+.td-week-tray .td-week-empty { display: inline; margin: 0; }
+.td-week-tray .td-row.td-week-next { display: inline-flex; margin: 0; padding: 0; border-top: 0; }
+.td-week-tray .td-week-next .td-row-title { font-size: 15px; line-height: 21px; }
+.td-week .td-week-side > .td-list li:first-child > .td-row { padding-top: 0; }
+
+/* list rows shared by This week and Waiting on you: titles wrap (never ellipsised) */
+.td-list { margin: 0; padding: 0; list-style: none; }
+.td-row {
+  position: relative; z-index: 2; display: grid; grid-template-columns: minmax(0, 1fr); row-gap: 5px; padding: 11px 0; border-top: 1px solid var(--line);
+  color: inherit; text-decoration: none;
+}
+.td-row:hover { text-decoration: none; }
+.td-list li:first-child > .td-row { border-top: 0; }
+.td-row:has(.td-row-day) { grid-template-columns: 44px minmax(0, 1fr); column-gap: 10px; }
+.td-row-day { grid-row: 1 / span 2; padding-top: 2px; color: var(--text-3); font: 500 12.5px/18px var(--font-sans); }
+.td-row-title { color: var(--text-1); font: 460 16px/21px var(--font-serif); font-variation-settings: 'opsz' 16; text-wrap: pretty; transition: color var(--dur-micro) var(--ease-fade); }
+.td-row:hover .td-row-title { color: var(--accent-text); }
+.td-row:focus-visible { outline: none; box-shadow: var(--focus); border-radius: var(--r-ctl); }
+.td-row-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; color: var(--text-2); font: 450 12.5px/16px var(--font-sans); }
+.td-overdue { color: var(--err); }
+.td-desk-label { margin: 16px 0 0; }
+.td-desk:not(.show-extra) .td-desk-extra { display: none; } /* round 3 T-1: shown only when it evens row 3 (fitRow3) */
+.td-desk .td-tile-head + .td-desk-label { margin-top: 6px; }
+.td-desk .td-list li:first-child > .td-row { padding-top: 8px; }
+.td-list--fu { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 18px; }
+.td-list--fu li > .td-row { border-top: 0; }
+.td-more { margin: 2px 0 0; color: var(--text-3); font: 450 12.5px/18px var(--font-sans); }
+.td-more a { position: relative; z-index: 2; color: var(--accent-text); font-weight: 500; }
+
+/* ---------------------------------------------------------------- also in the brief */
+.td-rest-head { padding: 20px 24px 6px; margin: 0; }
+.td-rest-list { margin: 0; padding: 0 0 6px; list-style: none; }
+.td-rest-row {
+  position: relative; display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; gap: 4px 18px; align-items: start; padding: 14px 24px;
+  border-top: 1px solid var(--line); transition: background-color var(--dur-micro) var(--ease-fade);
+}
+.td-rest-row:hover { background: var(--hover-row); }
+.td-rest-row .score-chip { margin-top: 1px; }
+.td-rest-title { font: var(--wt-title) 19px/24px var(--font-serif); font-variation-settings: 'opsz' var(--op-title); letter-spacing: var(--tr-title); }
+.td-rest-main .td-finding { margin-top: 4px; }
+.td-rest-side { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; padding-top: 2px; }
+
+/* ---------------------------------------------------------------- empty brief */
+.td-empty { display: flex; flex-direction: column; justify-content: center; min-height: 200px; }
+
+/* ---------------------------------------------------------------- responsive (container) */
+@container today (max-width: 899px) {
+  .td-grid > .td-lead, .td-grid > .td-wx, .td-grid > .td-map, .td-grid > .td-week, .td-grid > .td-desk { grid-column: span 12; }
+  .td-grid > .td-side { grid-column: span 12; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@container today (max-width: 619px) {
+  .td-grid { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .td-wx.cv { contain-intrinsic-size: auto 630px; }
+  .td-map.cv { contain-intrinsic-size: auto 496px; }
+  .td-week.cv { contain-intrinsic-size: auto 440px; }
+  .td-desk.cv { contain-intrinsic-size: auto 383px; }
+  .td-rest.cv { contain-intrinsic-size: auto 809px; }
+  .td-wx-chart.td-cv-hold { contain-intrinsic-size: auto 417px; }
+  .td-grid > * { grid-column: 1 / -1 !important; }
+  .td-grid > .td-side { display: flex; flex-direction: column; gap: 12px; }
+  .td-lead-top { column-gap: 14px; }
+  .td-lead-ring .score-ring { --ring-size: 76px !important; }
+  .td-pills { margin-bottom: 14px; }
+  .td-why li { font-size: 14.5px; line-height: 21px; }
+  .td-title--lg { font-size: 21px; line-height: 26px; }
+  .td-wx-chart { --name-w: 0px; --label-w: 0px; --col-gap: 0px; }
+  .td-wx-row { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "name label" "track track"; height: auto; row-gap: 0; padding-top: 6px; }
+  .td-wx-name { grid-area: name; font-size: 13px; }
+  .td-wx-label { grid-area: label; font-size: 11.5px; }
+  .td-wx-track { grid-area: track; height: 24px; }
+  .td-wx-row:first-of-type .td-wx-track::after { top: 3px; }
+  .td-list--fu { grid-template-columns: minmax(0, 1fr); }
+  .td-list--fu li + li > .td-row { border-top: 1px solid var(--line); }
+  .td-rest-head { padding: 18px 18px 4px; }
+  .td-rest-row { grid-template-columns: 44px minmax(0, 1fr); padding: 14px 18px; }
+  .td-rest-side { grid-column: 2; flex-direction: row; flex-wrap: wrap; align-items: center; }
+  .td-strip { flex-wrap: wrap; margin-top: -6px; }
+  .td-strip-end { width: calc(100% - 11px); justify-content: space-between; margin: 2px -6px -4px 17px; }
+  .td-actions { padding-left: 0; border-left: 0; }
+}
+/* T2 phone: a 64px ring beside the topic pills; the title and dek get the full width */
+@container today (max-width: 480px) {
+  .td-lead-top { grid-template-rows: auto; grid-template-areas: "pills ring" "title title" "dek dek"; column-gap: 12px; }
+  .td-lead-top > .td-pills { align-self: center; margin: 0; }
+  .td-lead-top > .td-pills .chip:nth-child(n+3) { display: none; } /* main topic + one: two rows at most beside the ring */
+  .td-lead-top > .td-lead-ring { align-self: center; margin: 0; padding: 0; }
+  .td-lead-ring .score-ring { --ring-size: 64px !important; }
+  .td-lead-ring .ring-sub { display: none; }
+  .td-lead-top > .td-title-lg { margin-top: 14px; max-width: none; }
+}
+
+/* ---------------------------------------------------------------- accessibility */
+@media (prefers-reduced-motion: reduce) {
+  .td-open, .td-open .icon, .td-wx-dot::after, .td-row-title, .td-hot-name, .td-sugg-go .icon { transition: none !important; }
+}
+@media (forced-colors: active) {
+  .td-wx-dot, .td-day.has-post .td-day-slot { forced-color-adjust: none; border: 1px solid CanvasText; }
+  .td-strip { border: 1px solid CanvasText; }
+}
+
+/* AA for warn/demo tags on Today's tiles (the shared --warn text measures 3.1–3.6:1 on its soft fill in Proof;
+   requested as a components.css fix, applied locally until then) */

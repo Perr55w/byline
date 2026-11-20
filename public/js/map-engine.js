@@ -1,0 +1,1475 @@
+// Map engine (council E §4, DECISIONS "Map engine", B amendment 6, C's isobars on the Map only).
+// Canvas2D, on-demand: nothing runs unless the camera, a tween or the pointer asks for a frame. No loop.
+//
+//   loadMap()                          cache-first payload: { data, fresh } (localStorage + ETag revalidation)
+//   mountMap(el, opts) → engine        the Map tab's interactive stage
+//   mountMiniMap(el, { onOpen }) → { destroy }   a small static drawing of the same layout (no caller since round 1: Today draws its own SVG)
+//
+// Drawing order (E §4): topic regions (pre-rendered once to an offscreen canvas from a density field),
+// isobar contours (marching squares over the same field, cached Path2D, hairline at any zoom), edges in
+// three weight buckets (one path each), nodes by the quality ramp quantised to 12 steps (one path per step;
+// non-colour cues: below the bar = hollow, top tier = an inner halo ring), then the selection last.
+// Hit-testing is a uniform world grid. Wheel zooms about the cursor, drag pans with inertia, two pointers
+// pinch. Labels: the top-3 hot regions first (at the top-centre of their hull), then ≤ 20 node labels (selection,
+// hover, stories at or above the bar; with a selection, it and its linked stories) and the other regions where room
+// is left; pooled DOM moved with transform, short titles with a 3 px --bg halo, 6 px off their disc, never nearer
+// another disc. Node discs are 8–22 px by score at the fitted view; only a topic with ≥ 3 stories gets a region.
+// Colours come from tokens (read with getComputedStyle) and quality.js; nothing literal.
+
+import { qualityColor, qualityTier } from './quality.js';
+
+const CACHE_KEY = 'byline-map-v1';
+const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+const coarse = () => matchMedia('(hover: none)').matches;
+const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
+// motion-canvas resolution, learned per session: starts at 1× and steps down while frames run slow
+const LO = { dpr: 0, min: 0.55, fast: 0 };
+// resting-canvas resolution cap: 2× unless the sharp redraw after a gesture proves too slow here
+const HI = { cap: 2, slow: 0 };
+// round-1 M7: the last fitted, unselected Map frame, kept at 1× when the tab is left; the next visit paints it at
+// once and does the full draw in an idle callback after byline:routed (key: payload, theme and stage size)
+let SNAP = null;
+// label search offsets around an anchor, nearest first: sliding along the hull's top edge is cheapest, moving
+// up costs more and moving down (over the hull) most
+const SPIRAL = (() => {
+  const out = [];
+  for (let dy = -130; dy <= 130; dy += 6) for (let dx = -160; dx <= 160; dx += 10) { const d = Math.hypot(dx * 0.75, dy > 0 ? dy * 1.8 : dy * 1.25); if (d <= 130) out.push([dx, dy, d]); }
+  return out.sort((a, b) => a[2] - b[2]).map(([x, y]) => [x, y]);
+})();
+const SPIRAL_NEAR = SPIRAL.filter(([x, y]) => Math.hypot(x, y) <= 40);
+
+// ====================================================================== data (cache-first, ETag revalidation)
+let mem = null;        // { etag, data, checked }
+let inflight = null;
+function readCache() {
+  try {
+    const v = JSON.parse(localStorage.getItem(CACHE_KEY) || 'null');
+    if (v && v.data && Array.isArray(v.data.nodes)) return { etag: v.etag || null, data: v.data, checked: 0 };
+  } catch (e) { /* storage unavailable or corrupt */ }
+  return null;
+}
+function writeCache(etag, data) {
+  try { localStorage.setItem(CACHE_KEY, JSON.stringify({ etag, data, saved: Date.now() })); } catch (e) { /* quota / private mode */ }
+}
+async function fetchMap(etag) {
+  const res = await fetch('/api/map', { headers: etag ? { 'If-None-Match': etag } : {}, cache: 'no-store' });
+  if (res.status === 401) { location.href = '/login'; throw new Error('Sign in required'); }
+  if (res.status === 304) return { notModified: true };
+  if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.error || `Map failed to load (${res.status})`); }
+  return { etag: res.headers.get('ETag'), data: await res.json() };
+}
+/**
+ * Cache-first map payload. Returns { data, fresh }: `data` is the cached payload (or null on first ever
+ * load); `fresh` resolves with a newer payload when the server's differs, null when unchanged.
+ */
+export function loadMap({ maxAge = 15000 } = {}) {
+  if (!mem) mem = readCache();
+  if (mem && mem.checked && Date.now() - mem.checked < maxAge) return { data: mem.data, fresh: Promise.resolve(null) };
+  if (!inflight) {
+    inflight = fetchMap(mem?.etag).then((r) => {
+      inflight = null;
+      if (r.notModified) { mem.checked = Date.now(); return null; }
+      mem = { etag: r.etag, data: r.data, checked: Date.now() };
+      writeCache(r.etag, r.data);
+      return r.data;
+    }, (e) => { inflight = null; throw e; });
+  }
+  return mem ? { data: mem.data, fresh: inflight.catch(() => null) } : { data: null, fresh: inflight };
+}
+
+// ====================================================================== tokens
+function readTokens() {
+  // every value is a token from tokens.css (no literal fallbacks: an unset token leaves the canvas default)
+  const cs = getComputedStyle(document.documentElement);
+  const g = (n) => cs.getPropertyValue(n).trim();
+  return {
+    ink: g('--fd-ink'), hot: g('--fd-hot'), line2: g('--line-2'), line3: g('--line-3'),
+    surface: g('--surface-solid'), accent: g('--accent'), focus: g('--focus-c') || g('--accent'),
+    text1: g('--text-1'), text3: g('--text-3'),
+    night: document.documentElement.dataset.theme === 'night'
+  };
+}
+
+// Tokens are cached per theme for the session and read only after a frame has rendered (style is clean
+// then), so neither a route transition nor a theme switch ever forces a style recalc from here.
+const TOK = { theme: null, v: null, waiting: [] };
+const themeNow = () => document.documentElement.dataset.theme || 'proof';
+function tokens() { return TOK.theme === themeNow() ? TOK.v : null; }
+function whenTokens(cb) {
+  TOK.waiting.push(cb);
+  if (TOK.waiting.length > 1) return;
+  requestAnimationFrame(() => setTimeout(() => {
+    TOK.v = readTokens(); TOK.theme = themeNow();
+    const w = TOK.waiting.splice(0);
+    w.forEach(f => { try { f(); } catch (e) { /* engine gone */ } });
+  }, 0));
+}
+
+// ====================================================================== geometry helpers
+function bezierPoint(ax, ay, cx, cy, bx, by, t) {
+  const u = 1 - t;
+  return [u * u * ax + 2 * u * t * cx + t * t * bx, u * u * ay + 2 * u * t * cy + t * t * by];
+}
+/** Control point for a gentle, consistent bow on edge a→b (12% of length, always to the same side). */
+function ctrl(ax, ay, bx, by) {
+  const mx = (ax + bx) / 2, my = (ay + by) / 2, dx = bx - ax, dy = by - ay;
+  return [mx - dy * 0.12, my + dx * 0.12];
+}
+const easeOutExp = (t) => (t >= 1 ? 1 : (1 - Math.exp(-6 * t)) / (1 - Math.exp(-6)));
+
+/** Marching squares over a scalar grid; appends world-space segments to `path` (a Path2D). */
+function contour(field, gw, gh, level, x0, y0, cell, path, bb = [0, 0, gw - 1, gh - 1]) {
+  let n = 0;
+  const lerp = (a, b) => (level - a) / ((b - a) || 1e-6);
+  for (let gy = Math.max(0, bb[1]); gy < Math.min(gh - 1, bb[3]); gy++) {
+    for (let gx = Math.max(0, bb[0]); gx < Math.min(gw - 1, bb[2]); gx++) {
+      const i = gy * gw + gx;
+      const a = field[i], b = field[i + 1], c = field[i + gw + 1], d = field[i + gw];
+      const k = (a >= level ? 8 : 0) | (b >= level ? 4 : 0) | (c >= level ? 2 : 0) | (d >= level ? 1 : 0);
+      if (k === 0 || k === 15) continue;
+      const X = x0 + gx * cell, Y = y0 + gy * cell;
+      const top = [X + cell * lerp(a, b), Y], right = [X + cell, Y + cell * lerp(b, c)];
+      const bottom = [X + cell * lerp(d, c), Y + cell], left = [X, Y + cell * lerp(a, d)];
+      const seg = (p, q) => { path.moveTo(p[0], p[1]); path.lineTo(q[0], q[1]); n++; };
+      switch (k) {
+        case 1: case 14: seg(left, bottom); break;
+        case 2: case 13: seg(bottom, right); break;
+        case 3: case 12: seg(left, right); break;
+        case 4: case 11: seg(top, right); break;
+        case 5: seg(left, top); seg(bottom, right); break;
+        case 6: case 9: seg(top, bottom); break;
+        case 7: case 8: seg(left, top); break;
+        case 10: seg(left, bottom); seg(top, right); break;
+        default: break;
+      }
+    }
+  }
+  return n;
+}
+
+// text measurement on a detached context, so measuring never forces the document's style
+let measureCtx = null;
+function measurer() {
+  if (!measureCtx) measureCtx = (typeof OffscreenCanvas === 'function' ? new OffscreenCanvas(1, 1) : document.createElement('canvas')).getContext('2d');
+  return measureCtx;
+}
+
+/**
+ * Short title (round-2 M3): the text before the first ':', ' — ' / ' – ' or ', ' when that prefix is at least `min`
+ * (20) characters and fits `max`; otherwise the title cut at a word boundary to at most `max` (32) characters (plus
+ * the ellipsis), never ending on a preposition, article, conjunction or auxiliary verb. An `org/` repo prefix is stripped.
+ * A title that already fits is kept whole unless `always` (then the prefix rule still applies).
+ */
+const FN_WORD = /\s+(?:a|an|the|of|on|in|at|to|for|with|about|by|from|into|onto|over|under|as|via|per|and|or|but|nor|its|their|his|her|our|your|this|that|is|are|was|were|be|will|would|can|could|has|have)$/i;
+export function shortTitle(title, { max = 32, min = 20, always = false } = {}) {
+  let t = String(title || '').replace(/\s*…$/, '').trim();
+  t = t.replace(/^[a-z0-9][\w.-]*\/(?=[\w.-]+(?:\s|$))/i, '');
+  if (!always && t.length <= max) return t;
+  const m = /:\s|\s[—–]\s|,\s/.exec(t);
+  if (m && m.index >= min && m.index <= max) return t.slice(0, m.index).trim();
+  if (t.length <= max) return t;
+  const lim = max;
+  const cut = t.slice(0, lim);
+  const sp = t[lim] === ' ' ? lim : cut.lastIndexOf(' ');
+  let head = (sp > lim * 0.4 ? cut.slice(0, sp) : cut).replace(/[\s,;:—–-]+$/, '');
+  // a lone word dangling after a ':' / ' — ' / ', ' break is dropped with it ('Gemini at Work 2026: Introducing…')
+  const tail = /(?::|\s[—–]|,)\s+\S+$/.exec(head);
+  if (tail && tail.index >= 12) head = head.slice(0, tail.index);
+  // never end on a function word ('…publishes draft guidance on…' → '…publishes draft guidance…')
+  for (let i = 0; i < 4; i++) { const h2 = head.replace(FN_WORD, '').replace(/[\s,;:—–-]+$/, ''); if (h2 === head || h2.length < 8) break; head = h2; }
+  return `${head}…`;
+}
+/**
+ * Node label (round-3 M-5): the text before the first ':' or ' — ' / ' – ' (or ', ' when the phrase before it fits), cut
+ * at a word boundary to at most `max` (28) characters, with an ellipsis after the last whole word when cut. A break
+ * nearer the start than 12 characters ('Study:', 'Hot take:') is a kicker, not the title, and is kept. Never ends on a
+ * function word; never cuts inside a word (a single word longer than `max` is kept whole).
+ */
+export function labelTitle(title, max = 28) {
+  let t = String(title || '').replace(/\s*…$/, '').trim().replace(/^[a-z0-9][\w.-]*\/(?=[\w.-]+(?:\s|$))/i, '');
+  const m = /:\s|\s[—–]\s/.exec(t);
+  if (m && m.index >= 12) t = t.slice(0, m.index).trim();
+  else { const c = /,\s/.exec(t); if (c && c.index >= 12 && c.index <= max) t = t.slice(0, c.index).trim(); }
+  if (t.length <= max) return t;
+  const words = t.split(/\s+/);
+  let head = words[0];
+  for (let i = 1; i < words.length; i++) { const next = `${head} ${words[i]}`; if (next.length > max) break; head = next; }
+  for (let i = 0; i < 4; i++) { const h2 = head.replace(FN_WORD, '').replace(/[\s,;:—–-]+$/, ''); if (h2 === head || h2.length < 8) break; head = h2; }
+  return `${head.replace(/[\s,;:—–-]+$/, '')}…`;
+}
+// node label: from the full title (the server's short_title may itself be a mid-phrase cut)
+function labelText(n) { return labelTitle(n.title || n.short_title || `Story ${n.id}`); }
+/** The full title, wrapped into ≤ 3 lines of ≤ `w` px (the selected node's label: full titles on selection only). */
+function wrapTitle(text, w, measure) {
+  const words = String(text || '').split(/\s+/).filter(Boolean), lines = [];
+  let cur = '';
+  for (const word of words) {
+    const next = cur ? `${cur} ${word}` : word;
+    if (cur && measure(next) > w) { lines.push(cur); cur = word; } else cur = next;
+    if (lines.length === 3) break;
+  }
+  if (lines.length < 3 && cur) lines.push(cur);
+  if (lines.length === 3 && lines.join(' ').length < words.join(' ').length) {
+    let last = lines[2];
+    while (last.length > 1 && measure(`${last}…`) > w) last = last.replace(/\s*\S+$/, '');
+    lines[2] = `${last.replace(FN_WORD, '')}…`;
+  }
+  return lines;
+}
+
+// ====================================================================== the engine
+class MapEngine {
+  constructor(host, opts = {}) {
+    this.host = host;
+    this.o = opts;
+    this.mini = !!opts.mini;
+    this.canvas = document.createElement('canvas');
+    this.canvas.className = this.mini ? 'mm-canvas' : 'map-canvas';
+    this.canvas.setAttribute('aria-hidden', 'true');
+    if (this.mini) Object.assign(this.canvas.style, { position: 'absolute', inset: '0', width: '100%', height: '100%', display: 'block' });
+    if (!this.mini) {
+      // motion canvas: while the camera moves, frames draw here at a lower, adaptive resolution and the
+      // full-resolution canvas fades out; it is redrawn and shown again once everything settles
+      this.lo = document.createElement('canvas');
+      this.lo.className = 'map-canvas map-canvas--lo';
+      this.lo.setAttribute('aria-hidden', 'true');
+      this.lo.width = this.lo.height = 1; // sized on the first camera motion (no idle backing store at rest)
+      this.loCtx = this.lo.getContext('2d');
+    }
+    this.ctx = this.canvas.getContext('2d');
+    this.cam = { x: 0, y: 0, k: 1 };
+    this.fitK = 1;
+    this.w = 0; this.h = 0; this.dpr = 1;
+    this.N = 0;
+    this.sel = -1; this.hover = -1; this.kcur = -1;
+    this.nbr = new Set();
+    this.raf = 0; this.last = 0;
+    this.anim = { fly: null, zoom: null, inertia: null, alpha: false, intro: null };
+    this.ptr = { x: 0, y: 0, inside: false, moved: false };
+    this.pointers = new Map();
+    this.drag = null;
+    this.fitted = false;
+    this.tok = null; // read lazily at the first draw (never force a style recalc while the route renders)
+    this.labelW = new Map();
+    this.destroyed = false;
+    this.held = !!opts.defer && !this.mini; // no full draw until release() (the view calls it when idle)
+    // round-2 M5: a deferred engine draws nothing at all (not even the cached frame) until arm(), which the view
+    // calls one frame after byline:routed, so the tab-in's frames carry no canvas work
+    this.armed = !this.held;
+
+    this.ro = new ResizeObserver((entries) => this.onResize(entries[0].contentRect));
+    // round-3 M-6: with `lazyDom` the canvases, label layers and size observer join the page only at arm(), after the
+    // tab's swap frame, so the page's first style + layout carries none of them (the stage's box is reserved by CSS)
+    if (!opts.lazyDom) this.attach();
+    this.onTheme = () => { this.tok = null; this.qcol = null; this.regions = null; this.regionJob = null; this.requestDraw(); };
+    document.addEventListener('byline:theme', this.onTheme);
+    if (!this.mini) this.bindInput();
+    if (opts.data) this.setData(opts.data);
+  }
+
+  /** Put the canvases and overlays into the host and start observing its size (once). */
+  attach() {
+    if (this.attached || this.destroyed) return;
+    this.attached = true;
+    if (this.lo) this.host.append(this.lo);
+    this.host.append(this.canvas);
+    if (!this.mini) this.buildOverlays();
+    this.ro.observe(this.host);
+  }
+
+  // -------------------------------------------------------------------- DOM overlays (labels, hover card)
+  buildOverlays() {
+    const mk = (cls, tag = 'div') => { const d = document.createElement(tag); d.className = cls; d.setAttribute('aria-hidden', 'true'); return d; };
+    this.topicLayer = mk('map-topic-labels');
+    this.labelLayer = mk('map-node-labels');
+    this.card = mk('map-card');
+    this.card.hidden = true;
+    // hover + keyboard rings are DOM, so pointing at a node never redraws the canvas
+    this.hring = mk('map-ring'); this.kring = mk('map-ring map-ring--kbd');
+    this.host.append(this.hring, this.kring, this.topicLayer, this.labelLayer, this.card);
+    this.labelPool = Array.from({ length: 20 }, () => { const s = document.createElement('span'); s.className = 'map-label'; this.labelLayer.append(s); return s; });
+    this.topicPool = [];
+  }
+
+  // -------------------------------------------------------------------- size
+  onResize(r) {
+    const w = Math.round(r.width), h = Math.round(r.height);
+    if (!w || !h) return;
+    const first = !this.w;
+    this.pendingSize = { w, h };
+    clearTimeout(this.rzT);
+    // canvases resize only once the box is stable (E §3: the CSS box stretches during the rail tween)
+    const apply = this.applySize = () => {
+      if (this.destroyed || !this.pendingSize) return;
+      const { w: W, h: H } = this.pendingSize;
+      this.pendingSize = null;
+      this.w = W; this.h = H;
+      let dpr = Math.min(this.mini ? 2 : HI.cap, window.devicePixelRatio || 1);
+      const maxPx = this.mini ? 0.6e6 : 2.4e6;
+      if (W * H * dpr * dpr > maxPx) dpr = Math.max(1, Math.sqrt(maxPx / (W * H)));
+      this.dpr = dpr;
+      this.canvas.width = Math.round(W * dpr);
+      this.canvas.height = Math.round(H * dpr);
+      if (!this.mini) { this.canvas.style.width = `${W}px`; this.canvas.style.height = `${H}px`; if (this.loSized) this.sizeLo(); }
+      this.rect = null;
+      if (this.N && (!this.fitted || this.mini || !this.userMoved)) this.fit({ animate: false });
+      this.requestDraw();
+    };
+    if (first || this.held) apply(); else this.rzT = setTimeout(apply, 140);
+  }
+
+  sizeLo() {
+    if (!this.lo || !this.w) return;
+    if (!LO.dpr) LO.dpr = clamp(Math.sqrt(230000 / (this.w * this.h)), 0.6, 1); // first guess from a pixel budget
+    const d = Math.min(this.dpr, LO.dpr);
+    this.loDpr = d;
+    this.lo.width = Math.max(1, Math.round(this.w * d));
+    this.lo.height = Math.max(1, Math.round(this.h * d));
+    this.lo.style.width = `${this.w}px`; this.lo.style.height = `${this.h}px`;
+    this.loSized = this.w * 1e5 + this.h;
+  }
+
+  // -------------------------------------------------------------------- data
+  setData(d) {
+    const keep = this.fitted && this.data && d && this.data.nodes?.length === d.nodes?.length;
+    this.data = d;
+    const nodes = Array.isArray(d?.nodes) ? d.nodes : [];
+    const N = this.N = nodes.length;
+    this.nodes = nodes;
+    this.th = d?.threshold ?? window.__byline?.threshold ?? 55;
+    this.X = new Float32Array(N); this.Y = new Float32Array(N); this.R = new Float32Array(N);
+    // screen radius at the fitted view: 8–22 px by score (round-1 M5); world R stays the layout's collision radius
+    this.SR = new Float32Array(N);
+    nodes.forEach((n, i) => { this.SR[i] = 8 + 14 * clamp(+n.score || 0, 0, 100) / 100; });
+    this.alpha = new Float32Array(N).fill(1); this.alphaT = new Float32Array(N).fill(1);
+    this.intro = new Float32Array(N).fill(1);
+    this.idx = new Map();
+    let maxR = 1;
+    nodes.forEach((n, i) => {
+      this.X[i] = +n.x || 0; this.Y[i] = +n.y || 0; this.R[i] = +n.r || (5 + 13 * (n.score || 0) / 100);
+      if (this.R[i] > maxR) maxR = this.R[i];
+      this.idx.set(String(n.id), i);
+    });
+    this.maxR = maxR;
+    // edges + adjacency + weight buckets
+    const E = Array.isArray(d?.edges) ? d.edges.filter(e => this.idx.has(String(e.a)) && this.idx.has(String(e.b))) : [];
+    this.edges = E;
+    this.EA = new Int32Array(E.length); this.EB = new Int32Array(E.length); this.EW = new Float32Array(E.length); this.EK = new Uint8Array(E.length);
+    this.adj = Array.from({ length: N }, () => []);
+    E.forEach((e, k) => {
+      const a = this.idx.get(String(e.a)), b = this.idx.get(String(e.b));
+      this.EA[k] = a; this.EB[k] = b; this.EW[k] = +e.weight || 1;
+      this.adj[a].push(k); this.adj[b].push(k);
+    });
+    const ws = [...this.EW].sort((a, b) => a - b);
+    const q1 = ws[Math.floor(ws.length * 0.45)] ?? 0, q2 = ws[Math.floor(ws.length * 0.85)] ?? 0;
+    for (let k = 0; k < E.length; k++) this.EK[k] = this.EW[k] >= q2 ? 2 : this.EW[k] >= q1 ? 1 : 0;
+    // bounds
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (let i = 0; i < N; i++) {
+      x0 = Math.min(x0, this.X[i] - this.R[i]); y0 = Math.min(y0, this.Y[i] - this.R[i]);
+      x1 = Math.max(x1, this.X[i] + this.R[i]); y1 = Math.max(y1, this.Y[i] + this.R[i]);
+    }
+    this.bounds = N ? { x0, y0, x1, y1 } : { x0: -100, y0: -100, x1: 100, y1: 100 };
+    // hit grid (cell = 2 × largest radius, generous so the screen-size floor still hits)
+    this.cell = Math.max(24, maxR * 2);
+    this.grid = new Map();
+    for (let i = 0; i < N; i++) {
+      const key = `${Math.floor(this.X[i] / this.cell)},${Math.floor(this.Y[i] / this.cell)}`;
+      (this.grid.get(key) || this.grid.set(key, []).get(key)).push(i);
+    }
+    // clusters with members (cluster topic = node main topic; null → "Unsorted")
+    const cl = Array.isArray(d?.clusters) ? d.clusters : [];
+    this.clusters = cl.map((c) => ({ ...c, members: [] }));
+    const byTopic = new Map(this.clusters.map(c => [c.topic ?? null, c]));
+    nodes.forEach((n, i) => { const c = byTopic.get(n.topic ?? null); if (c) c.members.push(i); });
+    this.hot = new Set((d?.hot_topics || []).map(h => h.topic));
+    this.qcol = null;
+    this.regions = null;
+    this.regionJob = null;
+    this.labelW.clear();
+    if (this.sel >= 0 && this.sel >= N) this.sel = -1;
+    if (this.w && (!keep || this.mini)) this.fit({ animate: false });
+    this.requestDraw();
+  }
+
+  /** Quantised quality colours: 5 steps below the bar, 7 at and above (12 total), per theme. The steps follow the
+   *  ramp's stops (−30 … −1 below, 0 … +25 above), so the top tier reaches the deepest blue. */
+  paletteFor() {
+    if (!this.N) { this.qkey = new Int8Array(0); this.qcol = []; return; }
+    const th = this.th;
+    this.qkey = new Int8Array(this.N);
+    this.tier = new Array(this.N);
+    const below = [-30, -22, -15, -8, -2], above = [1, 5, 9, 13, 17, 21, 25];
+    this.qcol = [...below, ...above].map(s => qualityColor(th + s, th));
+    this.nodes.forEach((n, i) => {
+      const d = (+n.score || 0) - th;
+      const k = d < 0 ? (d <= -26 ? 0 : d <= -18.5 ? 1 : d <= -11.5 ? 2 : d <= -5 ? 3 : 4) : 5 + clamp(Math.floor((d + 1) / 4), 0, 6);
+      this.qkey[i] = k;
+      this.tier[i] = qualityTier(+n.score || 0, th);
+    });
+  }
+
+  // -------------------------------------------------------------------- regions + isobars (pre-rendered)
+  /** Build the regions now (theme switch, the mini map, reduced motion). */
+  /** Run cb once the regions exist, building them in idle slices if they do not yet (never in one long task). */
+  whenRegions(cb) { if (this.regions || !this.N || !this.bounds) { cb(); return; } this.prepareRegions(cb); }
+  buildRegions() {
+    const job = this.regionJob;
+    this.regionJob = null;
+    const it = this.regionSteps();
+    while (!it.next().done);
+    if (job) job.cbs.forEach(f => f()); // a pending idle build is now done
+  }
+  /** round-1 M7: build the regions in idle slices (~1 cluster each), then cb(); the 4× phone budget can't take the
+   *  whole build (≈ 45 ms) inside one frame. A newer payload or theme drops the job (regionJob is replaced). */
+  prepareRegions(cb) {
+    if (this.regions) { cb(); return; }
+    if (this.regionJob) { this.regionJob.cbs.push(cb); return; }
+    const job = this.regionJob = { it: this.regionSteps(), cbs: [cb] };
+    const ric = window.requestIdleCallback || ((f) => setTimeout(() => f({ timeRemaining: () => 8 }), 16));
+    const step = (dl) => {
+      if (this.destroyed || this.regionJob !== job) return;
+      const t0 = performance.now();
+      // at least one step per slice; more while the slice has room (each step is a few ms at 4×)
+      do { if (job.it.next().done) { this.regionJob = null; job.cbs.forEach(f => f()); return; } }
+      while (performance.now() - t0 < 6 && dl.timeRemaining() > 6);
+      ric(step, { timeout: 120 });
+    };
+    ric(step, { timeout: 120 });
+  }
+  *regionSteps() {
+    if (!this.tok) this.tok = tokens() || readTokens();
+    const b = this.bounds;
+    const pad = 120;
+    const x0 = b.x0 - pad, y0 = b.y0 - pad, bw = (b.x1 - b.x0) + pad * 2, bh = (b.y1 - b.y0) + pad * 2;
+    // grid resolution follows the stage size (cheap on phones and in the mini map)
+    const cols = this.mini ? clamp(this.w / 2.5, 60, 120) : clamp(this.w / 4, 110, 230);
+    const cell = Math.max(4, bw / cols, bh / (cols * 0.7));
+    const gw = Math.ceil(bw / cell) + 1, gh = Math.ceil(bh / cell) + 1;
+    const tok = this.tok;
+    const out = { x0, y0, cell, gw, gh, paths: [], labels: [] };
+    const heatOf = (c) => clamp(+c.heat || 0, 0, 1);
+    const ink = (tok.ink || '0,0,0').split(',').map(Number), hot = (tok.hot || tok.ink || '0,0,0').split(',').map(Number);
+    const coreMax = new Float32Array(gw * gh), owner = new Int16Array(gw * gh).fill(-1);
+    const sigma = (i) => 26 + this.R[i] * 1.4;
+    const splat = (f, i, bb) => {
+      const s = sigma(i), R = s * 3, s2 = 2 * s * s;
+      const cx = (this.X[i] - x0) / cell, cy = (this.Y[i] - y0) / cell, rc = R / cell;
+      const gx0 = Math.max(0, Math.floor(cx - rc)), gx1 = Math.min(gw - 1, Math.ceil(cx + rc));
+      const gy0 = Math.max(0, Math.floor(cy - rc)), gy1 = Math.min(gh - 1, Math.ceil(cy + rc));
+      if (bb) { bb[0] = Math.min(bb[0], gx0); bb[1] = Math.min(bb[1], gy0); bb[2] = Math.max(bb[2], gx1); bb[3] = Math.max(bb[3], gy1); }
+      for (let gy = gy0; gy <= gy1; gy++) {
+        const dy = (gy - cy) * cell, row = gy * gw;
+        for (let gx = gx0; gx <= gx1; gx++) { const dx = (gx - cx) * cell; f[row + gx] += Math.exp(-(dx * dx + dy * dy) / s2); }
+      }
+      return [gx0, gy0, gx1, gy1];
+    };
+    const fields = [];
+    for (let ci = 0; ci < this.clusters.length; ci++) {
+      const c = this.clusters[ci];
+      if (!c.members.length || c.topic == null) continue;
+      yield;
+      // round-2 M2: a region only for a topic with ≥ 3 stories, drawn round the ones that sit near another of the
+      // same topic (near enough that their fields merge into one blob at the outer isobar). No halo ever rings a
+      // single story: an outlier, or a topic with fewer than 3 stories, gets no region at all.
+      // round-3 M-5: the grouped core itself must hold ≥ 3 stories; a two-story blob read as nobody's region (its pill
+      // drifted off to unrelated stories), so such a topic is named by a plain label at its centroid instead
+      if (c.members.length < 3) continue;
+      const core = c.members.filter(i => c.members.some(j => j !== i && Math.hypot(this.X[i] - this.X[j], this.Y[i] - this.Y[j]) < 1.65 * (sigma(i) + sigma(j))));
+      if (core.length < 3) continue;
+      const fc = new Float32Array(gw * gh);
+      const bb = [gw, gh, 0, 0];
+      for (const i of core) splat(fc, i, bb);
+      let best = 0, bi = -1;
+      for (let gy = bb[1]; gy <= bb[3]; gy++) for (let gx = bb[0]; gx <= bb[2]; gx++) {
+        const k = gy * gw + gx, v = fc[k];
+        if (v > coreMax[k]) { coreMax[k] = v; owner[k] = ci; }
+        if (v > best) { best = v; bi = k; }
+      }
+      // ripple anchor: the core's peak; the label anchor is found after every cluster has claimed its cells
+      if (bi >= 0) fields[ci] = { fc, core, bi, best };
+      // isobars on the core field: the outer ring marks the region, inner rings show how tightly stories overlap
+      const levels = this.mini ? [0.45, 1.25] : [0.45, 1.25, 2.0, 2.9, 3.9];
+      yield; // the isobars get a slice of their own (marching squares over the region's box, 5 levels)
+      for (let li = 0; li < levels.length; li++) {
+        const p = new Path2D();
+        if (contour(fc, gw, gh, levels[li], x0, y0, cell, p, bb)) out.paths.push({ p, ci, li, heat: heatOf(c) });
+      }
+    }
+    yield;
+    // label anchors (round-1 M1): the top-centre of the territory a topic owns (cells inside its outer isobar where
+    // its field is the strongest), so overlapping regions get labels over their own ground instead of one stack
+    // over the shared centre; the component holding most of the topic's stories wins, then the larger. A topic that
+    // owns no clear ground keeps the top-centre of its whole outer isobar.
+    const LV = 0.45;
+    const topEdge = (inside, gx0, gx1, gy0, fc) => {
+      const cx = Math.round((gx0 + gx1) / 2);
+      let ty = -1;
+      for (let gy = gy0; gy < gh; gy++) if (inside(gy * gw + cx)) { ty = gy; break; }
+      if (ty < 0) return y0 + gy0 * cell;
+      const above = ty > 0 ? fc[(ty - 1) * gw + cx] : 0, at = fc[ty * gw + cx];
+      const fy = at > LV && at > above ? ty - (at - LV) / (at - above) : ty;
+      return y0 + Math.max(gy0 - 1, Math.min(ty, fy)) * cell;
+    };
+    const flood = (start, inside, seen, mark = 1) => {
+      const stack = [start], box = { gx0: gw, gx1: 0, gy0: gh, gy1: 0, n: 0 };
+      seen[start] = mark;
+      while (stack.length) {
+        const k = stack.pop(), gx = k % gw, gy = (k - gx) / gw;
+        box.n++;
+        if (gx < box.gx0) box.gx0 = gx; if (gx > box.gx1) box.gx1 = gx; if (gy < box.gy0) box.gy0 = gy; if (gy > box.gy1) box.gy1 = gy;
+        const nb = [gx > 0 ? k - 1 : -1, gx < gw - 1 ? k + 1 : -1, gy > 0 ? k - gw : -1, gy < gh - 1 ? k + gw : -1];
+        for (const q of nb) if (q >= 0 && !seen[q] && inside(q)) { seen[q] = mark; stack.push(q); }
+      }
+      return box;
+    };
+    const minCells = Math.max(6, (36 * 36) / (cell * cell)); // ground at least ~36 px square (world) to carry a label
+    for (let ci = 0; ci < fields.length; ci++) {
+      const F = fields[ci];
+      if (!F) continue;
+      yield; // one idle slice per region's label anchor (flood fills over the grid; ≈ 10 ms each at phone 4×)
+      const { fc, core, bi, best } = F;
+      const lab = { ci, x: x0 + (bi % gw) * cell, y: y0 + Math.floor(bi / gw) * cell, peak: best, tx: x0 + (bi % gw) * cell, ty: y0 + Math.floor(bi / gw) * cell };
+      let top = core[0];
+      for (const i of core) if ((this.nodes[i].score || 0) > (this.nodes[top].score || 0)) top = i;
+      const cellOf = (i) => clamp(Math.round((this.Y[i] - y0) / cell), 0, gh - 1) * gw + clamp(Math.round((this.X[i] - x0) / cell), 0, gw - 1);
+      const own = (k) => owner[k] === ci && fc[k] >= LV;
+      const seen = new Uint8Array(gw * gh);
+      let pick = null;
+      // the component holding the most of the topic's stories wins, then the larger one (seen[] holds 2 + its index)
+      const comps = [];
+      for (let k = 0; k < gw * gh; k++) {
+        if (seen[k] || !own(k) || comps.length > 250) continue;
+        const b = flood(k, own, seen, comps.length + 2);
+        b.m = 0;
+        comps.push(b);
+      }
+      for (const i of this.clusters[ci].members) { const id = seen[cellOf(i)]; if (id >= 2) comps[id - 2].m++; }
+      for (const b of comps) if (b.n >= minCells && (!pick || b.m > pick.m || (b.m === pick.m && b.n > pick.n))) pick = b;
+      if (pick) {
+        lab.tx = x0 + ((pick.gx0 + pick.gx1) / 2) * cell;
+        lab.ty = topEdge(own, pick.gx0, pick.gx1, pick.gy0, fc);
+        // round-3 M-5: a second anchor under the territory's foot, for when the top edge is crowded by another region
+        lab.bx = lab.tx; lab.by = y0 + (pick.gy1 + 1) * cell;
+      } else {
+        const blob = (k) => fc[k] >= LV;
+        const tk = cellOf(top), start = blob(tk) ? tk : bi;
+        if (blob(start)) {
+          const b = flood(start, blob, new Uint8Array(gw * gh));
+          lab.tx = x0 + ((b.gx0 + b.gx1) / 2) * cell;
+          lab.ty = topEdge(blob, b.gx0, b.gx1, b.gy0, fc);
+        }
+      }
+      out.labels.push(lab);
+    }
+    yield;
+    // soft region fill: one tinted blob per cluster (owner of the strongest field at each cell)
+    const off = document.createElement('canvas');
+    off.width = gw; off.height = gh;
+    const octx = off.getContext('2d');
+    const img = octx.createImageData(gw, gh);
+    // hull fill 0.06–0.10 by heat (round-1 M5), with a crisp edge at the outer isobar so it reads as a region
+    const base = tok.night ? 0.065 : 0.06, hotA = tok.night ? 0.035 : 0.04;
+    const ss = (e0, e1, v) => { const t = clamp((v - e0) / (e1 - e0), 0, 1); return t * t * (3 - 2 * t); };
+    for (let k = 0; k < gw * gh; k++) {
+      if (k && k % 12000 === 0) yield;
+      const ci = owner[k];
+      if (ci < 0) continue;
+      const c = this.clusters[ci];
+      const sm = this.mini ? ss(0.3, 1.5, coreMax[k]) : ss(0.36, 0.56, coreMax[k]);
+      if (sm <= 0) continue;
+      const h = heatOf(c), t = h * 0.85, o = k * 4;
+      img.data[o] = ink[0] + (hot[0] - ink[0]) * t;
+      img.data[o + 1] = ink[1] + (hot[1] - ink[1]) * t;
+      img.data[o + 2] = ink[2] + (hot[2] - ink[2]) * t;
+      img.data[o + 3] = Math.round(255 * sm * (base + hotA * h) * (this.mini ? 1.5 : 1));
+    }
+    octx.putImageData(img, 0, 0);
+    out.img = off;
+    out.labels.sort((a, b) => this.clusters[b.ci].count - this.clusters[a.ci].count);
+    out.labels = out.labels.slice(0, 12);
+    // round-3 M-5: a topic with ≥ 2 stories but no region gets a plain label anchored at its stories' centroid
+    out.plain = [];
+    const hasRegion = new Set(out.labels.map(l => l.ci));
+    for (let ci = 0; ci < this.clusters.length; ci++) {
+      const c = this.clusters[ci];
+      if (hasRegion.has(ci) || c.topic == null || c.members.length < 2) continue;
+      let x = 0, y = 0;
+      for (const i of c.members) { x += this.X[i]; y += this.Y[i]; }
+      x /= c.members.length; y /= c.members.length;
+      out.plain.push({ ci, x, y, tx: x, ty: y, plain: true });
+    }
+    out.plain.sort((a, b) => this.clusters[b.ci].count - this.clusters[a.ci].count);
+    this.regions = out;
+  }
+
+  // -------------------------------------------------------------------- camera
+  fit({ animate = true, pad } = {}) {
+    if (!this.w || !this.N) return;
+    const b = this.bounds;
+    let target;
+    if (this.mini) {
+      const p = pad ?? 14, ext = 40; // room for the isobars around the outermost stories
+      const bw = Math.max(40, b.x1 - b.x0 + ext * 2), bh = Math.max(40, b.y1 - b.y0 + ext * 2);
+      const k = Math.min((this.w - p * 2) / bw, (this.h - p * 2) / bh);
+      target = { x: (b.x0 + b.x1) / 2, y: (b.y0 + b.y1) / 2, k, fit: true };
+    } else {
+      // round-1 M3: fit the nodes' screen discs (8–22 px at this zoom) with `pad` px on every side, so the
+      // drawing fills the stage instead of floating in the middle of it
+      // 48 px on a desktop stage; a phone stage keeps room for its legend row on top and narrower sides
+      const P = pad != null ? { t: pad, b: pad, l: pad, r: pad } : this.w < 560 ? { t: 52, b: 22, l: 20, r: 20 } : { t: 48, b: 48, l: 48, r: 48 };
+      const aw = Math.max(40, this.w - P.l - P.r), ah = Math.max(40, this.h - P.t - P.b);
+      let xs = Infinity, xe = -Infinity, ys = Infinity, ye = -Infinity;
+      for (let i = 0; i < this.N; i++) { xs = Math.min(xs, this.X[i]); xe = Math.max(xe, this.X[i]); ys = Math.min(ys, this.Y[i]); ye = Math.max(ye, this.Y[i]); }
+      let k = Math.min(aw / Math.max(1, xe - xs), ah / Math.max(1, ye - ys)) || 1;
+      const extent = (k) => {
+        let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+        for (let i = 0; i < this.N; i++) {
+          const r = this.SR[i] * this.rScaleAt(k), x = this.X[i] * k, y = this.Y[i] * k;
+          if (x - r < x0) x0 = x - r; if (x + r > x1) x1 = x + r; if (y - r < y0) y0 = y - r; if (y + r > y1) y1 = y + r;
+        }
+        return { x0, x1, y0, y1 };
+      };
+      for (let it = 0; it < 5 && this.N > 1; it++) {
+        const e = extent(k), f = Math.min(aw / Math.max(1, e.x1 - e.x0), ah / Math.max(1, e.y1 - e.y0));
+        if (Math.abs(f - 1) < 0.002) break;
+        k *= f;
+      }
+      k = clamp(k, 0.05, 6);
+      const ext = extent(k);
+      // centre the box inside the padded area (asymmetric padding shifts it)
+      target = { x: ((ext.x0 + ext.x1) / 2 + (P.r - P.l) / 2) / k, y: ((ext.y0 + ext.y1) / 2 + (P.b - P.t) / 2) / k, k, fit: true };
+      this.rScale = this.rScaleAt(k);
+    }
+    const k = target.k;
+    this.fitK = k;
+    this.kMin = Math.min(0.3, k * 0.6);
+    this.kMax = Math.max(4, k * 8);
+    this.userMoved = false;
+    this.fitted = true;
+    if (animate && !reduced()) this.flyTo(target); else { Object.assign(this.cam, target); this.requestDraw(); }
+  }
+  flyTo(t, dur = 450) {
+    if (!t.fit) this.userMoved = true;
+    this.anim.inertia = null; this.anim.zoom = null;
+    if (reduced()) { Object.assign(this.cam, t); this.requestDraw(); this.o.onCamera?.(); return; }
+    this.anim.fly = { from: { ...this.cam }, to: { x: t.x ?? this.cam.x, y: t.y ?? this.cam.y, k: clamp(t.k ?? this.cam.k, this.kMin, this.kMax) }, t0: performance.now(), dur };
+    this.requestDraw();
+  }
+  /** Zoom by factor about a canvas point (default: centre). Animated (eased) unless reduced motion. */
+  zoomBy(f, px = this.w / 2, py = this.h / 2, { smooth = true } = {}) {
+    const z = this.anim.zoom;
+    const k0 = z ? z.k : this.cam.k;
+    const k = clamp(k0 * f, this.kMin, this.kMax);
+    // world point under the cursor stays put
+    const wx = (px - this.w / 2) / this.cam.k + this.cam.x, wy = (py - this.h / 2) / this.cam.k + this.cam.y;
+    this.anim.fly = null; this.anim.inertia = null;
+    this.userMoved = true;
+    if (!smooth || reduced()) { this.setZoom(k, px, py, wx, wy); this.requestDraw(); this.o.onCamera?.(); return; }
+    this.anim.zoom = { k, px, py, wx, wy };
+    this.requestDraw();
+  }
+  setZoom(k, px, py, wx, wy) {
+    this.cam.k = k;
+    this.cam.x = wx - (px - this.w / 2) / k;
+    this.cam.y = wy - (py - this.h / 2) / k;
+  }
+  panBy(dx, dy) { this.userMoved = true; this.cam.x -= dx / this.cam.k; this.cam.y -= dy / this.cam.k; this.requestDraw(); }
+  panAnimated(dx, dy) { this.flyTo({ x: this.cam.x - dx / this.cam.k, y: this.cam.y - dy / this.cam.k }, 300); }
+  reset() { this.fit({ animate: true }); }
+  screenOf(i) { return { x: (this.X[i] - this.cam.x) * this.cam.k + this.w / 2, y: (this.Y[i] - this.cam.y) * this.cam.k + this.h / 2 }; }
+  worldOf(px, py) { return { x: (px - this.w / 2) / this.cam.k + this.cam.x, y: (py - this.h / 2) / this.cam.k + this.cam.y }; }
+  /** Screen radius: world radius scaled sub-linearly with zoom, normalised so the fitted view reads well. */
+  /** Disc scale at a fitted zoom: 1 (8–22 px) on a desktop stage, down to .5 when the layout is squeezed into a
+   *  phone-width stage, so discs never pile into one another. */
+  rScaleAt(k) { return clamp(k / 0.72, 0.5, 1); }
+  rs(i) {
+    if (this.mini) return clamp(this.R[i] * clamp(this.fitK * 1.15, 0.55, 1.3) * 0.85 * Math.pow(this.cam.k / this.fitK, 0.6), 1.6, 44);
+    return clamp(this.SR[i] * (this.rScale || 1) * Math.pow(this.cam.k / this.fitK, 0.6), 3, 44);
+  }
+  /** Bring node i into view (centred if it is off-screen or under the edges). */
+  reveal(i, { zoom = false } = {}) {
+    const s = this.screenOf(i), m = 60;
+    const k = zoom ? Math.max(this.cam.k, this.fitK * 1.6) : this.cam.k;
+    if (zoom || s.x < m || s.y < m || s.x > this.w - m || s.y > this.h - m) this.flyTo({ x: this.X[i], y: this.Y[i], k });
+  }
+  focusCluster(topic) {
+    const c = this.clusters.find(x => (x.topic ?? null) === topic);
+    if (!c || !c.members.length) return;
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const i of c.members) { x0 = Math.min(x0, this.X[i] - this.R[i]); y0 = Math.min(y0, this.Y[i] - this.R[i]); x1 = Math.max(x1, this.X[i] + this.R[i]); y1 = Math.max(y1, this.Y[i] + this.R[i]); }
+    const p = 90, bw = Math.max(120, x1 - x0), bh = Math.max(120, y1 - y0);
+    const k = clamp(Math.min((this.w - p * 2) / bw, (this.h - p * 2) / bh), this.kMin, Math.min(this.kMax, this.fitK * 3));
+    this.flyTo({ x: (x0 + x1) / 2, y: (y0 + y1) / 2, k });
+  }
+
+  // -------------------------------------------------------------------- filters / selection
+  /** match(node) → boolean; non-matching nodes fade to .1 (positions never change). */
+  setFilter(match) {
+    for (let i = 0; i < this.N; i++) this.alphaT[i] = !match || match(this.nodes[i]) ? 1 : 0.1;
+    if (reduced()) this.alpha.set(this.alphaT); else this.anim.alpha = true;
+    if (this.hover >= 0 && this.alphaT[this.hover] < 0.5) this.setHover(-1);
+    this.requestDraw();
+  }
+  visible(i) { return this.alphaT[i] > 0.5; }
+  select(id, { reveal = true } = {}) {
+    const i = id == null ? -1 : (this.idx.get(String(id)) ?? -1);
+    this.sel = i;
+    this.nbr = new Set();
+    if (i >= 0) for (const k of this.adj[i]) this.nbr.add(this.EA[k] === i ? this.EB[k] : this.EA[k]);
+    if (i >= 0 && reveal) this.reveal(i);
+    if (this.card && i >= 0 && this.hover === i) this.paintCard(i);
+    this.requestDraw();
+    return i >= 0 ? this.nodes[i] : null;
+  }
+  setCursor(id) { this.kcur = id == null ? -1 : (this.idx.get(String(id)) ?? -1); if (this.kcur >= 0) this.reveal(this.kcur); this.placeRings(); }
+  setShowCursor(on) { this.showCursor = !!on; this.placeRings(); }
+  node(id) { const i = this.idx.get(String(id)); return i == null ? null : this.nodes[i]; }
+  /** Neighbours of id with the connecting edge: [{ node, edge }]. */
+  related(id) {
+    const i = this.idx.get(String(id));
+    if (i == null) return [];
+    return this.adj[i].map(k => ({ node: this.nodes[this.EA[k] === i ? this.EB[k] : this.EA[k]], edge: this.edges[k] }));
+  }
+  /** Nearest visible node from `id` in direction dir ('left'|'right'|'up'|'down'); keyboard twin (F §5). */
+  nearest(id, dir) {
+    const i = id == null ? -1 : (this.idx.get(String(id)) ?? -1);
+    if (i < 0) {
+      // start from the best visible node nearest the view centre
+      let best = -1, bd = Infinity;
+      for (let j = 0; j < this.N; j++) {
+        if (!this.visible(j)) continue;
+        const dx = this.X[j] - this.cam.x, dy = this.Y[j] - this.cam.y, d = Math.hypot(dx, dy) - (this.nodes[j].score || 0) * 2;
+        if (d < bd) { bd = d; best = j; }
+      }
+      return best >= 0 ? this.nodes[best] : null;
+    }
+    const v = { left: [-1, 0], right: [1, 0], up: [0, -1], down: [0, 1] }[dir] || [1, 0];
+    let best = -1, bs = Infinity;
+    for (let j = 0; j < this.N; j++) {
+      if (j === i || !this.visible(j)) continue;
+      const dx = this.X[j] - this.X[i], dy = this.Y[j] - this.Y[i];
+      const along = dx * v[0] + dy * v[1];
+      if (along <= 0.5) continue;
+      const across = Math.abs(dx * v[1] - dy * v[0]);
+      if (across > along * 2.2) continue;
+      const s = along + across * 2.2;
+      if (s < bs) { bs = s; best = j; }
+    }
+    return best >= 0 ? this.nodes[best] : null;
+  }
+  /** Cluster centres in canvas px (for background ripples). */
+  clusterPoints() {
+    if (!this.regions) this.buildRegions();
+    return [...this.regions.labels, ...(this.regions.plain || [])].map((l) => {
+      const c = this.clusters[l.ci];
+      return { topic: c.topic, heat: +c.heat || 0, x: (l.x - this.cam.x) * this.cam.k + this.w / 2, y: (l.y - this.cam.y) * this.cam.k + this.h / 2 };
+    });
+  }
+
+  // -------------------------------------------------------------------- hit testing
+  hit(px, py) {
+    if (!this.N) return -1;
+    const w = this.worldOf(px, py);
+    const cx = Math.floor(w.x / this.cell), cy = Math.floor(w.y / this.cell);
+    const tol = (coarse() ? 10 : 4) / this.cam.k;
+    let best = -1, bd = Infinity;
+    // the screen-size floor can make a node bigger than its world radius; search a wider ring when zoomed out
+    const ring = Math.max(1, Math.ceil((42 / this.cam.k) / this.cell));
+    for (let gy = cy - ring; gy <= cy + ring; gy++) {
+      for (let gx = cx - ring; gx <= cx + ring; gx++) {
+        const list = this.grid.get(`${gx},${gy}`);
+        if (!list) continue;
+        for (const i of list) {
+          if (!this.visible(i)) continue;
+          const d = Math.hypot(this.X[i] - w.x, this.Y[i] - w.y);
+          const r = this.rs(i) / this.cam.k + tol;
+          if (d <= r && d - r < bd) { bd = d - r; best = i; }
+        }
+      }
+    }
+    return best;
+  }
+
+  // -------------------------------------------------------------------- input
+  bindInput() {
+    const c = this.canvas;
+    c.style.touchAction = 'none';
+    const pos = (e) => {
+      if (!this.rect) this.rect = c.getBoundingClientRect(); // cached; refreshed on enter/down/scroll/resize
+      return { x: e.clientX - this.rect.left, y: e.clientY - this.rect.top };
+    };
+    this.onScroll = () => { this.rect = null; };
+    addEventListener('scroll', this.onScroll, { passive: true, capture: true });
+    c.addEventListener('pointerenter', () => { this.rect = null; this.ptr.inside = true; });
+    c.addEventListener('pointerleave', () => { this.ptr.inside = false; if (!this.drag) this.setHover(-1); });
+    c.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0 && e.pointerType === 'mouse') return;
+      this.rect = null;
+      this.live(true);
+      const p = pos(e);
+      c.setPointerCapture?.(e.pointerId);
+      this.pointers.set(e.pointerId, p);
+      this.anim.inertia = null; this.anim.fly = null;
+      if (this.pointers.size === 1) {
+        this.drag = { x: p.x, y: p.y, sx: p.x, sy: p.y, moved: false, samples: [{ x: p.x, y: p.y, t: e.timeStamp }] };
+      } else if (this.pointers.size === 2) {
+        const [a, b] = [...this.pointers.values()];
+        this.pinch = { d: Math.hypot(a.x - b.x, a.y - b.y) || 1, mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2, k: this.cam.k };
+        if (this.drag) this.drag.moved = true;
+      }
+      this.setHover(-1);
+    });
+    c.addEventListener('pointermove', (e) => {
+      const p = pos(e);
+      this.ptr.x = p.x; this.ptr.y = p.y;
+      if (this.pointers.has(e.pointerId)) this.pointers.set(e.pointerId, p);
+      if (this.pinch && this.pointers.size >= 2) {
+        const [a, b] = [...this.pointers.values()];
+        const d = Math.hypot(a.x - b.x, a.y - b.y) || 1, mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+        const w = this.worldOf(this.pinch.mx, this.pinch.my);
+        this.setZoom(clamp(this.pinch.k * d / this.pinch.d, this.kMin, this.kMax), mx, my, w.x, w.y);
+        this.pinch.mx = mx; this.pinch.my = my; this.pinch.k = this.cam.k; this.pinch.d = d;
+        this.requestDraw();
+        return;
+      }
+      if (this.drag && this.pointers.has(e.pointerId)) {
+        const dx = p.x - this.drag.x, dy = p.y - this.drag.y;
+        if (!this.drag.moved && Math.hypot(p.x - this.drag.sx, p.y - this.drag.sy) > 4) { this.drag.moved = true; this.userMoved = true; this.host.classList.add('is-dragging'); }
+        if (this.drag.moved) {
+          this.cam.x -= dx / this.cam.k; this.cam.y -= dy / this.cam.k;
+          this.requestDraw();
+        }
+        this.drag.x = p.x; this.drag.y = p.y;
+        const s = this.drag.samples; s.push({ x: p.x, y: p.y, t: e.timeStamp });
+        while (s.length > 2 && e.timeStamp - s[0].t > 80) s.shift();
+        return;
+      }
+      // hover: one hit-test per frame from the latest pointer position, no canvas redraw
+      if (e.pointerType === 'mouse' && !this.hoverRaf && !this.host.classList.contains('is-moving')) {
+        this.hoverRaf = requestAnimationFrame(() => { this.hoverRaf = 0; if (!this.destroyed && !this.drag) this.setHover(this.ptr.inside ? this.hit(this.ptr.x, this.ptr.y) : -1); });
+      }
+    });
+    const end = (e) => {
+      if (!this.pointers.has(e.pointerId)) return;
+      this.pointers.delete(e.pointerId);
+      if (this.pinch) { if (this.pointers.size < 2) this.pinch = null; if (this.pointers.size) { const [q] = [...this.pointers.values()]; if (this.drag) { this.drag.x = q.x; this.drag.y = q.y; this.drag.samples = [{ x: q.x, y: q.y, t: e.timeStamp }]; } return; } }
+      const d = this.drag;
+      this.drag = null;
+      this.host.classList.remove('is-dragging');
+      if (!this.anim.inertia) this.live(false);
+      if (!d) return;
+      if (!d.moved && e.type === 'pointerup') {
+        const p = pos(e);
+        const i = this.hit(p.x, p.y);
+        this.o.onPick?.(i >= 0 ? this.nodes[i] : null, { pointerType: e.pointerType });
+        return;
+      }
+      // inertia from the last 80 ms of movement
+      const s = d.samples, a = s[0], b = s[s.length - 1];
+      const dt = Math.max(1, b.t - a.t);
+      const vx = (b.x - a.x) / dt, vy = (b.y - a.y) / dt;
+      if (!reduced() && Math.hypot(vx, vy) > 0.05 && e.timeStamp - b.t < 60) { this.anim.inertia = { vx, vy }; this.requestDraw(); } else this.o.onCamera?.();
+    };
+    c.addEventListener('pointerup', end);
+    c.addEventListener('pointercancel', end);
+    c.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      this.live(true);
+      if (!this.rect) this.rect = c.getBoundingClientRect();
+      const px = e.clientX - this.rect.left, py = e.clientY - this.rect.top;
+      const dy = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
+      const f = Math.exp(-dy * (e.ctrlKey ? 0.01 : 0.0015));
+      this.zoomBy(f, px, py);
+    }, { passive: false });
+    c.addEventListener('dblclick', (e) => { const p = pos(e); this.zoomBy(2, p.x, p.y); });
+  }
+  setHover(i) {
+    if (i === this.hover) return;
+    this.hover = i;
+    this.canvas.style.cursor = i >= 0 ? 'pointer' : '';
+    if (this.card) this.paintCard(i);
+    this.placeRings();
+    this.o.onHover?.(i >= 0 ? this.nodes[i] : null);
+    // labels: the hovered node earns one (cheap DOM pass, no canvas redraw)
+    if (this.labelPool && !this.host.classList.contains('is-moving')) this.placeLabels();
+  }
+  placeRings() {
+    if (!this.hring) return;
+    const put = (el, i, pad, show) => {
+      if (!show || i < 0) { el.classList.remove('on'); return; }
+      const s = this.screenOf(i), r = this.rs(i) + pad, d = Math.round(r * 2);
+      if (el.dataset.d !== String(d)) { el.dataset.d = String(d); el.style.width = el.style.height = `${d}px`; }
+      el.style.transform = `translate3d(${Math.round(s.x - d / 2)}px, ${Math.round(s.y - d / 2)}px, 0)`;
+      el.classList.add('on');
+    };
+    put(this.hring, this.hover, 3.5, this.hover !== this.sel);
+    put(this.kring, this.kcur, 8, !!this.showCursor);
+  }
+
+  // -------------------------------------------------------------------- hover card (pooled; flips by arithmetic)
+  paintCard(i) {
+    const card = this.card;
+    if (i < 0 || i === this.sel || coarse() || this.drag) { card.hidden = true; card.classList.remove('on'); return; }
+    const n = this.nodes[i];
+    if (this.o.cardHTML) card.innerHTML = this.o.cardHTML(n);
+    card.hidden = false;
+    this.cardSize = { w: card.offsetWidth, h: card.offsetHeight };
+    this.placeCard();
+    card.classList.add('on');
+  }
+  placeCard() {
+    const i = this.hover;
+    if (i < 0 || !this.card || this.card.hidden) return;
+    const s = this.screenOf(i), r = this.rs(i), { w, h } = this.cardSize || { w: 280, h: 120 };
+    let x = s.x + r + 14, y = s.y - h / 2;
+    if (x + w > this.w - 10) x = s.x - r - 14 - w;
+    if (x < 10) x = clamp(s.x - w / 2, 10, this.w - w - 10);
+    y = clamp(y, 10, this.h - h - 10);
+    this.card.style.transform = `translate3d(${Math.round(x)}px, ${Math.round(y)}px, 0)`;
+  }
+
+  // -------------------------------------------------------------------- frame loop (on demand only)
+  requestDraw() {
+    if (this.destroyed || this.raf) return;
+    if (this.held) { this.paintSnap(); return; }
+    this.raf = requestAnimationFrame((t) => this.frame(t));
+  }
+  snapKey() { return `${this.data?.meta?.etag || this.data?.meta?.generated_at || this.N}|${themeNow()}|${this.w}x${this.h}`; }
+  /** While held: show the cached frame from the last visit (a single drawImage), if it matches this stage. */
+  paintSnap() {
+    if (!this.armed || !SNAP || !this.w || this.snapShown === this.canvas.width || SNAP.key !== this.snapKey()) return;
+    this.ctx.setTransform(1, 0, 0, 1, 0, 0);
+    this.ctx.imageSmoothingEnabled = true;
+    this.ctx.drawImage(SNAP.canvas, 0, 0, this.canvas.width, this.canvas.height);
+    this.snapShown = this.canvas.width;
+  }
+  /** round-2 M5: allow the first draw (the cached frame while held, else a full frame). */
+  arm() {
+    this.attach();
+    if (this.armed || this.destroyed) return;
+    this.armed = true;
+    if (this.held) this.paintSnap(); else this.requestDraw();
+  }
+  /** True when the cached frame is on screen (the view then skips the intro: the map was already seen). */
+  get fromSnap() { return !!this.snapShown; }
+  /** End the hold: full draw (regions, isobars, labels) in the next frame. */
+  release() {
+    this.attach();
+    if (!this.held || this.destroyed) return;
+    this.armed = true;
+    // over the cached frame, build the regions in idle slices first so the full draw fits a frame (round-1 M7)
+    if (this.snapShown && !this.regions && this.N && (this.tok || (this.tok = tokens()))) {
+      const go = () => { clearTimeout(this.holdT); if (this.held && !this.destroyed) { this.held = false; this.requestDraw(); } };
+      this.holdT = setTimeout(go, 1500); // a dropped job (new payload or theme mid-build) never strands the hold
+      this.prepareRegions(go);
+      return;
+    }
+    this.held = false;
+    this.requestDraw();
+  }
+  saveSnap() {
+    if (this.mini || !this.w || !this.N || this.sel >= 0 || this.userMoved || this.anim.intro || this.state === 'lo' || this.held) return;
+    for (let i = 0; i < this.N; i++) if (this.alphaT[i] < 1) return;
+    try {
+      const c = SNAP?.canvas?.width === this.w && SNAP.canvas.height === this.h ? SNAP.canvas : document.createElement('canvas');
+      c.width = this.w; c.height = this.h;
+      const x = c.getContext('2d');
+      x.clearRect(0, 0, this.w, this.h);
+      x.drawImage(this.canvas, 0, 0, this.w, this.h);
+      SNAP = { key: this.snapKey(), canvas: c };
+    } catch (e) { SNAP = null; }
+  }
+  /** will-change only while the camera is live (round-1 M7): set on pointerdown / wheel / camera motion,
+   *  cleared 300 ms after it settles, so a resting Map holds no permanent compositor layers. */
+  live(on) {
+    if (this.mini) return;
+    clearTimeout(this.liveT);
+    if (on) { if (!this.isLive) { this.isLive = true; this.host.classList.add('is-live'); } return; }
+    this.liveT = setTimeout(() => { if (this.destroyed || this.state === 'lo' || this.drag) return; this.isLive = false; this.host.classList.remove('is-live'); }, 300);
+  }
+  /** Draw now (no rAF) — used by the mini map and for the first paint. */
+  drawNow() { if (this.raf) { cancelAnimationFrame(this.raf); this.raf = 0; } this.frame(performance.now()); }
+  frame(now) {
+    this.raf = 0;
+    if (this.destroyed || this.held || !this.w || !this.N && !this.data) return;
+    const dt = this.last ? Math.min(64, now - this.last) : 16;
+    this.last = now;
+    let more = false;
+    const A = this.anim;
+    if (A.fly) {
+      const t = Math.min(1, (now - A.fly.t0) / A.fly.dur), e = easeOutExp(t), f = A.fly.from, to = A.fly.to;
+      this.cam.k = Math.exp(Math.log(f.k) + (Math.log(to.k) - Math.log(f.k)) * e);
+      this.cam.x = f.x + (to.x - f.x) * e; this.cam.y = f.y + (to.y - f.y) * e;
+      if (t >= 1) { A.fly = null; this.o.onCamera?.(); } else more = true;
+    }
+    if (A.zoom) {
+      const z = A.zoom, a = 1 - Math.exp(-dt / 70);
+      const k = Math.exp(Math.log(this.cam.k) + (Math.log(z.k) - Math.log(this.cam.k)) * a);
+      if (Math.abs(Math.log(k / z.k)) < 0.002) { this.setZoom(z.k, z.px, z.py, z.wx, z.wy); A.zoom = null; this.o.onCamera?.(); } else { this.setZoom(k, z.px, z.py, z.wx, z.wy); more = true; }
+    }
+    if (A.inertia) {
+      const v = A.inertia;
+      this.cam.x -= (v.vx * dt) / this.cam.k; this.cam.y -= (v.vy * dt) / this.cam.k;
+      const decay = Math.exp(-dt / 325);
+      v.vx *= decay; v.vy *= decay;
+      if (Math.hypot(v.vx, v.vy) < 0.02) { A.inertia = null; this.o.onCamera?.(); } else more = true;
+    }
+    if (A.alpha) {
+      const a = 1 - Math.exp(-dt / 90);
+      let busy = false;
+      for (let i = 0; i < this.N; i++) {
+        const d = this.alphaT[i] - this.alpha[i];
+        if (Math.abs(d) > 0.01) { this.alpha[i] += d * a; busy = true; } else this.alpha[i] = this.alphaT[i];
+      }
+      if (busy) more = true; else A.alpha = false;
+    }
+    if (A.intro) {
+      const t = now - A.intro.t0;
+      const step = Math.min(10, 600 / Math.max(1, this.N));
+      let busy = false;
+      for (let r = 0; r < this.N; r++) {
+        const i = A.intro.order[r];
+        const p = clamp((t - r * step) / 420, 0, 1);
+        this.intro[i] = p * p * (3 - 2 * p);
+        if (p < 1) busy = true;
+      }
+      A.intro.edges = clamp((t - 250) / 700, 0, 1);
+      A.intro.region = clamp(t / 700, 0, 1);
+      if (busy || A.intro.edges < 1 || A.intro.region < 1) more = true; else { A.intro = null; this.intro.fill(1); }
+    }
+    // only camera motion uses the motion canvas; fades (intro, filters) draw sharp
+    const moving = !this.mini && !!this.lo && !!(A.fly || A.zoom || A.inertia || (this.drag && this.drag.moved) || this.pinch);
+    if (moving) {
+      // adapt the motion resolution to what this device sustains (median of the last 3 intervals)
+      // step down after 2 slow intervals within 8 (learned once per session)
+      const iv = this.motionIv || (this.motionIv = []);
+      if (this.prevMoving) { iv.push(dt); if (iv.length > 8) iv.shift(); }
+      if (iv.filter(t => t > 24).length >= 2 && LO.dpr > LO.min) { LO.dpr = Math.max(LO.min, LO.dpr * 0.8); iv.length = 0; this.sizeLo(); }
+      this.o.onMotion?.();
+      this.live(true);
+      if (this.loSized !== this.w * 1e5 + this.h) this.sizeLo();
+      this.draw(this.loCtx, this.loDpr, this.lo);
+      if (this.state !== 'lo') { this.state = 'lo'; this.host.classList.add('is-moving'); }
+      this.sharp = false;
+      clearTimeout(this.settleT);
+      this.settleT = setTimeout(() => { this.sharp = true; this.requestDraw(); }, 200);
+    } else if (this.state === 'lo' && !this.sharp) {
+      this.draw(this.loCtx, this.loDpr, this.lo); // still for < 200 ms: keep the motion frame
+    } else {
+      this.draw(this.ctx, this.dpr, this.canvas);
+      if (this.state === 'lo') {
+        this.state = 'hi'; this.host.classList.remove('is-moving'); this.motionIv = null;
+        this.live(false);
+        // one probe frame: if the sharp redraw keeps costing > 45 ms, lower the resting resolution
+        const t0 = now;
+        requestAnimationFrame((t1) => {
+          if (this.destroyed) return;
+          if (t1 - t0 > 45) HI.slow++; else HI.slow = Math.max(0, HI.slow - 1);
+          if (HI.slow >= 2 && HI.cap > 1 && this.dpr > 1) { HI.cap = Math.max(1, Math.min(this.dpr, HI.cap) - 0.5); HI.slow = 0; this.pendingSize = { w: this.w, h: this.h }; this.applySize(); }
+        });
+      }
+      this.sharp = false;
+    }
+    this.prevMoving = moving;
+    if (!this.mini) {
+      if (moving || (this.state === 'lo' && !this.sharp)) this.shiftLabels();
+      else { this.placeLabels(); this.placeCard(); this.placeRings(); }
+      this.o.onFrame?.();
+    }
+    if (more) this.requestDraw();
+  }
+  /** Fade the nodes in (10 ms stagger, oldest first), then draw the edges (C §2). */
+  introduce() {
+    if (reduced() || !this.N) return;
+    const order = [...this.nodes.keys()].sort((a, b) => (Date.parse(this.nodes[a].first_seen || 0) || 0) - (Date.parse(this.nodes[b].first_seen || 0) || 0));
+    this.anim.intro = { t0: performance.now(), order, edges: 0, region: 0 };
+    this.intro.fill(0);
+    this.requestDraw();
+  }
+
+  // -------------------------------------------------------------------- draw
+  /** lod: motion frames skip the isobars, draw straight edges and plain discs (cheap raster). */
+  draw(ctx = this.ctx, dpr = this.dpr, canvas = this.canvas, lod = false) {
+    if (!this.tok) {
+      this.tok = tokens();
+      if (!this.tok) { whenTokens(() => { if (!this.destroyed) { this.regions = null; this.requestDraw(); } }); return; }
+    }
+    if (!this.qcol) this.paletteFor();
+    const k = this.cam.k, tok = this.tok;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    if (!this.N) return;
+    const intro = this.anim.intro;
+    // during the intro the regions fade in from 0 anyway: build them in idle slices and draw the nodes meanwhile
+    if (!this.regions) { if (intro && !this.mini) this.prepareRegions(() => this.requestDraw()); else this.buildRegions(); }
+    const R = this.regions;
+    ctx.setTransform(dpr * k, 0, 0, dpr * k, dpr * (this.w / 2 - this.cam.x * k), dpr * (this.h / 2 - this.cam.y * k));
+    // visible world rect (+ margin) for culling
+    const vx0 = this.cam.x - this.w / 2 / k - 50, vx1 = this.cam.x + this.w / 2 / k + 50;
+    const vy0 = this.cam.y - this.h / 2 / k - 50, vy1 = this.cam.y + this.h / 2 / k + 50;
+    const regionA = intro ? intro.region : 1;
+    const hasSel = this.sel >= 0;
+    // 1. regions
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.globalAlpha = regionA;
+    if (R) ctx.drawImage(R.img, R.x0 - R.cell / 2, R.y0 - R.cell / 2, R.gw * R.cell, R.gh * R.cell);
+    // 2. isobars (hairline in screen space)
+    ctx.lineWidth = (this.mini ? 0.8 : 1) / k;
+    ctx.lineCap = 'round';
+    const inkA = tok.night ? [0.2, 0.13, 0.1, 0.08, 0.07] : [0.17, 0.11, 0.085, 0.07, 0.06];
+    if (!lod && R) for (const P of R.paths) {
+      const h = P.heat, a = inkA[P.li] * (this.mini ? 1.25 : 1) * regionA;
+      ctx.strokeStyle = h > 0.45 ? `rgba(${tok.hot},${(a * (0.9 + h)).toFixed(3)})` : `rgba(${tok.ink},${a.toFixed(3)})`;
+      ctx.globalAlpha = 1;
+      ctx.stroke(P.p);
+    }
+    // 3. edges, 3 weight buckets; below zoom 0.6 × fit only the selection's edges
+    const E = this.edges.length;
+    const edgeP = intro ? intro.edges : 1;
+    const showAll = this.mini || k >= this.fitK * 0.6 || k >= 0.6;
+    if (edgeP > 0 && E && showAll) {
+      const widths = this.mini ? [0.6, 0.8, 1.1] : [0.8, 1.2, 1.9];
+      const cols = [tok.line2, tok.line3, tok.line3];
+      // group by (bucket, alpha step)
+      const groups = new Map();
+      for (let e = 0; e < E; e++) {
+        const a = this.EA[e], b = this.EB[e];
+        if (hasSel && (a === this.sel || b === this.sel)) continue;
+        const ax = this.X[a], ay = this.Y[a], bx = this.X[b], by = this.Y[b];
+        if ((ax < vx0 && bx < vx0) || (ax > vx1 && bx > vx1) || (ay < vy0 && by < vy0) || (ay > vy1 && by > vy1)) continue;
+        let al = Math.min(this.alpha[a], this.alpha[b]) * (hasSel ? 0.35 : 1);
+        if (al < 0.05) continue;
+        const key = this.EK[e] * 16 + Math.round(al * 10);
+        (groups.get(key) || groups.set(key, []).get(key)).push(e);
+      }
+      ctx.lineCap = 'round';
+      for (const [key, list] of groups) {
+        const bucket = key >> 4, al = (key & 15) / 10;
+        ctx.globalAlpha = al;
+        ctx.strokeStyle = cols[bucket];
+        ctx.lineWidth = widths[bucket] / k;
+        ctx.beginPath();
+        if (lod) for (const e of list) { ctx.moveTo(this.X[this.EA[e]], this.Y[this.EA[e]]); ctx.lineTo(this.X[this.EB[e]], this.Y[this.EB[e]]); }
+        else for (const e of list) this.edgePath(ctx, e, edgeP);
+        ctx.stroke();
+      }
+    }
+    // 4. nodes, grouped by (colour step, alpha step, kind)
+    const groups = new Map();
+    for (let i = 0; i < this.N; i++) {
+      const x = this.X[i], y = this.Y[i];
+      if (x < vx0 || x > vx1 || y < vy0 || y > vy1) continue;
+      if (hasSel && (i === this.sel || this.nbr.has(i))) continue;
+      let al = this.alpha[i] * this.intro[i] * (hasSel ? 0.32 : 1);
+      if (al < 0.03) continue;
+      const kind = this.tier[i] === 'below' ? 0 : this.tier[i] === 'top' ? 2 : 1;
+      const key = (this.qkey[i] * 16 + Math.round(al * 10)) * 4 + kind;
+      (groups.get(key) || groups.set(key, []).get(key)).push(i);
+    }
+    for (const [key, list] of groups) this.nodeGroup(ctx, list, key & 3, this.qcol[(key >> 2) >> 4], ((key >> 2) & 15) / 10, lod);
+    // 5. selection last: its edges in accent, neighbours at full strength, the node with a ring
+    if (hasSel) {
+      const s = this.sel;
+      ctx.globalAlpha = 0.7 * Math.min(1, edgeP * 1.2);
+      ctx.strokeStyle = tok.accent;
+      ctx.lineWidth = 1.6 / k;
+      ctx.beginPath();
+      for (const e of this.adj[s]) this.edgePath(ctx, e, edgeP);
+      ctx.stroke();
+      const nb = [...this.nbr];
+      const byKey = new Map();
+      for (const i of nb) {
+        const kind = this.tier[i] === 'below' ? 0 : this.tier[i] === 'top' ? 2 : 1;
+        const key = this.qkey[i] * 4 + kind;
+        (byKey.get(key) || byKey.set(key, []).get(key)).push(i);
+      }
+      for (const [key, list] of byKey) this.nodeGroup(ctx, list, key & 3, this.qcol[key >> 2], Math.max(0.35, Math.min(...list.map(i => this.alpha[i] * this.intro[i]))));
+      const sk = this.tier[s] === 'below' ? 0 : this.tier[s] === 'top' ? 2 : 1;
+      // soft light pool under the selection (Glass's light reaction, in accent)
+      const r = this.rs(s) / k;
+      ctx.globalAlpha = 0.12;
+      ctx.fillStyle = tok.accent;
+      ctx.beginPath(); ctx.arc(this.X[s], this.Y[s], r + 12 / k, 0, Math.PI * 2); ctx.fill();
+      this.nodeGroup(ctx, [s], sk, this.qcol[this.qkey[s]], 1);
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = tok.accent;
+      ctx.lineWidth = 2 / k;
+      ctx.beginPath(); ctx.arc(this.X[s], this.Y[s], r + 4.5 / k, 0, Math.PI * 2); ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+  }
+  edgePath(ctx, e, p = 1) {
+    const a = this.EA[e], b = this.EB[e];
+    const ax = this.X[a], ay = this.Y[a], bx = this.X[b], by = this.Y[b];
+    const [cx, cy] = ctrl(ax, ay, bx, by);
+    ctx.moveTo(ax, ay);
+    if (p >= 1) { ctx.quadraticCurveTo(cx, cy, bx, by); return; }
+    // de Casteljau split at p
+    const qx = ax + (cx - ax) * p, qy = ay + (cy - ay) * p;
+    const [ex, ey] = bezierPoint(ax, ay, cx, cy, bx, by, p);
+    ctx.quadraticCurveTo(qx, qy, ex, ey);
+  }
+  /** kind 0 = below the bar (hollow), 1 = clears/strong (filled), 2 = top (filled + inner halo ring). */
+  nodeGroup(ctx, list, kind, col, alpha, lod = false) {
+    const k = this.cam.k, tok = this.tok;
+    ctx.globalAlpha = alpha;
+    ctx.beginPath();
+    for (const i of list) { const r = this.rs(i) / k; ctx.moveTo(this.X[i] + r, this.Y[i]); ctx.arc(this.X[i], this.Y[i], r, 0, Math.PI * 2); }
+    if (lod) {
+      if (kind === 0) { ctx.strokeStyle = col; ctx.lineWidth = 1.6 / k; ctx.stroke(); } else { ctx.fillStyle = col; ctx.fill(); }
+      return;
+    }
+    if (kind === 0) {
+      ctx.fillStyle = tok.surface; ctx.fill();
+      ctx.strokeStyle = col; ctx.lineWidth = (this.mini ? 1 : 1.6) / k; ctx.stroke();
+      return;
+    }
+    ctx.fillStyle = col; ctx.fill();
+    ctx.strokeStyle = tok.surface; ctx.lineWidth = (this.mini ? 0.8 : 1.5) / k; ctx.stroke();
+    if (kind === 2) {
+      ctx.beginPath();
+      for (const i of list) { const r = this.rs(i) / k + (this.mini ? 1.8 : 3.5) / k; ctx.moveTo(this.X[i] + r, this.Y[i]); ctx.arc(this.X[i], this.Y[i], r, 0, Math.PI * 2); }
+      ctx.globalAlpha = alpha * 0.55; ctx.strokeStyle = col; ctx.lineWidth = 1 / k; ctx.stroke();
+    }
+  }
+
+  // -------------------------------------------------------------------- labels (pooled DOM, transform only)
+  measure(text, font) {
+    const key = font + '|' + text;
+    let w = this.labelW.get(key);
+    if (w == null) { const m = measurer(); if (m.font !== font) m.font = font; w = m.measureText(text).width; this.labelW.set(key, w); }
+    return w;
+  }
+  /** While the camera moves: a pure pan slides the label layers as one composited transform; a zoom hides them. */
+  shiftLabels() {
+    const L = this.lblCam;
+    if (!L || !this.labelLayer) return;
+    if (Math.abs(this.cam.k - L.k) < 1e-6) {
+      const dx = Math.round((L.x - this.cam.x) * this.cam.k), dy = Math.round((L.y - this.cam.y) * this.cam.k);
+      const t = `translate3d(${dx}px, ${dy}px, 0)`;
+      this.labelLayer.style.transform = t; this.topicLayer.style.transform = t;
+    } else if (!this.host.classList.contains('labels-off')) this.host.classList.add('labels-off');
+    if (this.card && !this.card.hidden) { this.card.hidden = true; this.card.classList.remove('on'); this.hover = -1; }
+    this.hring?.classList.remove('on'); this.kring?.classList.remove('on');
+  }
+  placeLabels() {
+    if (!this.labelPool || !this.N) return;
+    this.lblCam = { x: this.cam.x, y: this.cam.y, k: this.cam.k };
+    if (this.labelLayer.style.transform) { this.labelLayer.style.transform = ''; this.topicLayer.style.transform = ''; }
+    this.host.classList.remove('labels-off');
+    const placed = [];
+    const hitR = (r, q) => r.x < q.x + q.w && r.x + r.w > q.x && r.y < q.y + q.h && r.y + r.h > q.y;
+    // keep clear of the stage's own overlays: the legend (bottom on desktop, top on a phone) and the zoom column
+    const phone = this.w < 560;
+    const ins = phone ? { t: 46, b: 8, l: 6, r: 6 } : { t: 6, b: 50, l: 6, r: 50 };
+    const inView = (r) => r.x > ins.l && r.y > ins.t && r.x + r.w < this.w - ins.r && r.y + r.h < this.h - ins.b;
+    // discs with a screen radius ≥ 6 px block labels (round-1 M5). Node labels go to the selection, the hovered
+    // node and the stories at or above the bar; nothing else is labelled
+    const discs = [], cand = [], dots = [];
+    for (let i = 0; i < this.N; i++) {
+      if (this.alpha[i] < 0.6 || this.intro[i] < 0.6) continue;
+      const s = this.screenOf(i), rs = this.rs(i);
+      if (s.x < -20 || s.y < -20 || s.x > this.w + 20 || s.y > this.h + 20) continue;
+      const d = { x: s.x - rs - 4, y: s.y - rs - 4, w: rs * 2 + 8, h: rs * 2 + 8 };
+      if (rs >= 6) discs.push(d);
+      dots.push({ i, x: s.x, y: s.y, r: rs });
+      const above = (this.nodes[i].score || 0) >= this.th;
+      // while a story is selected only it and its linked stories are labelled (the rest are dimmed)
+      const pri = i === this.sel ? 3 : i === this.hover ? 2.5 : this.sel >= 0 ? (this.nbr.has(i) ? 2 : 0) : above ? 1 : 0;
+      if (pri > 0) cand.push({ i, s, rs, pri, d });
+    }
+    const free = (r, self) => inView(r) && !placed.some(q => hitR(r, q)) && !discs.some(d => d !== self && hitR(r, d));
+    const gapTo = (q, x, y, r) => Math.hypot(Math.max(q.x - x, 0, x - q.x - q.w), Math.max(q.y - y, 0, y - q.y - q.h)) - r;
+    // round-2 M3: a region's name keeps 10 px clear of other topics' stories, so it never reads as their label
+    const clearOf = (q, topic) => !dots.some(o => (this.nodes[o.i].topic ?? null) !== topic && gapTo(q, o.x, o.y, o.r) < 10);
+
+    // 1. the top-3 hot regions, always: at the top-centre of their hull, nudged off nodes, forced into view
+    // (round-3 M-5: a topic with no region is named by a plain text label at its centroid, after the regions)
+    const tl = this.regions ? [...this.regions.labels, ...(this.regions.plain || [])] : [];
+    while (this.topicPool.length < tl.length) { const s = document.createElement('span'); s.className = 'map-topic'; s.innerHTML = '<b></b><i></i>'; this.topicLayer.append(s); this.topicPool.push(s); }
+    // round-1 M2: the top-3 read '{topic} · leads {n}' (main-topic stories, the side panel's "Leads n"); others carry no number
+    const hot3 = (this.data?.hot_topics || []).slice(0, 3);
+    const rank = new Map(hot3.map((h, r) => [h.topic, r + 1]));
+    const leads = new Map(hot3.map(h => [h.topic, h.count]));
+    const fT = '500 12px Geist, system-ui, sans-serif', fS = '450 12px Geist, system-ui, sans-serif';
+    const topics = tl.map((l, j) => ({ l, j, c: this.clusters[l.ci], rank: rank.get(this.clusters[l.ci].topic) || 0 }));
+    const placeTopic = ({ l, j, c, rank: rk }, force) => {
+      const el = this.topicPool[j];
+      const name = c.label || c.topic;
+      const n = rk ? leads.get(c.topic) : null;
+      const sub = n != null && !phone ? `· leads ${n}` : ''; // a phone stage keeps the names only (room)
+      let plain = !!l.plain;
+      const H = plain ? 16 : 22;
+      const tw = this.measure(name, fT) + (sub ? 6 + this.measure(sub, fS) : 0);
+      const w = Math.ceil(tw + (plain ? 6 : 20));
+      const ax = (l.tx - this.cam.x) * this.cam.k + this.w / 2 - w / 2, ay = (l.ty - this.cam.y) * this.cam.k + this.h / 2 - H / 2;
+      // nearest clear spot to the anchor (forced labels search up to 130 px out; upward moves are cheaper, since the hull
+      // lies below its top edge), else the other regions give up after a short search. A plain (centroid) label only
+      // looks close by, and keeps 8–10 px clear of other labels so two never stack into one two-line caption
+      const ok = (q) => (plain ? free({ x: q.x - 8, y: q.y - 10, w: q.w + 16, h: q.h + 20 }) && inView(q) : free(q)) && clearOf(q, c.topic ?? null);
+      const near = (x, y) => { for (const [dx, dy] of SPIRAL_NEAR) { const q = { x: x + dx, y: y + dy, w, h: H }; if (ok(q)) return q; } return null; };
+      let r = near(ax, ay);
+      // a crowded top edge: try under the territory's foot before drifting further out
+      // (kept 10 px off other names, so two regions sharing a foot never stack their pills)
+      if (!r && !plain && l.by != null) {
+        const fx = (l.bx - this.cam.x) * this.cam.k + this.w / 2 - w / 2, fy = (l.by - this.cam.y) * this.cam.k + this.h / 2 + 4;
+        for (const [dx, dy] of SPIRAL_NEAR) { const q = { x: fx + dx, y: fy + dy, w, h: H }; if (ok(q) && !placed.some(p => hitR({ x: q.x - 10, y: q.y - 10, w: q.w + 20, h: q.h + 20 }, p))) { r = q; break; } }
+      }
+      if (!r && force && !plain) {
+        for (const [dx, dy] of SPIRAL) { const q = { x: ax + dx, y: ay + dy, w, h: H }; if (ok(q)) { r = q; break; } }
+        // round-3 M-5: a name pushed well off its region's edge no longer marks the region; it stays as plain text
+        // (the topic's name, no pill claiming the ground it sits on)
+        if (r && Math.hypot(r.x - ax, r.y - ay) > 48) { plain = true; const pw = Math.ceil(tw + 6); r = { x: r.x + (w - pw) / 2, y: r.y + 3, w: pw, h: 16 }; }
+      }
+      if (!r && force && !plain) {
+        // nowhere clear: keep it at its anchor (inside the stage), stepping past other forced labels only
+        const q = { x: clamp(ax, ins.l + 1, this.w - ins.r - w - 1), y: clamp(ay, ins.t + 1, this.h - ins.b - H - 1), w, h: H };
+        for (let t = 0; t < 4 && placed.some(p => hitR(q, p)); t++) q.y = clamp(q.y + (H + 4) * (q.y > this.h / 2 ? -1 : 1), ins.t + 1, this.h - ins.b - H - 1);
+        r = q;
+        // round-3 M-5: only the hottest topic keeps a pill where nothing is clear; the others, stepped aside, are plain
+        // text (two pills stacked off their regions read as a menu, not as names of ground)
+        if (rk > 1) { plain = true; const pw = Math.ceil(tw + 6); r = { x: r.x + (w - pw) / 2, y: r.y + 3, w: pw, h: 16 }; }
+      }
+      if (el.dataset.t !== name || el.dataset.s !== sub || el.dataset.p !== String(plain)) {
+        el.dataset.t = name; el.dataset.s = sub; el.dataset.p = String(plain);
+        el.firstChild.textContent = name; el.lastChild.textContent = sub;
+        el.classList.toggle('is-hot', !!rk);
+        el.classList.toggle('is-plain', plain);
+      }
+      const faded = this.topicFade?.(c) ?? false;
+      if (r) { placed.push(r); el.style.transform = `translate3d(${Math.round(r.x)}px, ${Math.round(r.y)}px, 0)`; }
+      el.classList.toggle('on', !!r && !faded);
+      el.classList.toggle('dim', !!r && faded);
+    };
+    topics.filter(t => t.rank && !t.l.plain).sort((a, b) => a.rank - b.rank).forEach(t => placeTopic(t, true));
+    topics.filter(t => t.rank && t.l.plain).sort((a, b) => a.rank - b.rank).forEach(t => placeTopic(t, true));
+
+    // 2. node labels (≤ 20), greedy over 8 spots 6 px off the disc (round-2 M3); a label that would cover another
+    // label, a region name or a disc is dropped, and so is one that would sit more than 24 px from its node. Labels
+    // carry the short title; the selected story's label carries its full title, wrapped (full titles on selection;
+    // the hover card carries it on hover)
+    cand.sort((a, b) => b.pri - a.pri || (this.nodes[b.i].score || 0) - (this.nodes[a.i].score || 0));
+    const fN = '500 12px Geist, system-ui, sans-serif', fSel = '600 12px Geist, system-ui, sans-serif';
+    const G = 6, LH = 16, MAXD = 24;
+    let used = 0;
+    for (const c of cand) {
+      if (used >= this.labelPool.length) break;
+      const n = this.nodes[c.i];
+      const isSel = c.i === this.sel;
+      const { x: sx, y: sy } = c.s, rs = c.rs, dg = (rs + G) * Math.SQRT1_2;
+      const gap = (q) => gapTo(q, sx, sy, rs);
+      // unambiguous: no other story's disc may sit within 3 px of the label's own gap (6 px), so a label always reads
+      // as its own node's
+      const own = (q) => { const g = gap(q); return !dots.some(o => o.i !== c.i && gapTo(q, o.x, o.y, o.r) < g + 3); };
+      const spot = (lines, font) => {
+        const w = Math.ceil(Math.max(...lines.map(t => this.measure(t, font)))) + 2, h = LH * lines.length;
+        const opts = [[sx + rs + G, sy - h / 2], [sx - rs - G - w, sy - h / 2], [sx - w / 2, sy + rs + G], [sx - w / 2, sy - rs - G - h],
+          [sx + dg, sy - dg - h], [sx + dg, sy + dg], [sx - dg - w, sy - dg - h], [sx - dg - w, sy + dg]];
+        for (const [x, y] of opts) { const q = { x, y, w, h }; if (gap(q) <= MAXD && free(q, c.d) && own(q)) return q; }
+        return null;
+      };
+      // the selection tries its full title first, then falls back to the short one where the full one has no room
+      let lines = isSel ? wrapTitle(n.title || labelText(n), phone ? 200 : 260, (t) => this.measure(t, fSel)) : [labelText(n)];
+      let r = spot(lines, isSel ? fSel : fN);
+      if (!r && lines.length > 1) { lines = [labelText(n)]; r = spot(lines, fSel); }
+      if (!r) continue;
+      const text = lines.join('\n');
+      placed.push(r);
+      const el = this.labelPool[used++];
+      if (el.dataset.id !== String(n.id) || el.dataset.t !== text) { el.dataset.id = String(n.id); el.dataset.t = text; el.textContent = text; }
+      el.classList.toggle('is-sel', isSel);
+      el.classList.toggle('is-full', lines.length > 1);
+      el.style.transform = `translate3d(${Math.round(r.x)}px, ${Math.round(r.y)}px, 0)`;
+      el.classList.add('on');
+    }
+    for (let j = used; j < this.labelPool.length; j++) this.labelPool[j].classList.remove('on');
+
+    // 3. the other regions, where room is left (a topic with neither a region nor a top-3 rank stays unnamed: its
+    // stories carry their own labels, and a floating topic name between two of them read as one of theirs)
+    topics.filter(t => !t.rank && !t.l.plain).forEach(t => placeTopic(t, false));
+    for (const t of topics) if (!t.rank && t.l.plain) this.topicPool[t.j].classList.remove('on', 'dim');
+    for (let j = tl.length; j < this.topicPool.length; j++) this.topicPool[j].classList.remove('on', 'dim');
+  }
+
+  destroy() {
+    this.saveSnap();
+    clearTimeout(this.liveT); clearTimeout(this.holdT);
+    this.regionJob = null;
+    this.destroyed = true;
+    if (this.raf) cancelAnimationFrame(this.raf);
+    if (this.hoverRaf) cancelAnimationFrame(this.hoverRaf);
+    this.raf = 0;
+    clearTimeout(this.rzT);
+    this.ro.disconnect();
+    document.removeEventListener('byline:theme', this.onTheme);
+    if (this.onScroll) removeEventListener('scroll', this.onScroll, { capture: true });
+  }
+}
+
+// ====================================================================== public mounts
+/**
+ * Mount the interactive Map. opts: { data?, onPick(node|null), onHover(node|null), onCamera(), onFrame(),
+ * cardHTML(node) → string }. Loads the payload itself (cache-first) when `data` is not given.
+ */
+export function mountMap(el, opts = {}) {
+  const eng = new MapEngine(el, opts);
+  if (!opts.data) {
+    const { data, fresh } = loadMap();
+    if (data) eng.setData(data);
+    fresh.then((d) => { if (d && !eng.destroyed) eng.setData(d); }).catch(() => {});
+  }
+  return eng;
+}
+
+/**
+ * Today's mini map: the same layout, drawn once into a small static canvas, with the hot clusters labelled.
+ * Clicking (or Enter on a focusable host) calls onOpen. Returns { destroy } (synchronously).
+ */
+export function mountMiniMap(el, { onOpen } = {}) {
+  // the host must be positioned (Today's .td-map-live is absolute); never read computed style here
+  if (!el.style.position && !el.classList.contains('td-map-live')) el.style.position = 'relative';
+  const eng = new MapEngine(el, { mini: true });
+  const labels = document.createElement('div');
+  labels.setAttribute('aria-hidden', 'true');
+  Object.assign(labels.style, { position: 'absolute', inset: '0', pointerEvents: 'none' });
+  el.append(labels);
+  const paintLabels = () => {
+    labels.replaceChildren();
+    if (!eng.N || !eng.w || !eng.tok) return;
+    const pts = eng.clusterPoints().filter(p => eng.hot.has(p.topic)).slice(0, 3);
+    const placed = [];
+    for (const p of pts) {
+      const s = document.createElement('span');
+      s.textContent = p.topic;
+      Object.assign(s.style, {
+        position: 'absolute', left: '0', top: '0', whiteSpace: 'nowrap', padding: '2px 7px', borderRadius: '999px',
+        font: '500 11px/16px var(--font-sans)', color: 'var(--text-2)', background: 'var(--surface-solid)', boxShadow: 'inset 0 0 0 1px var(--line)'
+      });
+      labels.append(s);
+      const w = Math.min(eng.w - 8, eng.measure(p.topic, '500 11px Geist, system-ui, sans-serif') + 16), h = 20;
+      let x = clamp(p.x - w / 2, 4, eng.w - w - 4), y = clamp(p.y - h / 2, 4, eng.h - h - 4);
+      for (let tries = 0; tries < 4 && placed.some(q => x < q.x + q.w && x + w > q.x && y < q.y + q.h && y + h > q.y); tries++) y = clamp(y + (tries % 2 ? -24 * tries : 24 * (tries + 1)), 4, eng.h - h - 4);
+      placed.push({ x, y, w, h });
+      s.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px)`;
+    }
+  };
+  const origFrame = eng.frame.bind(eng);
+  eng.frame = (t) => { origFrame(t); paintLabels(); };
+  const { data, fresh } = loadMap();
+  if (data) eng.setData(data);
+  fresh.then((d) => { if (d && !eng.destroyed) eng.setData(d); }).catch(() => {});
+  const click = (e) => { e.preventDefault(); onOpen?.(); };
+  const key = (e) => { if (e.key === 'Enter' && e.target === el) { e.preventDefault(); onOpen?.(); } };
+  el.style.cursor = 'pointer';
+  el.addEventListener('click', click);
+  el.addEventListener('keydown', key);
+  return {
+    destroy() { eng.destroy(); el.removeEventListener('click', click); el.removeEventListener('keydown', key); eng.canvas.remove(); labels.remove(); },
+    get engine() { return eng; }
+  };
+}
+
+export { MapEngine };

@@ -1,0 +1,27 @@
+# systemd unit for an always-on home box or Raspberry Pi. setup.sh fills in @USER@ and @ROOT@ and installs it as
+# /etc/systemd/system/byline.service. Data stays in @ROOT@/data; daily backups in @ROOT@/backups.
+[Unit]
+Description=Byline personal news briefing
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@USER@
+WorkingDirectory=@ROOT@
+Environment=PORT=3000
+Environment=HOST=127.0.0.1
+Environment=BYLINE_DATA_DIR=@ROOT@/data
+Environment=BYLINE_BACKUP_DIR=@ROOT@/backups
+# Values in .env override the defaults above (KEY=value lines, no quotes needed)
+EnvironmentFile=-@ROOT@/.env
+ExecStart=@NODE@ --disable-warning=ExperimentalWarning server.js
+Restart=on-failure
+RestartSec=10
+# Hardening: Byline only needs its own folder
+NoNewPrivileges=true
+ProtectSystem=full
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

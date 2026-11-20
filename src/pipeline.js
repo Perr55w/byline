@@ -2,7 +2,9 @@
 // Idempotent per date: articles are unique by URL, briefs by date, the auto draft by auto_key.
 import { all, get, run, now, tx, getSettings, cacheGet, cacheSet, parse, hydrate } from './db.js';
 import { connectorFor, fetchArticle } from './connectors/index.js';
-import { tokens, jaccard, sentences, hasNumber, termHits, domainOf, wordCount, readingMinutes, truncate, entities } from './text.js';
+import { tokens, jaccard, sentences, hasNumber, termHits, domainOf, wordCount, readingMinutes, truncate, entities, matchEmployers } from './text.js';
+import { sourceCounts, cleanClaim, numberMarks, markedText, keyEligible } from './finding.js';
+import { WEIGHTS, BREAKDOWN_VERSION, scoreFrom, r1, r2, r3 } from './score.js';
 import { getProvider } from './ai/index.js';
 import { loadStory, loadEmployers, createDraft, storyPreferences } from './store.js';
 import { generateVisual } from './visual.js';
@@ -34,7 +36,10 @@ export async function submitUrl(url, evidenceKind) {
   }
   let item;
   try { item = await fetchArticle(url); }
-  catch (e) { throw Object.assign(new Error(`Could not fetch that page (${e.message}). Check the URL or your network.`), { status: 502 }); }
+  catch (e) {
+    if (e.code === 'EBLOCKED') throw Object.assign(new Error(e.message), { status: 400 });
+    throw Object.assign(new Error(`Could not fetch that page (${e.message}). Check the URL or your network.`), { status: 502 });
+  }
   const res = ingestItem({ ...item, evidence_kind: evidenceKind || 'reporting' }, manual);
   run('UPDATE sources SET last_sync_at = ?, last_error = NULL WHERE id = ?', now(), manual.id);
   clusterArticles();
@@ -145,7 +150,7 @@ function refreshStoryMeta(storyId) {
   const arts = all('SELECT * FROM articles WHERE story_id = ? ORDER BY COALESCE(published_at, fetched_at)', storyId);
   const text = arts.map(a => `${a.title} ${a.summary || ''} ${(a.content || '').slice(0, 1500)}`).join(' ');
   const topics = s.priorities.filter(p => p.weight > 0).map(p => ({ t: p.topic, n: termHits(text, p.terms).length })).filter(x => x.n > 0).sort((a, b) => b.n - a.n).map(x => x.t).slice(0, 4);
-  const companies = loadEmployers().filter(e => termHits(text, [e.name, ...(e.terms || []).filter(t => /^[A-Z]/.test(t))]).length).map(e => e.name);
+  const companies = matchEmployers(text, loadEmployers()); // R3 S12: longest match wins among siblings
   const origin = arts.find(a => a.evidence_kind === 'announcement') || arts.find(a => a.evidence_kind === 'research') || arts[0];
   run('UPDATE stories SET title = ?, summary = ?, topics = ?, companies = ? WHERE id = ?', origin.title, truncate(origin.summary || '', 400), JSON.stringify(topics), JSON.stringify(companies), storyId);
 }
@@ -157,28 +162,43 @@ const CHALLENGE = ['contradicts', 'debunk', 'fails', 'failed', 'smaller than', '
 const PROCESS = ['workflow', 'process', 'approval step', 'hand-off', 'review time', 'cycle time', 'operations'];
 const IMPACT = ['pricing', 'price', 'available', 'general availability', 'ga', 'open source', 'open-source', 'api', 'enterprise', 'customers', 'cost', 'costs', 'benchmark', 'regulation', 'deadline', 'release', 'launch', 'production', 'sdk', 'framework', 'standard'];
 
-export function rankStories({ days = 7 } = {}) {
+export { WEIGHTS, BREAKDOWN_VERSION, scoreFrom } from './score.js';
+
+/** First sentence of the story text that contains one of the terms (for "Why it's post-worthy" quotes). */
+function quoteFor(sents, test) {
+  const hit = sents.find(x => test(x) && keyEligible(x)); // R2 S14: no filler / numberless self-talk as a quote
+  return hit ? truncate(hit.replace(/\s+([.,;:!?])/g, '$1'), 220) : null;
+}
+
+export function rankStories({ days = 7, asOf = Date.now() } = {}) {
   const s = getSettings();
   const prefs = storyPreferences();
   const watch = all('SELECT * FROM watchlists').map(hydrate);
   const employers = loadEmployers();
-  const stories = all("SELECT * FROM stories WHERE status != 'archived' AND updated_at >= ?", new Date(Date.now() - days * 864e5).toISOString()).map(hydrate);
-  const seen = all('SELECT id, title, first_seen FROM stories WHERE last_viewed_at IS NOT NULL AND updated_at >= ?', new Date(Date.now() - 30 * 864e5).toISOString());
+  const stories = all("SELECT * FROM stories WHERE status != 'archived' AND updated_at >= ?", new Date(asOf - days * 864e5).toISOString()).map(hydrate);
+  const seen = all('SELECT id, title, first_seen FROM stories WHERE last_viewed_at IS NOT NULL AND updated_at >= ?', new Date(asOf - 30 * 864e5).toISOString());
+  const positive = s.priorities.filter(p => p.weight > 0).sort((a, b) => b.weight - a.weight);
+  const prioRank = new Map(positive.map((p, i) => [p.topic, i + 1]));
   for (const st of stories) {
-    const arts = all('SELECT * FROM articles WHERE story_id = ?', st.id);
+    const arts = all('SELECT a.*, src.name AS source_name FROM articles a LEFT JOIN sources src ON src.id = a.source_id WHERE a.story_id = ?', st.id);
     if (!arts.length) continue;
     const text = arts.map(a => `${a.title} ${a.summary || ''} ${(a.content || '').slice(0, 1500)}`).join(' ');
-    const why = [], muted = [];
+    const sents = sentences(arts.map(a => `${a.summary || ''} ${(a.content || '').slice(0, 1500)}`).join(' '));
+    const why = [], muted = [], priorities = [];
     let interest = 0, penalty = 1;
     for (const p of s.priorities) {
       const hits = termHits(text, p.terms);
       if (!hits.length) continue;
       if (p.weight < 0) penalty *= Math.max(0.3, 1 + p.weight * 0.15 * Math.min(hits.length, 2)); // de-emphasis scales the whole score
       else interest += p.weight * Math.min(hits.length, 3);
+      priorities.push({ topic: p.topic.replace(/^De-emphasize: /, ''), weight: p.weight, hits, rank: prioRank.get(p.topic) ?? null, de_emphasis: p.weight < 0 });
       (p.weight < 0 ? muted : why).push(`${p.topic.replace(/^De-emphasize: /, '')} (${hits.slice(0, 3).join(', ')})`);
     }
-    const watchHits = [];
-    for (const w of watch) { const h = termHits(text, [w.name, ...w.terms]); if (h.length) { interest += 1.5 * w.weight * (w.pinned ? 1.5 : 1); watchHits.push(w.name); } }
+    const watchHits = [], watchTerms = [];
+    for (const w of watch) {
+      const h = termHits(text, [w.name, ...w.terms]);
+      if (h.length) { interest += 1.5 * w.weight * (w.pinned ? 1.5 : 1); watchHits.push(w.name); watchTerms.push({ name: w.name, kind: w.kind, pinned: !!w.pinned, weight: w.weight, terms: h }); }
+    }
     const empMatches = employers.filter(e => termHits(text, [e.name]).length);
     const empHits = empMatches.map(e => e.name);
     interest += empMatches.reduce((m, e) => m + (e.pinned ? 1.5 : 0.5), 0); // pinned = big-push employers
@@ -186,7 +206,8 @@ export function rankStories({ days = 7 } = {}) {
 
     const toks = tokens(st.title + ' ' + (st.summary || ''));
     const prior = seen.filter(x => x.id !== st.id && x.first_seen < st.first_seen);
-    const maxSim = prior.reduce((m, x) => Math.max(m, jaccard(toks, tokens(x.title))), 0);
+    let maxSim = 0, similarTo = null;
+    for (const x of prior) { const j = jaccard(toks, tokens(x.title)); if (j > maxSim) { maxSim = j; similarTo = x; } }
     const novelty = 1 - Math.min(1, maxSim * 1.4);
 
     const domains = new Set(arts.map(a => a.domain));
@@ -196,37 +217,68 @@ export function rankStories({ days = 7 } = {}) {
       + (kinds.has('reporting') && credibleDomains.size > 1 ? 0.1 : 0) + (kinds.has('commentary') ? 0.03 : 0) + (kinds.has('community') || kinds.has('application') ? 0.03 : 0);
     if (!credibleDomains.size) evidence -= 0.15;
     evidence = Math.max(0, Math.min(1, evidence));
+    const counts = sourceCounts(arts);
 
     const impactHits = termHits(text, IMPACT);
-    const signals = { testable: termHits(text, TESTABLE).length > 0, challenges: termHits(text, CHALLENGE).length > 0, process: termHits(text, PROCESS).length > 0, numbers: /\d+(\.\d+)?\s?%/.test(text) };
+    const signalHits = { testable: termHits(text, TESTABLE), challenges: termHits(text, CHALLENGE), process: termHits(text, PROCESS) };
+    const signals = { testable: signalHits.testable.length > 0, challenges: signalHits.challenges.length > 0, process: signalHits.process.length > 0, numbers: /\d+(\.\d+)?\s?%/.test(text) };
     const impact = Math.min(1, impactHits.length / 5 + Object.values(signals).filter(Boolean).length * 0.12);
+    const signalQuotes = {
+      testable: signals.testable ? quoteFor(sents, x => termHits(x, signalHits.testable).length > 0) : null,
+      challenges: signals.challenges ? quoteFor(sents, x => termHits(x, signalHits.challenges).length > 0) : null,
+      process: signals.process ? quoteFor(sents, x => termHits(x, signalHits.process).length > 0) : null,
+      numbers: signals.numbers ? quoteFor(sents, x => /\d+(\.\d+)?\s?%/.test(x)) : null
+    };
+    const claimRows = all('SELECT text FROM claims WHERE story_id = ?', st.id);
+    const numbersFound = [...new Set(claimRows.flatMap(c => { const t = cleanClaim(c.text); return markedText(t, numberMarks(t)); }))].slice(0, 8);
 
     const newest = Math.max(...arts.map(a => Date.parse(a.published_at || a.fetched_at) || 0));
-    const hours = Math.max(0, (Date.now() - newest) / 36e5);
+    const hours = Math.max(0, (asOf - newest) / 36e5);
     const recency = Math.max(0.35, Math.exp(-hours / 96));
 
     const topicPref = (st.topics || []).reduce((m, t) => m + (prefs.topic[t] || 0), 0) / Math.max(1, (st.topics || []).length);
     const srcPref = arts.reduce((m, a) => Math.min(m, 1 + (prefs.source[a.source_id] || 0)), 1);
-    const base = 0.35 * interestN + 0.2 * novelty + 0.25 * evidence + 0.2 * impact;
-    const score = Math.round(100 * base * recency * (1 + topicPref) * srcPref * penalty * 10) / 10;
+
+    // Store first, then score from exactly the stored numbers.
+    const b = { interest: r3(interestN), novelty: r3(novelty), evidence: r3(evidence), impact: r3(impact), recency: r2(recency), feedback: r2(topicPref), source_pref: r2(srcPref), penalty: r2(penalty) };
+    const { points, base, score } = scoreFrom(b);
 
     const engagement = arts.reduce((acc, a) => { const e = parse(a.engagement_json, null); if (e) for (const [k, v] of Object.entries(e)) acc[k] = (acc[k] || 0) + v; return acc; }, {});
+    const srcPhrase = `${counts.posts} post${counts.posts === 1 ? '' : 's'} from ${counts.outlets} outlet${counts.outlets === 1 ? '' : 's'} (${[
+      counts.first_party ? `${counts.first_party} first-party` : null, counts.primary ? `${counts.primary} primary research/report` : null,
+      `${counts.independent} independent`, counts.commentary ? `${counts.commentary} commentary/community` : null].filter(Boolean).join(', ')})`;
     const explanation = [
       why.length ? `Matches ${why.slice(0, 2).join('; ')}` : 'Weak match to your priorities',
       watchHits.length ? `watchlist: ${watchHits.slice(0, 3).join(', ')}` : null,
-      `${credibleDomains.size} credible independent source${credibleDomains.size === 1 ? '' : 's'}${kinds.has('announcement') ? ' incl. primary announcement' : ''}${kinds.has('research') ? ' incl. research' : ''}${domains.size > credibleDomains.size ? ` (+${domains.size - credibleDomains.size} commentary/community)` : ''}`,
+      srcPhrase,
       impactHits.length ? `practical signals: ${impactHits.slice(0, 3).join(', ')}` : null,
       Object.entries(signals).some(([, v]) => v) ? `post-worthy: ${Object.entries(signals).filter(([, v]) => v).map(([k]) => ({ testable: 'testable', challenges: 'challenges a claim', process: 'changes a process', numbers: 'checkable numbers' })[k]).join(', ')}` : null,
-      muted.length ? `de-emphasized (×${penalty.toFixed(2)}): ${muted.join('; ')}` : null,
+      muted.length ? `de-emphasized (×${b.penalty.toFixed(2)}): ${muted.join('; ')}` : null,
       novelty < 0.5 ? 'similar to stories you have seen' : null,
-      topicPref ? `feedback adjustment ${topicPref > 0 ? '+' : ''}${Math.round(topicPref * 100)}%` : null
+      b.feedback ? `feedback adjustment ${b.feedback > 0 ? '+' : ''}${Math.round(b.feedback * 100)}%` : null
     ].filter(Boolean).join(' · ');
     run('UPDATE stories SET score = ?, breakdown_json = ?, explanation = ? WHERE id = ?', score, JSON.stringify({
-      interest: +interestN.toFixed(2), novelty: +novelty.toFixed(2), evidence: +evidence.toFixed(2), impact: +impact.toFixed(2), recency: +recency.toFixed(2),
-      feedback: +topicPref.toFixed(2), sources: credibleDomains.size, all_sources: domains.size, signals, watch: watchHits, employers: empHits, engagement
+      version: BREAKDOWN_VERSION, ...b, weights: WEIGHTS, points, base, score,
+      newest_hours: r1(hours), ranked_at: new Date(asOf).toISOString(),
+      interest_raw: r2(interest), interest_cap: 9,
+      priorities, watch: watchHits, watch_terms: watchTerms,
+      employers: empHits, employer_hits: empMatches.map(e => ({ name: e.name, pinned: !!e.pinned })),
+      impact_hits: impactHits, signals, signal_hits: signalHits, signal_quotes: signalQuotes, numbers_found: numbersFound,
+      similar_to: maxSim >= 0.15 && similarTo ? { id: similarTo.id, title: similarTo.title, similarity: r2(maxSim) } : null,
+      // legacy fields (v3 UI): credible outlets incl. first-party, and all outlets
+      sources: credibleDomains.size, all_sources: domains.size,
+      source_counts: counts, engagement
     }), explanation, st.id);
   }
   return { ranked: stories.length };
+}
+
+/** Time of the last pipeline rank (latest rank stage or article intake), for re-ranking without silently ageing scores. */
+export function lastRankTime() {
+  const stage = get("SELECT MAX(finished_at) AS t FROM run_stages WHERE stage = 'rank' AND status = 'done'")?.t;
+  const intake = get('SELECT MAX(fetched_at) AS t FROM articles')?.t;
+  const t = Math.max(Date.parse(stage || '') || 0, Date.parse(intake || '') || 0);
+  return t || Date.now();
 }
 
 async function stageBrief(ctx) {

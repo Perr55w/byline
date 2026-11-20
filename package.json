@@ -12,7 +12,8 @@
     "daily": "node --disable-warning=ExperimentalWarning scripts/daily.js",
     "demo": "node --disable-warning=ExperimentalWarning scripts/demo.js",
     "test": "node --disable-warning=ExperimentalWarning --test test/*.test.js",
-    "backup": "node --disable-warning=ExperimentalWarning scripts/backup.js"
+    "backup": "node --disable-warning=ExperimentalWarning scripts/backup.js",
+    "go-live": "node --disable-warning=ExperimentalWarning scripts/go-live.js"
   },
   "optionalDependencies": {
     "@anthropic-ai/sdk": "^1.10.0",

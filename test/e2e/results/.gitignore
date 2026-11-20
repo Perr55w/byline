@@ -1,0 +1,3 @@
+# Harness output (latest.json, screenshots, server log, pid file) is regenerated on every run.
+*
+!.gitignore

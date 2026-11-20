@@ -1,0 +1,242 @@
+/* =====================================================================
+   Byline v4 — People (views/people.js: #/people, #/person/:id, outreach modal).
+   Tab-only layout; shared classes (tile, table, tag, chip, btn, field, meter, empty) come from
+   components.css. Tokens only. Also loaded by Campaigns for the outreach modal.
+   ===================================================================== */
+
+/* ---------------------------------------------------------------- layout */
+.pp-cols { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: var(--gap); align-items: start; }
+.pp-main, .pp-aside { min-width: 0; }
+.pp-card { padding: 22px 24px; }
+.pp-card.tile--flush { padding: 0; }
+.pp-pad { padding: 20px 24px 0; }
+.pp-card .section-head { margin-bottom: 14px; }
+.pp-card > .section-label, .pp-card-h .section-label { margin: 0 0 12px; }
+.pp-card-h { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 0 0 4px; }
+.pp-card-h .section-label { margin: 0; }
+.pp-h3 { margin: 0 0 8px; color: var(--text-1); font: 500 14px/20px var(--font-sans); }
+.pp-rule { height: 1px; margin: 20px 0 18px; background: var(--line); }
+.pp-tagrow { margin: -14px 0 24px; }
+.pp-facts { margin-left: 4px; color: var(--text-3); font: 450 var(--fs-meta)/var(--lh-meta) var(--font-sans); font-variant-numeric: tabular-nums; }
+.pp-back { display: inline-flex; align-items: center; gap: 4px; color: var(--text-3); text-decoration: none; }
+.pp-back:hover { color: var(--text-1); }
+.pp-back .icon { width: 14px; height: 14px; }
+
+/* ---------------------------------------------------------------- text bits */
+.pp-who { display: grid; gap: 2px; min-width: 0; }
+.pp-name { color: var(--text-1); font: 500 15px/21px var(--font-sans); text-decoration: none; }
+a.pp-name:hover { color: var(--accent-text); text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 1px; }
+.pp-tags { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.pp-tags:empty { display: none; }
+.pp-sub { display: block; color: var(--text-2); font: 400 13px/19px var(--font-sans); }
+.pp-dotsep { margin: 0 6px; color: var(--text-3); }
+/* PE-3: dates on People and person/N are Geist sans with tabular figures, not mono. */
+.pp-mono { color: var(--text-2); font: 450 13px/18px var(--font-sans); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.pp-note { margin: 0; color: var(--text-2); font: 400 13.5px/20px var(--font-sans); text-wrap: pretty; }
+.pp-note + .pp-note { margin-top: 8px; }
+.pp-note b { color: var(--text-1); font-weight: 500; }
+.pp-note--warn { color: var(--warn); }
+.pp-note--err { color: var(--err); }
+.pp-note--ok { display: inline-flex; align-items: center; gap: 6px; color: var(--ok); }
+.pp-note .icon, .pp-sugg .icon, .pp-basis .icon, .pp-fieldset .icon { width: 12px; height: 12px; vertical-align: -1px; margin-left: 2px; }
+.pp-note + .pp-form, .pp-note + .pp-empty-line, .pp-note + .pp-timeline { margin-top: 16px; }
+.pp-empty-line { margin: 0; color: var(--text-2); font: 400 14px/21px var(--font-sans); }
+.pp-card.tile--flush > .pp-empty-line { padding-bottom: 22px; }
+.pp-linkbtn { display: inline; padding: 0; border: 0; background: none; color: var(--text-1); font: 500 15px/21px var(--font-sans); text-align: left; cursor: pointer; }
+.pp-linkbtn:hover { color: var(--accent-text); text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 1px; }
+.pp-dupnote { display: flex; margin: 4px 0 0; color: var(--warn); font: 500 12px/16px var(--font-sans); }   /* PE-2: aligned with the name's left edge */
+.pp-who + .pp-dupnote { margin: 4px 0 0; }
+
+/* ---------------------------------------------------------------- callouts (data hygiene / do-not-contact) */
+.pp-callout { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; margin: 0 0 20px; padding: 12px 16px; border-radius: var(--r-tile);
+  background: var(--warn-soft); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--warn) 30%, transparent); }
+.pp-callout > .icon { width: 18px; height: 18px; color: var(--warn); flex: none; }
+.pp-callout p { flex: 1 1 360px; margin: 0; color: var(--text-1); font: 400 14px/21px var(--font-sans); }
+.pp-callout b { font-weight: 600; }
+.pp-callout .btn { background: var(--surface-solid); }
+.pp-callout--err { background: var(--err-soft); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--err) 30%, transparent); }
+.pp-callout--err > .icon { color: var(--err); }
+
+/* ---------------------------------------------------------------- follow-ups */
+.pp-fu-list { margin: 0; padding: 0; list-style: none; }
+.pp-fu-group { margin: 14px 0 4px; color: var(--text-3); font: 500 var(--fs-label)/var(--lh-label) var(--font-mono); letter-spacing: var(--tr-label); text-transform: uppercase; }
+.pp-fu-group:first-child { margin-top: 0; }
+.pp-fu { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 0; border-top: 1px solid var(--line); }
+.pp-fu-group + .pp-fu { border-top: 0; }
+.pp-fu-main { min-width: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; }
+.pp-fu-main .pp-sub { flex-basis: 100%; }
+.pp-fu .tag { flex: none; }
+.pp-fu.kfocus { margin: 0 -12px; padding-left: 12px; padding-right: 12px; border-radius: var(--r-ctl); }
+
+/* ---------------------------------------------------------------- tables */
+#view .pp-table { font: 400 14px/20px var(--font-sans); }
+#view .pp-table th { height: 36px; padding: 0 16px; border-bottom: 1px solid var(--line); background: transparent; position: static; }
+#view .pp-table td { height: auto; padding: 14px 16px; border-top: 1px solid var(--line); vertical-align: top; }
+#view .pp-table tr:first-child td { border-top: 0; }
+#view .pp-table th:first-child, #view .pp-table td:first-child { padding-left: 24px; }
+#view .pp-table th:last-child, #view .pp-table td:last-child { padding-right: 24px; }
+.pp-card .pp-table { margin-top: 6px; }
+#view .pp-table--people { table-layout: fixed; }
+/* CP5: Person 36% (2-line cells), a narrower Stage, and LAST CONTACT given its own 112 px + 24 px right pad. */
+#view .pp-table--people th.pp-c-person { width: 36%; } #view .pp-table--people th.pp-c-stage { width: 16%; }
+#view .pp-table--people th.pp-c-emp { width: 12%; } #view .pp-table--people th.pp-c-last { width: 136px; min-width: 112px; }
+#view .pp-table--people th.pp-c-last, #view .pp-table--people td.pp-c-last { padding-right: 24px; white-space: nowrap; }
+.pp-stagecell .tag { display: flex; width: max-content; }
+.pp-stagecell .tag + .tag { margin-top: 6px; }
+.pp-aside--sticky { position: sticky; top: calc(var(--topbar-h) + 16px); align-self: start; }
+#view .pp-table--people td:first-child { padding-right: 8px; }
+#view .pp-table--people .pp-namerow { column-gap: 6px; }
+.pp-h4 { margin: 16px 0 6px; padding-top: 14px; border-top: 1px solid var(--line); color: var(--text-1); font: 500 13.5px/20px var(--font-sans); }
+.pp-who .pp-namerow { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.pp-table tbody tr[data-href], .pp-table tbody tr[data-outreach] { cursor: pointer; }
+.pp-table tbody tr.pp-dup { box-shadow: inset 2px 0 0 var(--warn); }
+.pp-next { min-width: 180px; color: var(--text-1); }
+.pp-date { display: block; margin-top: 2px; color: var(--text-2); font: 450 13px/18px var(--font-sans); font-variant-numeric: tabular-nums; }
+/* PE-1: one red per row. The Overdue pill (Follow-ups) is the red; a table date says "overdue" in text-2. */
+.pp-date.is-late { color: var(--text-2); }
+/* PE-3: the Next date control: a formatted day on a button; the native date input underneath holds the value. */
+.pp-flabel { color: var(--text-2); font: 500 13px/18px var(--font-sans); }
+.pp-datepick { position: relative; display: block; }
+.pp-datebtn { display: flex; align-items: center; justify-content: space-between; width: 100%; color: var(--text-1); font: 450 14px/20px var(--font-sans); font-variant-numeric: tabular-nums; text-align: left; cursor: pointer; }
+.pp-datebtn .icon { width: 16px; height: 16px; color: var(--text-3); }
+.pp-date-native { position: absolute; inset: 0; width: 100%; opacity: 0; pointer-events: none; }
+.pp-date-native.is-shown { position: static; margin-top: 6px; opacity: 1; pointer-events: auto; }
+/* PE-4: long outreach and history lists skip off-screen layout. */
+.pp-timeline > li, .pp-table--inset tbody tr { content-visibility: auto; contain-intrinsic-size: auto 56px; }
+.pp-date.is-today { color: var(--warn); }
+#view .pp-table--inset td:first-child { padding-left: 0; }
+#view .pp-table--inset td:last-child { padding-right: 0; }
+
+/* ---------------------------------------------------------------- aside */
+.pp-big { display: flex; align-items: baseline; gap: 10px; margin: 0 0 12px; }
+.pp-big-n { color: var(--text-1); font: 320 48px/1 var(--font-sans); letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
+.pp-big-of { color: var(--text-2); font: 450 14px/20px var(--font-sans); }
+.pp-meter { height: 6px; margin: 0 0 12px; border-radius: 3px; background: var(--track); }
+/* Neutral ink like the pipeline bars: blue is reserved for quality (B amendment 2). */
+.pp-meter > i { background: var(--text-3); }
+.pp-stages { display: flex; flex-direction: column; gap: 9px; margin: 0; padding: 0; list-style: none; }
+.pp-stages li { display: grid; grid-template-columns: 96px minmax(0, 1fr) 24px; align-items: center; gap: 10px; }
+.pp-stage-l { color: var(--text-1); font: 450 13px/18px var(--font-sans); text-transform: capitalize; }
+.pp-stage-n { color: var(--text-1); font: 500 13px/18px var(--font-mono); text-align: right; font-variant-numeric: tabular-nums; }
+.pp-stages .meter > i { background: var(--text-3); }
+.pp-stages li.is-zero .pp-stage-l, .pp-stages li.is-zero .pp-stage-n { color: var(--text-3); }
+.pp-mini { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
+.pp-mini li { padding: 10px 0; border-top: 1px solid var(--line); }
+.pp-mini li:first-child { border-top: 0; padding-top: 0; }
+.pp-mini a { color: var(--text-1); font-weight: 500; }
+.pp-sugg { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
+.pp-sugg > li { padding: 14px 0; border-top: 1px solid var(--line); }
+.pp-sugg > li:first-child { border-top: 0; padding-top: 0; }
+.pp-sugg-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
+.pp-sugg-opt { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 8px; padding: 8px 10px; border-radius: var(--r-ctl); background: var(--inset); color: var(--text-2); font: 400 13px/19px var(--font-sans); }
+
+/* ---------------------------------------------------------------- forms (in page and in modals) */
+.pp-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 16px; }
+.pp-full { grid-column: 1 / -1; }
+.pp-form-end { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+.pp-form .pp-form-end { margin-top: 0; }
+.pp-form-sub { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--text-2); font: 500 13px/18px var(--font-sans); }
+.pp-lbl-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.pp-check { display: flex; align-items: flex-start; gap: 10px; color: var(--text-1); font: 400 14px/20px var(--font-sans); cursor: pointer; }
+.pp-check input { flex: none; width: 16px; height: 16px; margin: 2px 0 0; accent-color: var(--accent-fill); }
+.pp-check--end { align-self: end; min-height: 36px; align-items: center; }
+.pp-check--end input { margin: 0; }
+.pp-fieldset { margin: 0; padding: 0; border: 0; display: flex; flex-direction: column; gap: 8px; }
+.pp-fieldset legend { margin-bottom: 8px; padding: 0; color: var(--text-2); font: 500 13px/18px var(--font-sans); }
+.pp-details { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
+.pp-detail-row { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) auto; gap: 8px; align-items: center; }
+.pp-ixform { display: grid; grid-template-columns: 170px 160px minmax(0, 1fr) auto; gap: 12px; align-items: end; margin-bottom: 10px; }
+.pp-dnc { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--text-1); font: 450 14px/20px var(--font-sans); }
+.pp-private { background: color-mix(in oklab, var(--surface) 70%, var(--inset)); }
+.pp-private .textarea { margin-top: 10px; }
+.pp-prep { margin: 10px 0 0; padding-left: 20px; display: flex; flex-direction: column; gap: 10px; color: var(--text-1); font: 400 var(--fs-reading)/var(--lh-reading) var(--font-serif); font-variation-settings: 'opsz' 16; }
+.pp-modal-dek { margin: 0 0 18px; color: var(--text-2); font: 400 14px/21px var(--font-sans); max-width: 70ch; }
+
+/* ---------------------------------------------------------------- interaction timeline */
+.pp-timeline { position: relative; margin: 16px 0 0; padding: 0; list-style: none; }
+.pp-timeline li { position: relative; display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; gap: 12px; padding: 0 0 16px; }
+.pp-timeline li::before { content: ""; position: absolute; left: 7.5px; top: 18px; bottom: 0; width: 1px; background: var(--line-2); }
+.pp-timeline li:last-child { padding-bottom: 0; }
+.pp-timeline li:last-child::before { display: none; }
+.pp-tl-dot { width: 9px; height: 9px; margin: 6px 0 0 3.5px; border-radius: 50%; background: var(--surface-solid); box-shadow: inset 0 0 0 1.5px var(--line-ctl); }
+.pp-timeline li.is-reply .pp-tl-dot { box-shadow: inset 0 0 0 5px var(--ok); }
+.pp-tl-h { display: flex; align-items: center; gap: 10px; }
+.pp-tl-b p { margin: 6px 0 0; color: var(--text-1); font: 400 14px/21px var(--font-sans); }
+
+/* ---------------------------------------------------------------- outreach modal */
+.modal.pp-omodal { width: min(980px, 100%); padding: 26px 28px 22px; }
+.pp-o-head { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 12px 20px; margin-bottom: 18px; }
+.pp-o-head .eyebrow { margin-bottom: 6px; }
+.pp-o-head h2 { margin: 0; }
+.pp-o-head h2 a { color: inherit; text-decoration-thickness: 1px; text-underline-offset: 4px; }
+.pp-o-head .tag .icon { width: 12px; height: 12px; }
+.pp-o-grid { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 24px; }
+.pp-o-side { padding: 18px 20px; border-radius: var(--r-tile); background: var(--inset); align-self: start; }
+.pp-count { color: var(--text-3); font: 450 12px/1 var(--font-mono); font-variant-numeric: tabular-nums; }
+.pp-count.is-over { color: var(--err); font-weight: 600; }
+.pp-preview-box .section-label { margin: 0 0 8px; }
+.pp-preview { white-space: pre-wrap; color: var(--text-1); font: 400 14px/22px var(--font-sans); overflow-wrap: anywhere; }
+mark.pp-pd { padding: 0 2px; border-radius: 3px; background: var(--accent-soft); color: var(--text-1); }
+.pp-basis, .pp-flags { display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 0; list-style: none; color: var(--text-1); font: 400 13.5px/20px var(--font-sans); }
+.pp-flags li { display: flex; align-items: flex-start; gap: 8px; }
+.pp-flags .tag { flex: none; margin-top: 1px; }
+.pp-o-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin-top: 22px; padding-top: 16px; border-top: 1px solid var(--line); }
+.pp-o-foot .icon, .pp-o-head .icon { width: 14px; height: 14px; }
+
+/* ---------------------------------------------------------------- responsive */
+@media (max-width: 1180px) { .pp-cols { grid-template-columns: minmax(0, 1fr) 300px; } }
+@media (max-width: 1020px) { .pp-cols { grid-template-columns: 1fr; } .pp-aside--sticky { position: static; } .pp-ixform { grid-template-columns: 1fr 1fr; } .pp-ixform .pp-grow { grid-column: 1 / -1; } }
+@media (max-width: 760px) {
+  .pp-card { padding: 18px; }
+  .pp-pad { padding: 16px 18px 0; }
+  .pp-tagrow { margin: -8px 0 18px; }
+  .pp-facts { flex-basis: 100%; margin: 4px 0 0; }
+  .pp-form { grid-template-columns: 1fr; }
+  .pp-detail-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .pp-detail-row [data-s] { grid-column: 1; grid-row: 2; }
+  .pp-detail-row .btn { grid-row: 1 / span 2; grid-column: 2; }
+  .pp-ixform { grid-template-columns: 1fr 1fr; }
+  .pp-ixform > .btn { grid-column: 1 / -1; }
+  .pp-o-grid { grid-template-columns: 1fr; }
+  .modal.pp-omodal { padding: 22px 16px calc(16px + env(safe-area-inset-bottom, 0px)); }
+  .pp-hide-sm, #view .pp-table .pp-hide-sm { display: none; }
+  #view .pp-table thead { display: none; }
+  #view .pp-table tbody tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 12px; padding: 14px 18px; border-top: 1px solid var(--line); }
+  #view .pp-table tbody tr:first-child { border-top: 0; }
+  #view .pp-table tbody td { display: block; padding: 0; border: 0; height: auto; }
+  #view .pp-table tbody td:first-child, #view .pp-table tbody td:last-child { padding: 0; }
+  #view .pp-table tbody td:first-child { grid-column: 1; }
+  #view .pp-table tbody td:nth-child(2) { grid-column: 2; grid-row: 1; justify-self: end; }
+  #view .pp-table tbody td.pp-next, #view .pp-table tbody td:nth-child(n+3):not(.pp-hide-sm) { grid-column: 1 / -1; }
+  #view .pp-table--inset tbody tr { padding: 12px 0; }
+  .pp-fu { align-items: flex-start; }
+  .pp-o-foot { flex-direction: column-reverse; align-items: stretch; }
+  .pp-o-foot .cluster { justify-content: flex-end; }
+}
+
+/* AA for status tags inside these tabs (Proof): the shared --ok/--warn text on their soft fills is ~3:1.
+   Darkened toward ink with color-mix (tokens only). Shared-file request: fix .tag--ok/--warn/--demo in components.css. */
+:is(.cp-ok, .pp-note--ok) { color: var(--ok-text); }
+:is(.pp-note--warn, .pp-dupnote, .pp-date.is-today) { color: var(--warn-text); }
+/* phone/tablet: on a person, the relationship and outreach come before the long research form */
+@media (max-width: 1020px) {
+  .pp-person .pp-cols { display: flex; flex-direction: column; }
+  .pp-person .pp-main, .pp-person .pp-aside { display: contents; }
+  .pp-person [aria-labelledby="pp-rel-h"] { order: 1; }
+  .pp-person [aria-labelledby="pp-o-h"] { order: 2; }
+  .pp-person [aria-labelledby="pp-i-h"] { order: 3; }
+  .pp-person [aria-labelledby="pp-p-h"] { order: 4; }
+  .pp-person [aria-labelledby="pp-t-h"] { order: 5; }
+  .pp-person [aria-labelledby="pp-r-h"] { order: 6; }
+  .pp-person [aria-labelledby="pp-n-h"] { order: 7; }
+}
+@media (max-width: 1340px) { #view .pp-table .pp-hide-md { display: none; } }
+#view .pp-table--people th { white-space: nowrap; }
+#view .pp-table td.pp-nowrap { white-space: nowrap; }
+
+
+/* PE-4 (E1): on person/N every card after the research card starts below the fold on a phone; they skip style,
+   layout and paint until scrolled near. Sizes are the measured card heights (auto keeps the real one once seen). */
+.pp-person .pp-main > .pp-card:not(:first-child) { content-visibility: auto; contain-intrinsic-size: auto 480px; }
+@media (max-width: 1020px) { .pp-person .pp-aside > .pp-card { content-visibility: auto; contain-intrinsic-size: auto 320px; } }
+.pp-later { display: none; }   /* idle-chunk placeholders (PE-4): no box, no flex gap */

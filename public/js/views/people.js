@@ -1,318 +1,500 @@
+// People (v4; was "Contacts"). F §2 People headline: follow-ups first ("2 follow-ups are overdue."), then a
+// one-liner with contacts, do-not-contact and this week's outreach against the goal. Every figure comes from
+// /api/contacts, /api/followups, /api/outreach, /api/connections/suggestions and /api/status (its `today`, in
+// settings.timezone, decides what is overdue).
+// Data hygiene is shown, not hidden (F amendment 6): duplicate contacts are flagged with links to each record,
+// demo rows carry a Demo tag, and sent messages that went to a duplicate are called out.
+// Every v3 feature is kept: contact CRUD with sourced public details, stage / next step / next date,
+// do-not-contact (blocks drafting and approval, cancels open drafts), interaction log, permissioned outreach
+// drafts with the exact-text approval gate, Gmail send / queue, "I sent it", follow-ups, awaiting reply,
+// meeting prep, thank-you drafts, content → connection suggestions and the private note.
+// openOutreach / PURPOSES / CHANNELS / STAGES are exported for Campaigns, plus a few text helpers.
 import { api } from '../api.js';
-import { html, raw, esc, on, act, toast, modal, confirmBox, status, fmtDate, fmtDateTime, copy } from '../ui.js';
+import { html, raw, esc, on, act, toast, modal, confirmBox, status, copy, icon, useStyle } from '../ui.js';
+import { enterItems, reduced } from '../motion.js';
 
 export const STAGES = ['researching', 'drafting', 'contacted', 'replied', 'met', 'nurturing', 'paused'];
 export const PURPOSES = { mentorship: 'Mentorship question', informational: 'Informational interview', peer: 'Peer connection', event_followup: 'Event follow-up', project_feedback: 'Project feedback', thank_you: 'Thank-you' };
 export const CHANNELS = { email: 'Cold email', linkedin_note: 'LinkedIn note (300)', instagram_dm: 'Instagram DM', short: 'Short (200 chars)' };
 const KINDS = ['introduction', 'message_sent', 'reply', 'coffee_chat', 'call', 'meeting', 'thank_you', 'follow_up', 'event', 'note'];
 const LIMITS = { short: 200, linkedin_note: 300 };
-const today = () => new Date().toISOString().slice(0, 10);
+const SEGMENTS = { target_team: 'Target team', ksu_alumni: 'KSU alumni in tech', founder: 'Founder / operator', peer: 'Peer', other: 'Other' };
+const CSS = '/css/v4/people.css';
+
+// ------------------------------------------------------------------ shared text helpers (also used by Campaigns, Employers, Career, Performance)
+export const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+export const listJoin = (a) => a.length <= 1 ? (a[0] ?? '') : a.length === 2 ? `${a[0]} and ${a[1]}` : `${a.slice(0, -1).join(', ')} and ${a[a.length - 1]}`;
+/** Demo rows are marked in their own text ("(demo)", "(fictional)", "DEMO · "); show a Demo tag instead. */
+/** Run fn(s) once this view's page has been swapped in and painted: byline:routed names the page → two rAFs →
+ *  idle time, one fn per painted frame. Queuing idle work straight from render() can land it before (or inside) the
+ *  swap frame, because the router inserts the page after render() resolves. Used by the E1 idle chunks on Campaigns,
+ *  Career and person/N. A 1.2 s fallback covers a routed event that never names the page. */
+export function afterSwap(el, ...fns) {
+  let done = false;
+  const idle = (f) => requestAnimationFrame(() => requestAnimationFrame(() => (window.requestIdleCallback ? requestIdleCallback(f, { timeout: 300 }) : setTimeout(f, 16))));
+  const run = () => { if (!el.isConnected) return; const f = fns.shift(); if (f) f(); if (fns.length) idle(run); };
+  const go = () => { if (done) return; done = true; document.removeEventListener('byline:routed', onRouted); idle(run); };
+  const onRouted = (e) => { if (!e.detail?.page || e.detail.page.contains(el)) go(); };
+  // Already swapped in (e.g. Career's tab switch re-renders a pane on the current page): no routed event will come.
+  const pg = el.closest?.('.page');
+  if (pg && !pg.classList.contains('is-pending') && !pg.classList.contains('is-building')) return go();
+  document.addEventListener('byline:routed', onRouted);
+  setTimeout(go, 1200);
+}
+export const isDemoText = (s) => /\((demo|fictional)\)|^\s*DEMO\s*[·:-]/i.test(String(s || ''));
+export const stripDemo = (s) => String(s || '').replace(/^\s*DEMO\s*[·:-]\s*/i, '').replace(/\s*\((demo|fictional)\)/ig, '').trim();
+export const demoTag = (on) => on ? html`<span class="tag tag--demo" title="Fictional sample data">Demo</span>` : '';
+/** "Wed 18 Nov" for a YYYY-MM-DD (dates are already local to settings.timezone). */
+export const dayLabel = (ymd, { weekday = true, year = false } = {}) => ymd ? new Date(`${String(ymd).slice(0, 10)}T12:00:00`).toLocaleDateString('en-GB', { ...(weekday ? { weekday: 'short' } : {}), day: 'numeric', month: 'short', ...(year ? { year: 'numeric' } : {}) }).replace(',', '') : '';
+/** ISO timestamp → "18 Nov, 6:28 PM" in the settings timezone. */
+export const whenLabel = (iso, tz) => iso ? `${new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', ...(tz ? { timeZone: tz } : {}) })}, ${new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', ...(tz ? { timeZone: tz } : {}) })}` : '';
+const addDays = (ymd, n) => { const d = new Date(`${ymd}T12:00:00Z`); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
 const label = (s) => (s || '').replace(/_/g, ' ');
 const opts = (list, sel) => list.map(([v, l]) => html`<option value="${v}" ${v === sel ? 'selected' : ''}>${l}</option>`);
-const fresh = (el) => { const root = document.createElement('div'); el.replaceChildren(root); return root; };
 const toLocalInput = (iso) => { if (!iso) return ''; const d = new Date(iso); if (isNaN(d)) return ''; return new Date(d - d.getTimezoneOffset() * 6e4).toISOString().slice(0, 16); };
+const nameKey = (n) => stripDemo(n).toLowerCase().replace(/\s+/g, ' ').trim();
+/** Groups of contacts that share a name (likely duplicates). */
+export function duplicateGroups(contacts) {
+  const g = new Map();
+  for (const c of contacts) { const k = nameKey(c.name); if (!k) continue; if (!g.has(k)) g.set(k, []); g.get(k).push(c); }
+  return [...g.values()].filter(x => x.length > 1);
+}
 
 let SMTP_READY = false;
 api.get('/status').then(st => { SMTP_READY = st.delivery?.email?.via === 'gmail'; }).catch(() => {});
 
-const SEGMENTS = { target_team: 'Target team', ksu_alumni: 'KSU alumni in tech', founder: 'Founder / operator', peer: 'Peer', other: 'Other' };
-
 export async function render(el, ctx = {}) {
+  await useStyle(CSS);
   if (ctx.name === 'person' && ctx.params?.[0]) return renderPerson(el, ctx.params[0], ctx);
   return renderList(el, ctx);
 }
 
-// ---------------------------------------------------------------- list view
+// ------------------------------------------------------------------ list: headline (F §2 People)
+function headline({ contacts, fu, today }) {
+  const overdue = fu.due.filter(f => f.next_date < today);
+  const week = fu.due.filter(f => f.next_date >= today && f.next_date <= addDays(today, 6));
+  const dnc = contacts.filter(c => c.dnc).length;
+  const h = !contacts.length ? 'No people yet.'
+    : overdue.length ? `${plural(overdue.length, 'follow-up')} ${overdue.length === 1 ? 'is' : 'are'} overdue.`
+    : week.length ? `${plural(week.length, 'follow-up')} due this week.`
+    : 'No follow-ups due.';
+  const w = fu.week;
+  const l = !contacts.length
+    ? html`Add someone whose public work you’ve actually read, with a source for every detail.${w ? html` Weekly outreach goal: <b>${w.goal}</b> messages.` : ''}`
+    : html`<b>${contacts.length}</b> ${contacts.length === 1 ? 'contact' : 'contacts'} (<b>${dnc}</b> do-not-contact).${w ? html` Outreach this week: <b>${w.sent}</b> of <b>${w.goal}</b> sent; <b>${fu.awaiting_reply.length}</b> awaiting a reply.` : ''}`;
+  return { h, l, overdue, week };
+}
+
+const dueTag = (d, today) => d < today ? html`<span class="tag tag--err">Overdue · ${dayLabel(d, { weekday: false })}</span>`
+  : d === today ? html`<span class="tag tag--warn">Today</span>`
+  : html`<span class="tag tag--neutral">${dayLabel(d)}</span>`;
+
+function personCell(c, { link = true, dnc = true, dup = false } = {}) {
+  const demo = isDemoText(c.name) || isDemoText(c.org);
+  const sub = [c.role, stripDemo(c.org)].filter(Boolean).join(' · ');
+  const seg = c.segment ? (SEGMENTS[c.segment] || c.segment) : '';
+  // The KSU tag is redundant when the segment line already says "KSU alumni".
+  const ksu = c.ksu_alumni && !/ksu/i.test(seg);
+  return html`<div class="pp-who">
+    <span class="pp-namerow">${link ? html`<a class="pp-name" href="#/person/${c.id}">${stripDemo(c.name)}</a>` : html`<span class="pp-name">${stripDemo(c.name)}</span>`}
+    <span class="pp-tags">${demoTag(demo)}${dnc && c.dnc ? html`<span class="tag tag--err">Do not contact</span>` : ''}${ksu ? html`<span class="tag tag--neutral">KSU</span>` : ''}${dup ? html`<span class="tag tag--warn" title="Same name as another record">Possible duplicate</span>` : ''}</span></span>
+    <span class="pp-sub">${sub || html`<span class="ink-3">No role recorded</span>`}${seg ? html`<span class="pp-dotsep" aria-hidden="true">·</span>${seg}` : ''}</span>
+  </div>`;
+}
+
 async function renderList(el, ctx) {
-  const [contacts, fu, suggestions, queue] = await Promise.all([api.get('/contacts'), api.get('/followups'), api.get('/connections/suggestions'), api.get('/outreach')]);
-  const root = fresh(el);
-  const t = today();
+  const [contacts, fu, suggestions, queue, st] = await Promise.all([
+    api.get('/contacts'), api.get('/followups'), api.get('/connections/suggestions').catch(() => []), api.get('/outreach'), api.get('/status')
+  ]);
+  const today = st.today || new Date().toISOString().slice(0, 10);
+  const tz = st.timezone;
   const hidden = (renderList.hidden ||= new Set());
-  const sugg = suggestions.filter((s, i) => !hidden.has(`${s.contact.id}-${s.story.id}`));
+  const sugg = suggestions.filter(s => !hidden.has(`${s.contact.id}-${s.story.id}`));
+  const hd = headline({ contacts, fu, today });
+  const dups = duplicateGroups(contacts);
+  const dupIds = new Set(dups.flat().map(c => c.id));
+  const weekStart = (() => { const d = new Date(`${today}T12:00:00`); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return d.toISOString().slice(0, 10); })();
+  const sentWeek = queue.filter(o => o.status === 'sent' && (o.sent_at || '').slice(0, 10) >= weekStart);
+  const sentToDup = sentWeek.filter(o => dupIds.has(o.contact_id));
+  const open = queue.filter(o => !['sent', 'cancelled'].includes(o.status));
+  const stageCounts = STAGES.map(s => [s, contacts.filter(c => c.stage === s).length]);
+  const otherStages = [...new Set(contacts.map(c => c.stage).filter(s => s && !STAGES.includes(s)))].map(s => [s, contacts.filter(c => c.stage === s).length]);
+  const stageMax = Math.max(1, ...stageCounts.map(x => x[1]), ...otherStages.map(x => x[1]));
+  const later = fu.due.filter(f => f.next_date > addDays(today, 6));
+  const hasEmp = contacts.some(c => c.employer);
+  const w = fu.week;
 
+  const fuRow = (f) => html`<li class="pp-fu" data-row>
+    <div class="pp-fu-main"><a class="pp-name" href="#/person/${f.id}">${stripDemo(f.name)}</a>${demoTag(isDemoText(f.name))}
+      <span class="pp-sub">${f.next_step || 'No next step written'}${f.employer ? html`<span class="pp-dotsep" aria-hidden="true">·</span>${f.employer}` : ''}<span class="pp-dotsep" aria-hidden="true">·</span>${label(f.stage)}</span></div>
+    ${dueTag(f.next_date, today)}
+  </li>`;
+  const fuGroup = (title, items) => items.length ? html`<li class="pp-fu-group" aria-hidden="true">${title} · ${items.length}</li>${items.map(fuRow)}` : '';
+
+  const root = document.createElement('div');
+  root.className = 'pp';
   root.innerHTML = String(html`
-  <div class="page-head">
-    <div>
-      <div class="kicker">Relationships</div>
-      <h1>People</h1>
-      <p class="lede">Research cards, follow-ups, and permissioned outreach. Every message is a draft until you approve the exact recipient, text, and send time — and you send it yourself.</p>
-    </div>
-    <div class="row"><button class="primary" data-act="add">Add contact</button></div>
-  </div>
+  <header class="page-head">
+    <p class="eyebrow">Relationships</p>
+    <h1>${hd.h}</h1>
+    <p class="lede">${hd.l}</p>
+    <div class="page-head-actions"><button class="btn btn--primary" data-act="add">${icon('plus')}Add person</button></div>
+  </header>
 
-  <div class="split">
-    <div class="stack reveal">
-      <section class="card">
-        <div class="row between"><h3>Contacts</h3><span class="mono faint">${contacts.length} total</span></div>
-        ${contacts.length ? html`<table>
-          <thead><tr><th>Name</th><th>Stage</th><th>Employer / org</th><th>Next step</th><th>Last contact</th></tr></thead>
-          <tbody>${contacts.map(c => html`<tr class="click" data-href="#/person/${c.id}">
-            <td><strong>${c.name}</strong>${c.dnc ? html` <span class="chip red">do not contact</span>` : ''}${c.ksu_alumni ? html` <span class="chip amber">KSU</span>` : ''}<div class="faint small">${c.role || ''}${c.segment ? ` · ${SEGMENTS[c.segment] || c.segment}` : ''}</div></td>
-            <td>${status(c.stage)}</td>
-            <td>${c.employer || ''}${c.employer && c.org ? html`<div class="faint small">${c.org}</div>` : c.org}</td>
-            <td>${c.next_step || '—'}${c.next_date ? html`<div class="small ${c.next_date < t ? 'due-late' : c.next_date === t ? 'due-today' : 'faint'}">${fmtDate(c.next_date + 'T12:00:00')}</div>` : ''}</td>
-            <td class="small muted">${c.last_interaction ? fmtDate(c.last_interaction + 'T12:00:00') : '—'}</td>
-          </tr>`)}</tbody></table>` : html`<div class="empty">No contacts yet. Add someone whose public work you've actually read — with a source for every detail.</div>`}
+  ${dups.length ? html`<div class="pp-callout" role="note">
+    ${icon('people')}
+    <p>${dups.map(g => html`<b>Possible duplicate:</b> “${stripDemo(g[0].name)}” appears ${g.length} times${g.every(c => c.dnc) ? ' (all do-not-contact)' : ''}. `)}${sentToDup.length ? html`${plural(sentToDup.length, 'of this week’s sent messages', 'of this week’s sent messages')} went to these copies, so the weekly count includes them.` : ''}</p>
+    <span class="cluster">${dups.flat().map((c, i) => html`<a class="btn btn--sm" href="#/person/${c.id}">Record ${i + 1} · added ${whenLabel(c.created_at, tz)}</a>`)}</span>
+  </div>` : ''}
+
+  <div class="pp-cols">
+    <div class="pp-main stack">
+      <section class="tile tile--static pp-card" aria-labelledby="pp-fu-h">
+        <div class="section-head"><h2 class="t-h2" id="pp-fu-h">Follow-ups</h2><span class="section-meta">${hd.overdue.length} overdue · ${hd.week.length} this week · ${later.length} later</span></div>
+        ${fu.due.length ? html`<ul class="pp-fu-list">${fuGroup('Overdue', hd.overdue)}${fuGroup('This week', hd.week)}${fuGroup('Later', later)}</ul>`
+          : html`<p class="pp-empty-line">Nothing scheduled. Set a next date on a person to get a reminder here; do-not-contact people never appear.</p>`}
       </section>
 
-      <section class="card">
-        <div class="row between"><h3>Outreach queue</h3><span class="mono faint">${queue.filter(o => !['sent', 'cancelled'].includes(o.status)).length} open</span></div>
-        ${queue.length ? html`<table>
-          <thead><tr><th>To</th><th>Purpose</th><th>Channel</th><th>Send at</th><th>Status</th></tr></thead>
-          <tbody>${queue.map(o => html`<tr class="click" data-outreach="${o.id}">
-            <td>${o.name}<div class="faint small">${o.subject || ''}</div></td><td class="small">${PURPOSES[o.purpose] || label(o.purpose)}</td>
-            <td class="small">${CHANNELS[o.channel] || o.channel}</td><td class="small muted">${o.sent_at ? 'sent ' + fmtDateTime(o.sent_at) : fmtDateTime(o.send_at)}</td><td>${status(o.status)}</td></tr>`)}</tbody></table>`
-        : html`<p class="muted small">No outreach drafts. Open a contact to draft one.</p>`}
+      <section class="tile tile--static tile--flush pp-card" aria-labelledby="pp-c-h">
+        <div class="section-head pp-pad"><h2 class="t-h2" id="pp-c-h">People</h2><span class="section-meta">${contacts.length} total · ${contacts.filter(c => (c.details || []).length).length} with sourced details</span></div>
+        ${contacts.length ? html`<table class="table pp-table pp-table--people">
+          <thead><tr><th class="pp-c-person">Person</th><th class="pp-c-stage">Stage</th>${hasEmp ? html`<th class="pp-c-emp pp-hide-sm pp-hide-md">Employer</th>` : ''}<th class="pp-c-next">Next step</th><th class="pp-c-last pp-hide-sm">Last contact</th></tr></thead>
+          <tbody>${contacts.map(c => html`<tr data-href="#/person/${c.id}" class="${dupIds.has(c.id) ? 'pp-dup' : ''} ${contacts.length > 20 ? 'cv-row' : ''}">
+            <td>${personCell(c, { dnc: false, dup: dupIds.has(c.id) })}</td>
+            <td class="pp-stagecell">${status(c.stage)}${c.dnc ? html`<span class="tag tag--err">Do not contact</span>` : ''}</td>
+            ${hasEmp ? html`<td class="pp-hide-sm pp-hide-md">${c.employer || html`<span class="ink-3">—</span>`}</td>` : ''}
+            <td class="pp-next">${c.next_step || html`<span class="ink-3">—</span>`}${c.next_date ? html`<span class="pp-date ${c.dnc ? '' : c.next_date === today ? 'is-today' : ''}"><time datetime="${c.next_date}">${dayLabel(c.next_date)}</time>${c.dnc ? ' · paused' : c.next_date < today ? ' · overdue' : ''}</span>` : ''}</td>
+            <td class="pp-c-last pp-hide-sm pp-mono">${c.last_interaction ? html`<time datetime="${c.last_interaction}">${dayLabel(c.last_interaction, { weekday: false })}</time>` : '—'}</td>
+          </tr>`)}</tbody></table>`
+        : html`<div class="pp-pad"><div class="empty"><h3>No people yet.</h3><p>Add someone whose public work you’ve actually read, with a source for every detail.</p></div></div>`}
+      </section>
+
+      <section class="tile tile--static tile--flush pp-card" aria-labelledby="pp-q-h">
+        <div class="section-head pp-pad"><h2 class="t-h2" id="pp-q-h">Outreach queue</h2><span class="section-meta">${open.length} open · ${queue.filter(o => o.status === 'sent').length} sent · ${queue.filter(o => o.status === 'cancelled').length} cancelled</span></div>
+        ${queue.length ? html`<table class="table pp-table">
+          <thead><tr><th>To</th><th>Purpose</th><th class="pp-hide-sm">Channel</th><th class="pp-hide-sm">When</th><th>Status</th></tr></thead>
+          <tbody>${queue.map(o => html`<tr data-outreach="${o.id}">
+            <td><button class="pp-linkbtn" data-outreach-open="${o.id}">${stripDemo(o.name)}</button>${dupIds.has(o.contact_id) ? html`<span class="pp-dupnote">Duplicate contact</span>` : ''}${o.subject ? html`<span class="pp-sub">${o.subject}</span>` : ''}</td>
+            <td>${PURPOSES[o.purpose] || label(o.purpose)}</td>
+            <td class="pp-hide-sm pp-nowrap">${CHANNELS[o.channel] || o.channel}</td>
+            <td class="pp-hide-sm pp-mono">${o.sent_at ? `sent ${whenLabel(o.sent_at, tz)}` : o.send_at ? `send ${whenLabel(o.send_at, tz)}` : '—'}</td>
+            <td>${status(o.status)}</td></tr>`)}</tbody></table>`
+        : html`<p class="pp-empty-line pp-pad">No outreach drafts. Open a person to draft one; every message waits for your approval of the exact text, recipient and send time.</p>`}
       </section>
     </div>
 
-    <div class="stack reveal">
-      ${fu.week ? html`<section class="card flat">
-        <div class="row between"><h3>This week’s outreach</h3><span class="mono">${fu.week.sent} / ${fu.week.goal}</span></div>
-        <div class="track-bar"><b style="width:${Math.min(100, fu.week.goal ? fu.week.sent / fu.week.goal * 100 : 0)}%"></b></div>
-        <p class="small muted" style="margin:8px 0 0">${fu.week.sent >= fu.week.goal ? 'Goal met — quality over volume from here.' : `${fu.week.goal - fu.week.sent} more approved message${fu.week.goal - fu.week.sent === 1 ? '' : 's'} to hit your weekly goal.`}</p>
+    <aside class="pp-aside pp-aside--sticky stack">
+      ${w ? html`<section class="tile tile--static pp-card" aria-labelledby="pp-w-h">
+        <h2 class="section-label" id="pp-w-h">This week’s outreach</h2>
+        <p class="pp-big"><span class="pp-big-n">${w.sent}</span><span class="pp-big-of">of ${w.goal} sent</span></p>
+        <div class="meter pp-meter" role="img" aria-label="${w.sent} of ${w.goal} messages sent this week"><i style="--v:${Math.min(1, w.goal ? w.sent / w.goal : 0)}"></i></div>
+        <p class="pp-note">${w.sent >= w.goal ? 'Goal met. Quality over volume from here.' : `${plural(w.goal - w.sent, 'more approved message')} to reach the weekly goal.`}</p>
+        ${sentToDup.length ? html`<p class="pp-note pp-note--warn">${plural(sentToDup.length, 'sent message')} went to duplicate “${stripDemo(dups[0][0].name)}” records.</p>` : ''}
+        <h3 class="pp-h4">Awaiting reply${fu.awaiting_reply.length ? ` · ${fu.awaiting_reply.length}` : ''}</h3>
+        ${fu.awaiting_reply.length ? html`<ul class="pp-mini">${fu.awaiting_reply.map(a => html`<li><a href="#/person/${a.id}">${stripDemo(a.name)}</a><span class="pp-sub">sent ${dayLabel((a.sent_at || '').slice(0, 10), { weekday: false })} · follow up ${dayLabel(a.suggested_follow_up)}</span></li>`)}</ul>`
+          : html`<p class="pp-note">No sent message is waiting on a reply.${queue.some(o => o.status === 'sent' && contacts.find(c => c.id === o.contact_id)?.dnc) ? ' Messages to people later marked do-not-contact are not tracked.' : ''} Logging a reply pauses reminders.</p>`}
       </section>` : ''}
-      <section class="card ledger">
-        <h3>Follow-ups</h3>
-        ${fu.due.length ? fu.due.map(f => html`<div class="row between list-row">
-          <span><a href="#/person/${f.id}">${f.name}</a> <span class="faint small">${f.employer || ''}</span><div class="small muted">${f.next_step || ''}</div></span>
-          <span class="chip ${f.next_date < t ? 'red' : f.next_date === t ? 'amber' : ''}">${f.next_date < t ? 'overdue · ' : f.next_date === t ? 'today · ' : ''}${fmtDate(f.next_date + 'T12:00:00', { month: 'short', day: 'numeric' })}</span></div>`)
-        : html`<p class="muted small">Nothing scheduled.</p>`}
-        <div class="hr"></div>
-        <h3>Awaiting reply</h3>
-        ${fu.awaiting_reply.length ? fu.awaiting_reply.map(a => html`<div class="row between list-row">
-          <span><a href="#/person/${a.id}">${a.name}</a><div class="small muted">sent ${fmtDate(a.sent_at)}</div></span>
-          <span class="chip blue" title="Suggested follow-up date">follow up ${fmtDate(a.suggested_follow_up + 'T12:00:00', { month: 'short', day: 'numeric' })}</span></div>`)
-        : html`<p class="muted small">No sent messages waiting on a reply. Logging a reply pauses reminders automatically.</p>`}
+
+      <section class="tile tile--static pp-card" aria-labelledby="pp-s-h">
+        <h2 class="section-label" id="pp-s-h">Pipeline by stage</h2>
+        <ul class="pp-stages">${[...stageCounts, ...otherStages].map(([s, n]) => html`<li class="${n ? '' : 'is-zero'}"><span class="pp-stage-l">${label(s)}</span><span class="meter"><i style="--v:${n / stageMax}"></i></span><span class="pp-stage-n">${n}</span></li>`)}</ul>
       </section>
 
-      <section class="card">
-        <h3>Content → connection</h3>
-        <p class="faint small" style="margin-top:-4px">Only from stories you actually read and marked useful, saved, or tested. You choose — nothing is sent.</p>
-        ${sugg.length ? sugg.map(s => html`<div class="sugg">
-          <div class="row between"><a href="#/person/${s.contact.id}"><strong>${s.contact.name}</strong></a><button class="sm ghost" data-act="dismiss" data-key="${s.contact.id}-${s.story.id}">Dismiss</button></div>
-          <div class="small">${s.reason}</div>
-          <div class="small faint">From <a href="#/story/${s.story.id}">${s.story.title}</a>${s.source?.url ? html` · <a href="${s.source.url}" target="_blank" rel="noopener">source ↗</a>` : ''}</div>
-          ${s.options.map(o => html`<div class="row between sugg-opt"><span class="small">${o.text}</span>
-            ${o.kind === 'private_question' ? html`<button class="sm" data-act="sugg-private" data-contact="${s.contact.id}" data-story="${s.story.id}">Start draft</button>`
-              : s.source?.url ? html`<a class="btn sm-link small" href="${s.source.url}" target="_blank" rel="noopener">Open post ↗</a>` : ''}</div>`)}
-        </div>`) : html`<p class="muted small">No suggestions right now. They appear when a contact authored, or their team appears in, a story you engaged with.</p>`}
+
+      <section class="tile tile--static pp-card" aria-labelledby="pp-x-h">
+        <h2 class="section-label" id="pp-x-h">Content → connection</h2>
+        ${sugg.length ? html`<ul class="pp-sugg">${sugg.map(s => html`<li>
+          <div class="pp-sugg-h"><a class="pp-name" href="#/person/${s.contact.id}">${stripDemo(s.contact.name)}</a><button class="btn btn--ghost btn--sm" data-act="dismiss" data-key="${s.contact.id}-${s.story.id}">Dismiss</button></div>
+          <p class="pp-note">${s.reason} From <a href="#/story/${s.story.id}" data-dossier-src>${s.story.title}</a>${s.source?.url ? html` · <a href="${s.source.url}" target="_blank" rel="noopener">source${icon('arrow-up-right')}</a>` : ''}</p>
+          ${s.options.map(o => html`<div class="pp-sugg-opt"><span>${o.text}</span>${o.kind === 'private_question'
+            ? html`<button class="btn btn--sm" data-act="sugg-private" data-contact="${s.contact.id}" data-story="${s.story.id}">Start draft</button>`
+            : s.source?.url ? html`<a class="btn btn--sm" href="${s.source.url}" target="_blank" rel="noopener">Open post${icon('arrow-up-right')}</a>` : ''}</div>`)}
+        </li>`)}</ul>`
+          : html`<p class="pp-note">No suggestions. They appear when a person authored, or their team appears in, a story you opened and marked useful, saved or tested. Nothing is ever sent for you.</p>`}
       </section>
-    </div>
+    </aside>
   </div>`);
+  el.replaceChildren(root);
 
-  const again = () => renderList(el, ctx);
-  on(root, 'click', 'tr[data-href]', (e, tr) => { location.hash = tr.dataset.href; });
-  on(root, 'click', 'tr[data-outreach]', (e, tr) => openOutreach(tr.dataset.outreach, again));
+  const again = async () => { await renderList(el, ctx); };
+  on(root, 'click', 'tr[data-href]', (e, tr) => { if (!e.target.closest('a, button')) location.hash = tr.dataset.href; });
+  on(root, 'click', 'tr[data-outreach]', (e, tr) => { e.preventDefault(); openOutreach(tr.dataset.outreach, again); });
   on(root, 'click', '[data-act]', async (e, btn) => {
     const a = btn.dataset.act;
     if (a === 'add') openAddContact();
-    if (a === 'dismiss') { hidden.add(btn.dataset.key); again(); }
+    if (a === 'dismiss') {
+      hidden.add(btn.dataset.key);
+      const li = btn.closest('li');
+      if (li) li.remove();
+    }
     if (a === 'sugg-private') await act(btn, async () => {
       const o = await api.post(`/contacts/${btn.dataset.contact}/outreach`, { purpose: 'mentorship', channel: 'linkedin_note', story_id: Number(btn.dataset.story) });
-      toast('Draft created — review before approving', 'ok');
-      again(); openOutreach(o.id, again);
+      toast('Draft created. Review it before approving.', 'ok');
+      await again(); openOutreach(o.id, again);
     }, 'Drafting…');
   });
 }
 
+// ------------------------------------------------------------------ add contact
+const field = (lbl, control, cls = '') => html`<label class="field ${cls}">${lbl}${control}</label>`;
 async function openAddContact() {
   const employers = await api.get('/employers').catch(() => []);
   const m = modal(String(html`
-    <h2>Add contact</h2>
-    <p class="muted small">Record only public, professional details — each with the source where it was published. An email address must come from the person's or organization's own publication, or from the person directly.</p>
-    <form class="form-grid" id="cf">
-      <label class="field">Name *<input name="name" required></label>
-      <label class="field">Public role<input name="role"></label>
-      <label class="field">Organization<input name="org"></label>
-      <label class="field">Target employer<select name="employer"><option value="">— none —</option>${employers.map(e => html`<option>${e.name}</option>`)}</select></label>
-      <label class="field">Team<input name="team"></label>
-      <label class="field">LinkedIn URL<input name="linkedin"></label>
-      <label class="field">Email<input name="email" type="email"></label>
-      <label class="field">Where the email was published<input name="email_source" placeholder="URL or “given to me at …”"></label>
-      <label class="field">Instagram handle<input name="instagram"></label>
-      <label class="field">Next date<input name="next_date" type="date"></label>
-<label class="field">Segment<select name="segment">${Object.entries(SEGMENTS).map(([k, l]) => html`<option value="${k}" ${('target_team') === k ? 'selected' : ''}>${l}</option>`)}</select></label>
-      <label class="check" style="align-self:end"><input type="checkbox" name="ksu_alumni" value="1" > KSU alumni</label>
-      <label class="field full">Why connect<textarea name="why" rows="2"></textarea></label>
-      <div class="full">
-        <div class="row between"><span class="field-label">Public details (each needs a source URL)</span><button type="button" class="sm" data-add-detail>+ Detail</button></div>
-        <div id="details" class="stack" style="margin-top:8px"></div>
+    <h2>Add a person</h2>
+    <p class="pp-modal-dek">Record only public, professional details, each with the source where it was published. An email address must come from the person’s or organisation’s own publication, or from the person directly.</p>
+    <form class="pp-form" id="cf">
+      ${field('Name *', raw('<input class="input" name="name" required autocomplete="off">'))}
+      ${field('Public role', raw('<input class="input" name="role">'))}
+      ${field('Organisation', raw('<input class="input" name="org">'))}
+      ${field('Target employer', html`<select class="select" name="employer"><option value="">None</option>${employers.map(e => html`<option>${e.name}</option>`)}</select>`)}
+      ${field('Team', raw('<input class="input" name="team">'))}
+      ${field('LinkedIn URL', raw('<input class="input" name="linkedin" inputmode="url">'))}
+      ${field('Email', raw('<input class="input" name="email" type="email">'))}
+      ${field('Where the email was published', raw('<input class="input" name="email_source" placeholder="URL, or “given to me at …”">'))}
+      ${field('Instagram handle', raw('<input class="input" name="instagram">'))}
+      ${field('Next date', raw('<input class="input" name="next_date" type="date">'))}
+      ${field('Segment', html`<select class="select" name="segment">${Object.entries(SEGMENTS).map(([k, l]) => html`<option value="${k}" ${k === 'target_team' ? 'selected' : ''}>${l}</option>`)}</select>`)}
+      <label class="pp-check pp-check--end"><input type="checkbox" name="ksu_alumni" value="1"> KSU alumni</label>
+      ${field('Why connect', raw('<textarea class="textarea" name="why" rows="2"></textarea>'), 'pp-full')}
+      <div class="pp-full">
+        <div class="pp-form-sub"><span>Public details (each needs a source URL)</span><button type="button" class="btn btn--sm" data-add-detail>${icon('plus')}Detail</button></div>
+        <div id="details" class="pp-details"></div>
       </div>
-      <label class="field full">Private note <span class="chip amber">private</span><textarea name="private_note" rows="2" placeholder="Never exported, never used in drafts"></textarea></label>
-      <div class="full row" style="justify-content:flex-end"><button type="button" data-close>Cancel</button><button class="primary" type="submit">Save contact</button></div>
+      ${field(html`<span class="pp-lbl-row">Private note <span class="tag tag--neutral">Private</span></span>`, raw('<textarea class="textarea" name="private_note" rows="2" placeholder="Never exported, never used in drafts"></textarea>'), 'pp-full')}
+      <div class="modal-actions pp-full"><button type="button" class="btn btn--ghost" data-close>Cancel</button><button class="btn btn--primary" type="submit">Save person</button></div>
     </form>`), { wide: true });
   const box = m.el.querySelector('#details');
-  const addRow = () => box.insertAdjacentHTML('beforeend', `<div class="detail-row"><input placeholder="Detail, e.g. wrote about eval harnesses for agents" data-d><input placeholder="https://source…" data-s><button type="button" class="sm ghost" data-rm>✕</button></div>`);
+  const addRow = () => box.insertAdjacentHTML('beforeend', `<div class="pp-detail-row"><input class="input" placeholder="Detail, e.g. wrote about eval harnesses for agents" aria-label="Public detail" data-d><input class="input" placeholder="https://source…" aria-label="Source URL" data-s><button type="button" class="btn btn--ghost btn--sm btn--icon" data-rm aria-label="Remove detail"><svg class="icon" aria-hidden="true"><use href="#i-x"/></svg></button></div>`);
   addRow();
-  m.el.addEventListener('click', (e) => { if (e.target.closest('[data-add-detail]')) addRow(); if (e.target.closest('[data-rm]')) e.target.closest('.detail-row').remove(); });
+  m.el.addEventListener('click', (e) => { if (e.target.closest('[data-add-detail]')) addRow(); if (e.target.closest('[data-rm]')) e.target.closest('.pp-detail-row').remove(); });
   m.el.querySelector('#cf').addEventListener('submit', async (e) => {
     e.preventDefault();
     const f = Object.fromEntries(new FormData(e.target));
-    const details = [...box.querySelectorAll('.detail-row')].map(r => ({ detail: r.querySelector('[data-d]').value.trim(), source: r.querySelector('[data-s]').value.trim() })).filter(d => d.detail || d.source);
+    const details = [...box.querySelectorAll('.pp-detail-row')].map(r => ({ detail: r.querySelector('[data-d]').value.trim(), source: r.querySelector('[data-s]').value.trim() })).filter(d => d.detail || d.source);
     if (details.some(d => !d.detail || !d.source)) return toast('Every public detail needs both the detail and its source URL.', 'err');
     if (f.email && !f.email_source.trim()) return toast('Say where the email address was published (or that they gave it to you).', 'err');
     await act(e.submitter, async () => {
       const c = await api.post('/contacts', { ...f, ksu_alumni: !!f.ksu_alumni, next_date: f.next_date || null, details });
-      m.close(); toast('Contact added', 'ok'); location.hash = `#/person/${c.id}`;
+      m.close(); toast('Person added', 'ok'); location.hash = `#/person/${c.id}`;
     }, 'Saving…');
   });
 }
 
-// ---------------------------------------------------------------- detail view
+// ------------------------------------------------------------------ person detail
+function personLede(c, tz, today) {
+  const role = [c.role, stripDemo(c.org) || c.employer].filter(Boolean);
+  const last = c.interactions?.[0];
+  const parts = [];
+  parts.push(html`${role.length ? html`<b>${role[0]}</b>${role[1] ? html` at <b>${role[1]}</b>` : ''}.` : 'No public role recorded yet.'}`);
+  parts.push(html` Stage: <b>${label(c.stage) || 'none'}</b>`);
+  parts.push(last ? html`; last contact <b>${dayLabel(last.date, { weekday: false })}</b> (${label(last.kind)})` : html`; no interactions logged`);
+  if (c.dnc) parts.push(html`. Do-not-contact is on, so drafting and approval are blocked.`);
+  else if (c.next_step || c.next_date) parts.push(html`. Next: ${c.next_step || 'follow up'}${c.next_date ? html` by <b>${dayLabel(c.next_date)}</b>${c.next_date < today ? ' (overdue)' : ''}` : ''}.`);
+  else parts.push(html`.`);
+  void tz;
+  return parts;
+}
+
 async function renderPerson(el, id, ctx) {
-  const c = await api.get(`/contacts/${id}`);
-  const root = fresh(el);
+  const [c, all, st] = await Promise.all([api.get(`/contacts/${id}`, { fresh: true }), api.get('/contacts').catch(() => []), api.get('/status')]);
+  const tz = st.timezone;
+  const today = st.today || new Date().toISOString().slice(0, 10);
   const details = c.details || [];
   const prep = (renderPerson.prep ||= {})[id];
+  const twins = all.filter(x => x.id !== c.id && nameKey(x.name) === nameKey(c.name));
+  const demo = isDemoText(c.name) || isDemoText(c.org);
+  const sentN = c.outreach.filter(o => o.status === 'sent').length;
 
+  // PE-4 (E1): the swap frame builds the head and the first card; the rest follow in idle chunks, one per painted
+  // frame, and their form handlers bind once they exist. The first card depends on the layout: on desktop the
+  // research card with the side column beside it; on a phone (≤1020 px) people.css reorders the cards and puts
+  // Relationship first, so that is the one card built in the swap frame there.
+  const phone = matchMedia('(max-width: 1020px)').matches;
+  const relHtml = () => html`
+      <section class="tile tile--static pp-card" aria-labelledby="pp-rel-h">
+        <h2 class="section-label" id="pp-rel-h">Relationship</h2>
+        <form class="stack-sm" id="rel">
+          ${field('Stage', html`<select class="select" name="stage">${opts([...new Set([...STAGES, c.stage].filter(Boolean))].map(s => [s, label(s)]), c.stage)}</select>`)}
+          ${field('Next step', html`<input class="input" name="next_step" value="${c.next_step || ''}">`)}
+          <div class="field"><span class="pp-flabel" id="pp-nd-l">Next date</span>
+            <span class="pp-datepick"><button type="button" class="input pp-datebtn" data-datepick aria-labelledby="pp-nd-l pp-nd-v" aria-haspopup="dialog"><span id="pp-nd-v">${c.next_date ? dayLabel(c.next_date) : 'No date set'}</span>${icon('calendar')}</button>
+            <input class="input pp-date-native" name="next_date" type="date" value="${c.next_date || ''}" tabindex="-1" aria-hidden="true"></span></div>
+          <div class="pp-form-end"><button class="btn btn--sm" type="submit">Save</button></div>
+        </form>
+        <div class="pp-rule"></div>
+        <div class="pp-dnc"><span>${c.dnc ? 'Do-not-contact is on' : 'Do not contact'}</span><button class="btn btn--sm ${c.dnc ? '' : 'btn--danger'}" data-act="dnc">${c.dnc ? 'Clear do-not-contact' : 'Mark do not contact'}</button></div>
+      </section>
+
+`;
+  const asideRestHtml = () => html`
+      <section class="tile tile--static pp-card pp-private" aria-labelledby="pp-n-h">
+        <div class="pp-card-h"><h2 class="section-label" id="pp-n-h">Private note</h2><span class="tag tag--neutral">Private</span></div>
+        <p class="pp-note">Only you see this. It is never exported and never used to write drafts.</p>
+        <textarea class="textarea" id="pnote" rows="4" aria-labelledby="pp-n-h">${c.private_note || ''}</textarea>
+        <div class="pp-form-end"><button class="btn btn--sm" data-act="save-note">Save note</button></div>
+      </section>
+
+      <section class="tile tile--static pp-card" aria-labelledby="pp-p-h">
+        <div class="pp-card-h"><h2 class="section-label" id="pp-p-h">Meeting prep</h2><button class="btn btn--sm" data-act="prep">${prep ? 'Regenerate' : 'Prepare questions'}</button></div>
+        ${prep ? html`<ol class="pp-prep">${prep.map(q => html`<li>${q}</li>`)}</ol>` : html`<p class="pp-note">Two or three questions grounded in their sourced public work${details.length ? '' : ' (none recorded yet, so questions will be generic)'}.</p>`}
+      </section>
+
+      <section class="tile tile--static pp-card" aria-labelledby="pp-t-h">
+        <h2 class="section-label" id="pp-t-h">After the call</h2>
+        <textarea class="textarea" id="ty-notes" rows="3" aria-labelledby="pp-t-h" placeholder="What did you talk about? What advice will you act on?"></textarea>
+        <div class="pp-form-end"><button class="btn btn--sm" data-act="thankyou" ${c.dnc ? 'disabled' : ''}>Draft thank-you</button></div>
+      </section>
+`;
+  const researchHtml = () => html`
+      <section class="tile tile--static pp-card" aria-labelledby="pp-r-h">
+        <div class="section-head"><h2 class="t-h2" id="pp-r-h">Research card</h2><span class="section-meta">updated ${whenLabel(c.updated_at, tz)}</span></div>
+        <form class="pp-form" id="research">
+          ${field('Name', html`<input class="input" name="name" value="${c.name}">`)}
+          ${field('Public role', html`<input class="input" name="role" value="${c.role || ''}">`)}
+          ${field('Organisation', html`<input class="input" name="org" value="${c.org || ''}">`)}
+          ${field('Target employer', html`<input class="input" name="employer" value="${c.employer || ''}">`)}
+          ${field('Team', html`<input class="input" name="team" value="${c.team || ''}">`)}
+          ${field('LinkedIn', html`<input class="input" name="linkedin" value="${c.linkedin || ''}">`)}
+          ${field('Email', html`<input class="input" name="email" type="email" value="${c.email || ''}">`)}
+          ${field('Email published at', html`<input class="input" name="email_source" value="${c.email_source || ''}">`)}
+          ${field('Instagram', html`<input class="input" name="instagram" value="${c.instagram || ''}">`)}
+          ${field('Segment', html`<select class="select" name="segment">${Object.entries(SEGMENTS).map(([k, l]) => html`<option value="${k}" ${(c.segment || 'target_team') === k ? 'selected' : ''}>${l}</option>`)}</select>`)}
+          <label class="pp-check pp-check--end"><input type="checkbox" name="ksu_alumni" value="1" ${c.ksu_alumni ? 'checked' : ''}> KSU alumni</label>
+          ${field('Why connect', html`<textarea class="textarea" name="why" rows="2">${c.why || ''}</textarea>`, 'pp-full')}
+          <div class="pp-full pp-form-end"><button class="btn btn--sm" type="submit">Save research</button></div>
+        </form>
+        <div class="pp-rule"></div>
+        <div class="section-head"><h3 class="pp-h3">Sourced public details</h3><button class="btn btn--sm" data-act="add-detail">${icon('plus')}Detail</button></div>
+        <div id="details" class="pp-details">
+          ${details.length ? details.map((d, i) => html`<div class="pp-detail-row" data-i="${i}">
+            <input class="input" data-d value="${d.detail || ''}" aria-label="Public detail"><input class="input" data-s value="${d.source || ''}" placeholder="https://source…" aria-label="Source URL">
+            <button class="btn btn--ghost btn--sm btn--icon" data-act="rm-detail" aria-label="Remove detail">${icon('x')}</button></div>`)
+          : html`<p class="pp-note" data-none>No details yet. Personalisation needs at least one sourced detail.</p>`}
+        </div>
+        <div class="pp-form-end"><button class="btn btn--sm" data-act="save-details">Save details</button></div>
+      </section>
+
+`;
+  const laterMain = () => html`
+      <section class="tile tile--static pp-card" aria-labelledby="pp-o-h">
+        <div class="section-head"><h2 class="t-h2" id="pp-o-h">Draft outreach</h2><span class="section-meta">${plural(c.outreach.length, 'message')}</span></div>
+        <p class="pp-note">A mentorship question is not a referral request; the two are kept separate. First-person claims come only from your public-OK experiences.</p>
+        <div class="pp-form">
+          ${field('Purpose', html`<select class="select" id="o-purpose">${opts(Object.entries(PURPOSES).filter(([k]) => k !== 'thank_you'), 'mentorship')}</select>`)}
+          ${field('Channel', html`<select class="select" id="o-channel">${opts(Object.entries(CHANNELS), 'email')}</select>`)}
+          <fieldset class="pp-full pp-fieldset"><legend>Use these sourced details</legend>
+            ${details.length ? details.map((d, i) => html`<label class="pp-check"><input type="checkbox" data-detail-idx="${i}" ${i === 0 ? 'checked' : ''}> <span>${d.detail} ${d.source ? html`<a href="${d.source}" target="_blank" rel="noopener">source${icon('arrow-up-right')}</a>` : html`<span class="tag tag--err">No source</span>`}</span></label>`)
+            : html`<span class="pp-note">None recorded, so the draft will be flagged as unsourced.</span>`}
+          </fieldset>
+          <div class="pp-full pp-form-end"><button class="btn btn--primary" data-act="draft" ${c.dnc ? 'disabled' : ''}>Draft message</button></div>
+        </div>
+        ${c.outreach.length ? html`<div class="pp-rule"></div><h3 class="pp-h3">Messages</h3>
+          <table class="table pp-table pp-table--inset"><tbody>${c.outreach.map(o => html`<tr data-outreach="${o.id}">
+            <td><button class="pp-linkbtn" data-outreach-open="${o.id}">${PURPOSES[o.purpose] || label(o.purpose)}</button>${o.subject ? html`<span class="pp-sub">${o.subject}</span>` : ''}</td>
+            <td class="pp-hide-sm">${CHANNELS[o.channel] || o.channel}</td>
+            <td class="pp-mono pp-hide-sm">${o.sent_at ? `sent ${whenLabel(o.sent_at, tz)}` : o.send_at ? `send ${whenLabel(o.send_at, tz)}` : ''}</td>
+            <td>${status(o.status)}</td></tr>`)}</tbody></table>` : ''}
+      </section>
+
+`;
+  const laterLog = () => html`
+      <section class="tile tile--static pp-card" aria-labelledby="pp-i-h">
+        <div class="section-head"><h2 class="t-h2" id="pp-i-h">Interaction log</h2><span class="section-meta">${plural(c.interactions.length, 'entry', 'entries')}</span></div>
+        <form class="pp-ixform" id="ix">
+          ${field('Kind', html`<select class="select" name="kind">${opts(KINDS.map(k => [k, label(k)]), 'note')}</select>`)}
+          ${field('Date', html`<input class="input" type="date" name="date" value="${today}">`)}
+          ${field('Notes', raw('<input class="input" name="notes">'), 'pp-grow')}
+          <button class="btn" type="submit">Log</button>
+        </form>
+        <p class="pp-note">Logging a <b>reply</b> pauses follow-up reminders and moves the stage to “replied”. A coffee chat, call or meeting sets the next step to a thank-you.</p>
+        ${c.interactions.length ? html`<ol class="pp-timeline">${c.interactions.map(i => html`<li class="${i.kind === 'reply' ? 'is-reply' : ''}">
+          <span class="pp-tl-dot" aria-hidden="true"></span>
+          <div class="pp-tl-b"><span class="pp-tl-h"><span class="tag ${i.kind === 'reply' ? 'tag--ok' : 'tag--neutral'}">${label(i.kind)}</span><time class="pp-mono" datetime="${i.date}">${dayLabel(i.date)}</time></span>${i.notes ? html`<p>${i.notes}</p>` : ''}</div>
+          <button class="btn btn--ghost btn--sm btn--icon" data-act="rm-ix" data-id="${i.id}" aria-label="Delete this ${label(i.kind)} entry">${icon('x')}</button></li>`)}</ol>`
+          : html`<p class="pp-empty-line">No interactions yet.</p>`}
+      </section>
+`;
+  const root = document.createElement('div');
+  root.className = 'pp pp-person';
   root.innerHTML = String(html`
-  <div class="page-head">
-    <div>
-      <div class="kicker"><a href="#/people">← People</a></div>
-      <h1>${c.name}</h1>
-      <p class="lede">${[c.role, c.org || c.employer].filter(Boolean).join(' · ') || 'No public role recorded yet'}</p>
-      <div class="row" style="margin-top:10px">${status(c.stage)}${c.employer ? html`<span class="chip violet">${c.employer}</span>` : ''}${c.team ? html`<span class="chip">${c.team}</span>` : ''}${c.dnc ? html`<span class="chip red">DO NOT CONTACT</span>` : ''}</div>
-    </div>
-    <div class="row"><button class="danger sm" data-act="delete">Delete contact</button></div>
-  </div>
-  ${c.dnc ? html`<div class="card flat dnc-banner">Marked <strong>do not contact</strong>. Drafting, approving, and sending are blocked, and open drafts were cancelled.</div>` : ''}
+  <header class="page-head">
+    <p class="eyebrow"><a class="pp-back" href="#/people">${icon('chevron-left')}People</a></p>
+    <h1>${stripDemo(c.name)}</h1>
+    <p class="lede">${personLede(c, tz, today)}</p>
+    <div class="page-head-actions"><button class="btn btn--danger btn--sm" data-act="delete">Delete person</button></div>
+  </header>
+  <div class="pp-tagrow cluster">${status(c.stage)}${demoTag(demo)}${c.employer ? html`<span class="chip">${c.employer}</span>` : ''}${c.team ? html`<span class="chip">${c.team}</span>` : ''}${c.ksu_alumni ? html`<span class="chip">KSU alumni</span>` : ''}${c.dnc ? html`<span class="tag tag--err">Do not contact</span>` : ''}
+    <span class="pp-facts">${plural(details.length, 'sourced detail')} · ${plural(c.interactions.length, 'interaction')} · ${plural(c.outreach.length, 'message')} (${sentN} sent)</span></div>
 
-  <div class="split">
-    <div class="stack reveal">
-      <section class="card">
-        <h3>Research card</h3>
-        <form class="form-grid" id="research">
-          <label class="field">Name<input name="name" value="${c.name}"></label>
-          <label class="field">Public role<input name="role" value="${c.role || ''}"></label>
-          <label class="field">Organization<input name="org" value="${c.org || ''}"></label>
-          <label class="field">Target employer<input name="employer" value="${c.employer || ''}"></label>
-          <label class="field">Team<input name="team" value="${c.team || ''}"></label>
-          <label class="field">LinkedIn<input name="linkedin" value="${c.linkedin || ''}"></label>
-          <label class="field">Email<input name="email" type="email" value="${c.email || ''}"></label>
-          <label class="field">Email published at<input name="email_source" value="${c.email_source || ''}"></label>
-          <label class="field">Instagram<input name="instagram" value="${c.instagram || ''}"></label>
-          <label class="field">Segment<select name="segment">${Object.entries(SEGMENTS).map(([k, l]) => html`<option value="${k}" ${(c.segment || 'target_team') === k ? 'selected' : ''}>${l}</option>`)}</select></label>
-      <label class="check" style="align-self:end"><input type="checkbox" name="ksu_alumni" value="1" ${c.ksu_alumni ? 'checked' : ''}> KSU alumni</label>
-          <label class="field full">Why connect<textarea name="why" rows="2">${c.why || ''}</textarea></label>
-          <div class="full row" style="justify-content:flex-end"><button class="sm" type="submit">Save research</button></div>
-        </form>
-        <div class="hr"></div>
-        <div class="row between"><h3 style="margin:0">Sourced public details</h3><button class="sm" data-act="add-detail">+ Detail</button></div>
-        <div id="details" class="stack" style="margin-top:10px">
-          ${details.length ? details.map((d, i) => html`<div class="detail-row" data-i="${i}">
-            <input data-d value="${d.detail || ''}"><input data-s value="${d.source || ''}" placeholder="https://source…">
-            <button class="sm ghost" data-act="rm-detail" title="Remove">✕</button></div>`) : html`<p class="muted small" data-none>No details yet. Personalization needs at least one sourced detail.</p>`}
-        </div>
-        <div class="row" style="justify-content:flex-end;margin-top:10px"><button class="sm" data-act="save-details">Save details</button></div>
-      </section>
+  ${c.dnc ? html`<div class="pp-callout pp-callout--err" role="note">${icon('x')}<p>Marked <b>do not contact</b>. Drafting, approving and sending are blocked, and open drafts were cancelled.</p></div>` : ''}
+  ${twins.length ? html`<div class="pp-callout" role="note">${icon('alert')}<p><b>Possible duplicate.</b> ${twins.length === 1 ? 'Another record has' : `${twins.length} other records have`} the same name (added ${twins.map(t => whenLabel(t.created_at, tz)).join(', ')}). Keep one and delete the other so counts stay honest.</p><span class="cluster">${twins.map(t => html`<a class="btn btn--sm" href="#/person/${t.id}">Open the other record</a>`)}</span></div>` : ''}
 
-      <section class="card">
-        <h3>Draft outreach</h3>
-        <p class="faint small" style="margin-top:-4px">A mentorship question is not a referral request — the two are kept separate. First-person claims come only from your public-OK experiences.</p>
-        <div class="form-grid">
-          <label class="field">Purpose<select id="o-purpose">${opts(Object.entries(PURPOSES).filter(([k]) => k !== 'thank_you'), 'mentorship')}</select></label>
-          <label class="field">Channel<select id="o-channel">${opts(Object.entries(CHANNELS), 'email')}</select></label>
-          <div class="full">
-            <span class="field-label">Use these sourced details</span>
-            <div class="stack" style="margin-top:6px">${details.length ? details.map((d, i) => html`<label class="check"><input type="checkbox" data-detail-idx="${i}" ${i === 0 ? 'checked' : ''}> ${d.detail} ${d.source ? html`<a href="${d.source}" target="_blank" rel="noopener" class="small">source ↗</a>` : html`<span class="chip red">no source</span>`}</label>`) : html`<span class="muted small">None recorded — the draft will be flagged as unsourced.</span>`}</div>
-          </div>
-          <div class="full row" style="justify-content:flex-end"><button class="primary" data-act="draft" ${c.dnc ? 'disabled' : ''}>Draft message</button></div>
-        </div>
-        ${c.outreach.length ? html`<div class="hr"></div><h3>Messages</h3>
-          <table><tbody>${c.outreach.map(o => html`<tr class="click" data-outreach="${o.id}"><td>${PURPOSES[o.purpose] || label(o.purpose)}<div class="faint small">${o.subject || ''}</div></td><td class="small">${CHANNELS[o.channel] || o.channel}</td>
-            <td class="small muted">${o.sent_at ? 'sent ' + fmtDateTime(o.sent_at) : o.send_at ? 'send ' + fmtDateTime(o.send_at) : ''}</td><td>${status(o.status)}</td></tr>`)}</tbody></table>` : ''}
-      </section>
-
-      <section class="card">
-        <h3>Interaction log</h3>
-        <form class="row" id="ix" style="align-items:flex-end">
-          <label class="field" style="flex:1 1 140px">Kind<select name="kind">${opts(KINDS.map(k => [k, label(k)]), 'note')}</select></label>
-          <label class="field" style="flex:0 1 160px">Date<input type="date" name="date" value="${today()}"></label>
-          <label class="field" style="flex:2 1 240px">Notes<input name="notes"></label>
-          <button type="submit">Log</button>
-        </form>
-        <p class="faint small">Logging a <strong>reply</strong> pauses follow-up reminders and moves the stage to “replied”. A coffee chat, call, or meeting sets the next step to a thank-you.</p>
-        ${c.interactions.length ? c.interactions.map(i => html`<div class="row between list-row"><span><span class="chip ${i.kind === 'reply' ? 'green' : ''}">${label(i.kind)}</span> <span class="mono faint">${i.date}</span><div class="small">${i.notes || ''}</div></span>
-          <button class="sm ghost" data-act="rm-ix" data-id="${i.id}">✕</button></div>`) : html`<p class="muted small">No interactions yet.</p>`}
-      </section>
+  <div class="pp-cols">
+    <div class="pp-main stack">
+      ${phone ? raw('<div class="pp-later" data-later-research></div>') : researchHtml()}
+      <div class="pp-later" data-later-main></div><div class="pp-later" data-later-log></div>
     </div>
 
-    <div class="stack reveal">
-      <section class="card">
-        <h3>Relationship</h3>
-        <form class="stack" id="rel">
-          <label class="field">Stage<select name="stage">${opts([...new Set([...STAGES, c.stage].filter(Boolean))].map(s => [s, s]), c.stage)}</select></label>
-          <label class="field">Next step<input name="next_step" value="${c.next_step || ''}"></label>
-          <label class="field">Next date<input name="next_date" type="date" value="${c.next_date || ''}"></label>
-          <div class="row" style="justify-content:flex-end"><button class="sm" type="submit">Save</button></div>
-        </form>
-        <div class="hr"></div>
-        <div class="row between"><span class="small">${c.dnc ? 'Do-not-contact is ON' : 'Do not contact'}</span><button class="sm ${c.dnc ? '' : 'danger'}" data-act="dnc">${c.dnc ? 'Clear do-not-contact' : 'Mark do not contact'}</button></div>
-      </section>
-
-      <section class="card private-card">
-        <div class="row between"><h3 style="margin:0">Private note</h3><span class="chip amber">private</span></div>
-        <p class="faint small">Only you see this. It is never exported and never used to write drafts.</p>
-        <textarea id="pnote" rows="4">${c.private_note || ''}</textarea>
-        <div class="row" style="justify-content:flex-end;margin-top:8px"><button class="sm" data-act="save-note">Save note</button></div>
-      </section>
-
-      <section class="card">
-        <div class="row between"><h3 style="margin:0">Meeting prep</h3><button class="sm" data-act="prep">${prep ? 'Regenerate' : 'Prepare questions'}</button></div>
-        ${prep ? html`<ol class="prep">${prep.map(q => html`<li>${q}</li>`)}</ol>` : html`<p class="muted small">2–3 questions grounded in their sourced public work.</p>`}
-      </section>
-
-      <section class="card">
-        <h3>After the call</h3>
-        <textarea id="ty-notes" rows="3" placeholder="What did you talk about? What advice will you act on?"></textarea>
-        <div class="row" style="justify-content:flex-end;margin-top:8px"><button class="sm" data-act="thankyou" ${c.dnc ? 'disabled' : ''}>Draft thank-you</button></div>
-      </section>
-    </div>
+    <aside class="pp-aside stack">${relHtml()}${phone ? raw('<div class="pp-later" data-later-aside></div>') : asideRestHtml()}</aside>
   </div>`);
+  el.replaceChildren(root);
 
   const again = () => renderPerson(el, id, ctx);
-  const readDetails = () => [...root.querySelectorAll('#details .detail-row')].map(r => ({ detail: r.querySelector('[data-d]').value.trim(), source: r.querySelector('[data-s]').value.trim() })).filter(d => d.detail || d.source);
+  const readDetails = () => [...root.querySelectorAll('#details .pp-detail-row')].map(r => ({ detail: r.querySelector('[data-d]').value.trim(), source: r.querySelector('[data-s]').value.trim() })).filter(d => d.detail || d.source);
 
-  root.querySelector('#research').addEventListener('submit', async (e) => {
+  const bindResearch = () => root.querySelector('#research').addEventListener('submit', async (e) => {
     e.preventDefault();
     const f = Object.fromEntries(new FormData(e.target));
     if (f.email && !f.email_source.trim()) return toast('Say where the email address was published (or that they gave it to you).', 'err');
     await act(e.submitter, async () => { await api.patch(`/contacts/${id}`, { ...f, ksu_alumni: !!f.ksu_alumni }); toast('Saved', 'ok'); again(); });
   });
-  root.querySelector('#rel').addEventListener('submit', async (e) => {
+  if (!phone) bindResearch();
+  const bindAside = () => {
+    root.querySelector('#rel').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const f = Object.fromEntries(new FormData(e.target));
+      await act(e.submitter, async () => { await api.patch(`/contacts/${id}`, { ...f, next_date: f.next_date || null }); toast('Saved', 'ok'); again(); });
+    });
+    // PE-3: the Next date shows a formatted day on a button that opens the native picker; the input stays the value.
+    const dInput = root.querySelector('.pp-date-native'), dBtn = root.querySelector('[data-datepick]');
+    dBtn.addEventListener('click', () => { try { dInput.showPicker(); } catch (err) { dInput.classList.add('is-shown'); dInput.removeAttribute('aria-hidden'); dInput.tabIndex = 0; dInput.focus(); } });
+    dInput.addEventListener('change', () => { root.querySelector('#pp-nd-v').textContent = dInput.value ? dayLabel(dInput.value) : 'No date set'; });
+  };
+  bindAside();
+  const bindLater = () => root.querySelector('#ix').addEventListener('submit', async (e) => {
     e.preventDefault();
     const f = Object.fromEntries(new FormData(e.target));
-    await act(e.submitter, async () => { await api.patch(`/contacts/${id}`, { ...f, next_date: f.next_date || null }); toast('Saved', 'ok'); again(); });
+    await act(e.submitter, async () => { await api.post(`/contacts/${id}/interactions`, f); toast(f.kind === 'reply' ? 'Reply logged; follow-ups paused' : 'Logged', 'ok'); again(); });
   });
-  root.querySelector('#ix').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const f = Object.fromEntries(new FormData(e.target));
-    await act(e.submitter, async () => { await api.post(`/contacts/${id}/interactions`, f); toast(f.kind === 'reply' ? 'Reply logged — follow-ups paused' : 'Logged', 'ok'); again(); });
-  });
-  on(root, 'click', 'tr[data-outreach]', (e, tr) => openOutreach(tr.dataset.outreach, again));
+  // Each chunk runs after a painted frame (two rAFs), then in idle time: an idle callback queued straight from render()
+  // can run before the swap frame renders and merge its work into it. One chunk per frame keeps each frame small.
+  const swap = (sel, h) => { const n = root.querySelector(sel); if (n) n.outerHTML = String(h); };
+  afterSwap(root, () => swap('[data-later-main]', laterMain()), () => { swap('[data-later-log]', laterLog()); bindLater(); },
+    ...(phone ? [() => swap('[data-later-aside]', asideRestHtml()), () => { swap('[data-later-research]', researchHtml()); bindResearch(); }] : []));
+  on(root, 'click', 'tr[data-outreach]', (e, tr) => { e.preventDefault(); openOutreach(tr.dataset.outreach, again); });
   on(root, 'click', '[data-act]', async (e, btn) => {
     const a = btn.dataset.act;
     if (a === 'add-detail') {
       root.querySelector('#details [data-none]')?.remove();
-      root.querySelector('#details').insertAdjacentHTML('beforeend', `<div class="detail-row"><input data-d placeholder="Public detail"><input data-s placeholder="https://source…"><button class="sm ghost" data-act="rm-detail">✕</button></div>`);
+      root.querySelector('#details').insertAdjacentHTML('beforeend', `<div class="pp-detail-row"><input class="input" data-d placeholder="Public detail" aria-label="Public detail"><input class="input" data-s placeholder="https://source…" aria-label="Source URL"><button class="btn btn--ghost btn--sm btn--icon" data-act="rm-detail" aria-label="Remove detail"><svg class="icon" aria-hidden="true"><use href="#i-x"/></svg></button></div>`);
+      root.querySelector('#details .pp-detail-row:last-child [data-d]')?.focus();
     }
-    if (a === 'rm-detail') btn.closest('.detail-row').remove();
+    if (a === 'rm-detail') btn.closest('.pp-detail-row').remove();
     if (a === 'save-details') {
       const d = readDetails();
       if (d.some(x => !x.detail || !x.source)) return toast('Every public detail needs both the detail and its source URL.', 'err');
       await act(btn, async () => { await api.patch(`/contacts/${id}`, { details: d }); toast('Details saved', 'ok'); again(); });
     }
-    if (a === 'save-note') await act(btn, async () => { await api.patch(`/contacts/${id}`, { private_note: root.querySelector('#pnote').value }); toast('Private note saved', 'ok'); });
+    if (a === 'save-note') await act(btn, async () => { await api.patch(`/contacts/${id}`, { private_note: root.querySelector('#pnote').value }); toast('Private note saved', 'ok'); }, 'Saving…', { done: 'Saved' });
     if (a === 'rm-ix') await act(btn, async () => { await api.del(`/interactions/${btn.dataset.id}`); again(); });
     if (a === 'dnc') {
       const turnOn = !c.dnc;
-      if (!(await confirmBox(turnOn ? `Mark ${c.name} as do-not-contact? Open outreach drafts will be cancelled and new drafts blocked.` : `Clear do-not-contact for ${c.name}?`, turnOn ? 'Mark do not contact' : 'Clear'))) return;
+      if (!(await confirmBox(turnOn ? `Mark ${stripDemo(c.name)} as do-not-contact? Open outreach drafts will be cancelled and new drafts blocked.` : `Clear do-not-contact for ${stripDemo(c.name)}?`, turnOn ? 'Mark do not contact' : 'Clear'))) return;
       await act(btn, async () => { await api.patch(`/contacts/${id}`, { dnc: turnOn }); toast(turnOn ? 'Marked do not contact' : 'Cleared', 'ok'); again(); });
     }
     if (a === 'delete') {
-      if (!(await confirmBox(`Delete ${c.name}, their interaction history, and all outreach drafts?`, 'Delete'))) return;
-      await act(btn, async () => { await api.del(`/contacts/${id}`); toast('Contact deleted', 'ok'); location.hash = '#/people'; });
+      if (!(await confirmBox(`Delete ${stripDemo(c.name)}, their interaction history and all outreach drafts?`, 'Delete'))) return;
+      await act(btn, async () => { await api.del(`/contacts/${id}`); toast('Person deleted', 'ok'); location.hash = '#/people'; });
     }
     if (a === 'prep') await act(btn, async () => { renderPerson.prep[id] = (await api.post(`/contacts/${id}/prep`)).questions; again(); }, 'Thinking…');
     if (a === 'draft') await act(btn, async () => {
@@ -326,92 +508,103 @@ async function renderPerson(el, id, ctx) {
       await again(); openOutreach(r.outreach_id, again);
     }, 'Drafting…');
   });
+  if (!reduced() && renderPerson.lastId === id) enterItems([root.querySelector('.pp-cols')], { y: 4, duration: 320, fadeDuration: 240 });
+  renderPerson.lastId = id;
 }
 
-// ---------------------------------------------------------------- outreach editor (exported for campaigns)
+// ------------------------------------------------------------------ outreach editor (exported for Campaigns)
 function highlight(body, detail) {
   if (!detail) return esc(body);
   const i = body.toLowerCase().indexOf(detail.toLowerCase());
   if (i < 0) return esc(body);
-  return esc(body.slice(0, i)) + '<mark class="pd">' + esc(body.slice(i, i + detail.length)) + '</mark>' + esc(body.slice(i + detail.length));
+  return esc(body.slice(0, i)) + '<mark class="pp-pd">' + esc(body.slice(i, i + detail.length)) + '</mark>' + esc(body.slice(i + detail.length));
 }
+const FLAG_HARD = ['referral', 'shared_connection', 'work_claim'];
 
 export async function openOutreach(id, onChange = () => {}) {
-  const m = modal('<div class="muted"><span class="spinner"></span> Loading…</div>', { wide: true });
+  await useStyle(CSS);
+  const m = modal('<h2 class="sr-only">Outreach draft</h2><div class="spinner" data-status="working"><i aria-hidden="true"></i>Loading the draft…</div>', { wide: true });
+  m.el.classList.add('pp-omodal');
+  const tz = window.__byline?.timezone;
   const draw = async () => {
     let o;
-    try { o = await api.get(`/outreach/${id}`); } catch (e) { toast(e.message, 'err'); return m.close(); }
+    try { o = await api.get(`/outreach/${id}`, { fresh: true }); } catch (e) { toast(e.message, 'err'); return m.close(); }
     const sent = o.status === 'sent', locked = sent || o.status === 'cancelled';
     const limit = LIMITS[o.channel];
     m.el.innerHTML = String(html`
-      <div class="row between">
-        <div><div class="kicker">Outreach · ${PURPOSES[o.purpose] || label(o.purpose)}</div><h2 style="margin:4px 0 0">To <a href="#/person/${o.contact_id}" data-close>${o.contact.name}</a></h2></div>
-        <div class="row">${status(o.status)}<span class="chip">${CHANNELS[o.channel] || o.channel}</span>${o.approval_valid ? html`<span class="chip green">approval valid</span>` : ''}</div>
-        ${o.last_error ? html`<div class="small" style="color:var(--red);margin-top:6px">Last send failed: ${o.last_error}</div>` : ''}
-      </div>
-      ${o.contact.dnc ? html`<div class="card flat dnc-banner" style="margin-top:12px">${o.contact.name} is marked do-not-contact. This message cannot be approved or sent.</div>` : ''}
-      <div class="split" style="margin-top:16px">
+      <header class="pp-o-head">
+        <div>
+          <p class="eyebrow">Outreach · ${PURPOSES[o.purpose] || label(o.purpose)}</p>
+          <h2>To <a href="#/person/${o.contact_id}" data-close>${stripDemo(o.contact.name)}</a></h2>
+        </div>
+        <div class="cluster">${status(o.status)}<span class="chip">${CHANNELS[o.channel] || o.channel}</span>${o.approval_valid ? html`<span class="tag tag--ok">${icon('check')}Approval valid</span>` : ''}</div>
+      </header>
+      ${o.last_error ? html`<p class="pp-note pp-note--err">Last send failed: ${o.last_error}</p>` : ''}
+      ${o.contact.dnc ? html`<div class="pp-callout pp-callout--err" role="note">${icon('x')}<p>${stripDemo(o.contact.name)} is marked do-not-contact. This message cannot be approved or sent.</p></div>` : ''}
+      <div class="pp-o-grid">
         <div class="stack">
-          <label class="field">Recipient ${o.channel === 'email' ? '(published professional email)' : '(profile / handle)'}<input id="f-recipient" value="${o.recipient || ''}" ${locked ? 'disabled' : ''}></label>
-          ${o.channel === 'email' || o.subject ? html`<label class="field">Subject<input id="f-subject" value="${o.subject || ''}" ${locked ? 'disabled' : ''}></label>` : ''}
-          <label class="field"><span class="row between"><span>Message</span><span class="mono" id="count"></span></span><textarea id="f-body" rows="9" ${locked ? 'disabled' : ''}>${o.body || ''}</textarea></label>
-          <label class="field">Send at<input id="f-send" type="datetime-local" value="${toLocalInput(o.send_at)}" ${locked ? 'disabled' : ''}></label>
-          <div class="card flat small"><div class="faint mono" style="margin-bottom:6px">PREVIEW · personal detail highlighted</div><div id="preview" class="preview"></div></div>
+          ${field(o.channel === 'email' ? 'Recipient (published professional email)' : 'Recipient (profile or handle)', html`<input class="input" id="f-recipient" value="${o.recipient || ''}" ${locked ? 'disabled' : ''}>`)}
+          ${o.channel === 'email' || o.subject ? field('Subject', html`<input class="input" id="f-subject" value="${o.subject || ''}" ${locked ? 'disabled' : ''}>`) : ''}
+          <label class="field"><span class="pp-lbl-row"><span>Message</span><span class="pp-count" id="count" aria-live="polite"></span></span><textarea class="textarea" id="f-body" rows="9" ${locked ? 'disabled' : ''}>${o.body || ''}</textarea></label>
+          ${field('Send at', html`<input class="input" id="f-send" type="datetime-local" value="${toLocalInput(o.send_at)}" ${locked ? 'disabled' : ''}>`)}
+          <div class="nested pp-preview-box"><p class="section-label">Preview · personal detail highlighted</p><div id="preview" class="pp-preview"></div></div>
         </div>
-        <div class="stack">
-          <div><h3>Personal detail</h3>${o.personal_detail ? html`<mark class="pd">${o.personal_detail}</mark>` : html`<span class="muted small">None</span>`}</div>
-          <div><h3>What informed this</h3>${(o.basis || []).length ? (o.basis || []).map(b => html`<div class="evidence small">${b.detail}${b.source ? html` <a href="${b.source}" target="_blank" rel="noopener">source ↗</a>` : html` <span class="chip red">unsourced</span>`}</div>`) : html`<p class="muted small">No sourced details were used.</p>`}</div>
-          <div><h3>Review flags</h3>${o.flags.length ? o.flags.map(f => html`<div class="flag-row"><span class="chip ${['referral', 'shared_connection', 'work_claim'].includes(f.type) ? 'red' : 'amber'}">${label(f.type)}</span> <span class="small">${f.message}</span></div>`) : html`<p class="small" style="color:var(--green)">No flags.</p>`}</div>
-          <p class="faint small">Approving covers this exact <strong>recipient, message, and send time</strong>. Any edit to them returns it to review. Byline never sends for you: send it yourself, then mark it sent (safe to click twice — it only logs once).</p>
-          ${sent ? html`<p class="small">Sent ${fmtDateTime(o.sent_at)}.</p>` : ''}
+        <div class="pp-o-side stack">
+          <div><h3 class="pp-h3">Personal detail</h3>${o.personal_detail ? html`<mark class="pp-pd">${o.personal_detail}</mark>` : html`<p class="pp-note">None</p>`}</div>
+          <div><h3 class="pp-h3">What informed this</h3>${(o.basis || []).length ? html`<ul class="pp-basis">${(o.basis || []).map(b => html`<li>${b.detail}${b.source ? html` <a href="${b.source}" target="_blank" rel="noopener">source${icon('arrow-up-right')}</a>` : html` <span class="tag tag--err">Unsourced</span>`}</li>`)}</ul>` : html`<p class="pp-note">No sourced details were used.</p>`}</div>
+          <div><h3 class="pp-h3">Review flags</h3>${o.flags.length ? html`<ul class="pp-flags">${o.flags.map(f => html`<li><span class="tag ${FLAG_HARD.includes(f.type) ? 'tag--err' : 'tag--warn'}">${label(f.type)}</span><span>${f.message}</span></li>`)}</ul>` : html`<p class="pp-note pp-note--ok">${icon('check')}No flags.</p>`}</div>
+          <p class="pp-note">Approving covers this exact <b>recipient, message and send time</b>. Any edit to them returns it to review. Byline never sends for you on its own: send it yourself, then mark it sent (safe to click twice; it only logs once).</p>
+          ${sent ? html`<p class="pp-note">Sent ${whenLabel(o.sent_at, tz)}.</p>` : ''}
         </div>
       </div>
-      <div class="row between" style="margin-top:18px">
-        <div class="row">${!sent ? html`<button class="danger sm" data-o="delete">Delete draft</button>` : ''}</div>
-        <div class="row">
-          <button data-o="copy">Copy text</button>
-          ${!locked ? html`<button data-o="save" id="b-save">Save changes</button>
-            <button class="primary" data-o="approve" ${o.contact.dnc ? 'disabled' : ''}>${o.approval_valid ? 'Approved ✓' : 'Approve'}</button>` : ''}
-          ${o.channel === 'email' && !locked && SMTP_READY ? html`<button class="primary" data-o="send" id="b-send" ${o.approval_valid ? '' : 'disabled'} title="Sends through your Gmail at the approved time">${o.status === 'queued' ? 'Queued ✓' : (o.send_at && Date.parse(o.send_at) > Date.now() + 60e3) ? 'Queue for send time' : 'Send via Gmail'}</button>` : ''}
-          ${o.status !== 'cancelled' ? html`<button class="amber" data-o="sent" id="b-sent" ${o.approval_valid || sent ? '' : 'disabled'} title="Enabled once the exact message is approved">${sent ? 'Marked as sent' : 'I sent it — mark as sent'}</button>` : ''}
-          <button class="ghost" data-close>Close</button>
+      <footer class="pp-o-foot">
+        <div class="cluster">${!sent ? html`<button class="btn btn--danger btn--sm" data-o="delete">Delete draft</button>` : ''}</div>
+        <div class="cluster">
+          <button class="btn" data-o="copy">Copy text</button>
+          ${!locked ? html`<button class="btn" data-o="save" id="b-save">Save changes</button>
+            <button class="btn btn--primary" data-o="approve" ${o.contact.dnc ? 'disabled' : ''}>${o.approval_valid ? html`${icon('check')}Approved` : 'Approve'}</button>` : ''}
+          ${o.channel === 'email' && !locked && SMTP_READY ? html`<button class="btn btn--primary" data-o="send" id="b-send" ${o.approval_valid ? '' : 'disabled'} title="Sends through your Gmail at the approved time">${o.status === 'queued' ? 'Queued' : (o.send_at && Date.parse(o.send_at) > Date.now() + 60e3) ? 'Queue for send time' : 'Send via Gmail'}</button>` : ''}
+          ${o.status !== 'cancelled' ? html`<button class="btn" data-o="sent" id="b-sent" ${o.approval_valid || sent ? '' : 'disabled'} title="Enabled once the exact message is approved">${sent ? html`${icon('check')}Marked as sent` : 'I sent it: mark as sent'}</button>` : ''}
+          <button class="btn btn--ghost" data-close>Close</button>
         </div>
-      </div>`);
+      </footer>`);
+    const label0 = m.el.querySelector('h2');
+    if (label0) { label0.id = label0.id || `o-dlg-${id}`; m.el.setAttribute('aria-labelledby', label0.id); }
 
     const $ = (s) => m.el.querySelector(s);
     const orig = { recipient: o.recipient || '', subject: o.subject || '', body: o.body || '', send_at: toLocalInput(o.send_at) };
     const current = () => ({ recipient: $('#f-recipient').value, subject: $('#f-subject')?.value ?? orig.subject, body: $('#f-body').value, send_at: $('#f-send').value });
-    const changes = () => { const c = current(), out = {}; for (const k in c) if (c[k] !== orig[k]) out[k] = k === 'send_at' ? (c[k] ? new Date(c[k]).toISOString() : null) : c[k]; return out; };
+    const changes = () => { const cur = current(), out = {}; for (const k in cur) if (cur[k] !== orig[k]) out[k] = k === 'send_at' ? (cur[k] ? new Date(cur[k]).toISOString() : null) : cur[k]; return out; };
     const refresh = () => {
       const body = $('#f-body').value, n = body.length;
-      $('#count').textContent = limit ? `${n} / ${limit}` : `${n} chars`;
-      $('#count').className = 'mono ' + (limit && n > limit ? 'over' : 'faint');
+      $('#count').textContent = limit ? `${n} / ${limit}` : `${n} characters`;
+      $('#count').classList.toggle('is-over', !!(limit && n > limit));
       $('#preview').innerHTML = highlight(body, o.personal_detail);
       const dirty = Object.keys(changes()).length > 0;
       if ($('#b-sent') && !sent) $('#b-sent').disabled = dirty || !o.approval_valid;
       if ($('#b-send')) $('#b-send').disabled = dirty || !o.approval_valid;
       if ($('#b-save')) $('#b-save').textContent = dirty ? 'Save changes •' : 'Save changes';
     };
-    m.el.addEventListener('input', refresh);
+    m.el.oninput = refresh;
     refresh();
     const save = async () => {
       const ch = changes();
       if (!Object.keys(ch).length) return o;
       const r = await api.patch(`/outreach/${id}`, ch);
-      if (o.status === 'approved' && r.status !== 'approved') toast('Edited after approval — returned to review', 'ok');
+      if (o.status === 'approved' && r.status !== 'approved') toast('Edited after approval, so it went back to review', 'ok');
       onChange();
       return r;
     };
     m.el.querySelectorAll('[data-o]').forEach(b => b.onclick = async () => {
       const a = b.dataset.o;
-      if (a === 'copy') return copy([current().subject && o.channel === 'email' ? `Subject: ${current().subject}\n\n` : '', current().body].join(''));
+      if (a === 'copy') { await copy([current().subject && o.channel === 'email' ? `Subject: ${current().subject}\n\n` : '', current().body].join('')); return; }
       if (a === 'save') await act(b, async () => { await save(); toast('Saved', 'ok'); await draw(); });
       if (a === 'approve') await act(b, async () => {
         const r = await save();
         await api.post(`/outreach/${id}/approve`, { hash: r.current_hash });
-        toast('Approved — send it yourself, then mark as sent', 'ok'); onChange(); await draw();
+        toast('Approved. Send it yourself, then mark it sent.', 'ok'); onChange(); await draw();
       });
-      if (a === 'send') await act(b, async () => { const r = await api.post(`/outreach/${id}/send`); toast(r.status === 'queued' ? `Queued — sends at ${fmtDateTime(r.send_at)}` : 'Sent and logged', 'ok'); onChange(); await draw(); }, 'Sending…');
+      if (a === 'send') await act(b, async () => { const r = await api.post(`/outreach/${id}/send`); toast(r.status === 'queued' ? `Queued; sends ${whenLabel(r.send_at, tz)}` : 'Sent and logged', 'ok'); onChange(); await draw(); }, 'Sending…');
       if (a === 'sent') await act(b, async () => { await api.post(`/outreach/${id}/sent`); toast('Marked as sent and logged', 'ok'); onChange(); await draw(); });
       if (a === 'delete') {
         if (!(await confirmBox('Delete this outreach draft?', 'Delete'))) return;

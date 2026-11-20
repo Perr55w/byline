@@ -1,0 +1,361 @@
+/* =====================================================================
+   Byline v4 — story dossier CONTENT (views/story-dossier.js).
+   The frame (panel, scrim, flight, sheet) lives in components.css (.dossier-*).
+   Layout: D §5 (7/5 columns, right column sticky, no dead whitespace).
+   Information architecture: F §3. Tokens only; the inline --q is the
+   computed quality colour (the one literal-colour exception).
+   ===================================================================== */
+
+.dx-body { padding-top: 34px; }
+@media (min-width: 761px) { .dossier-body.dx-body { padding-bottom: 32px; } }
+.dx { --dx-gap: 32px; --dx-rule: 33px; }
+/* frame tweaks for this content (D round 1): close button at 16/16, symmetric gutters (the scrollbar gutter on
+   both edges, so left = right whatever the platform's scrollbar width), and a bottom fade on the scrolling
+   viewport so text cut by the panel edge never butts against page text in the inset below it. The fade is a
+   sticky gradient strip, not mask-image: a mask on the scroller re-composited every frame over the frost
+   (measured: 21 long frames per open at 4x instead of 8). */
+.dossier:has(.dx-body) .dossier-bar { top: 16px; right: 16px; }
+.dossier:has(.dx-body) .dossier-scroll { scrollbar-gutter: stable both-edges; }
+.dx-body::after { content: ""; position: sticky; z-index: 2; bottom: 0; display: block; height: 28px; margin: -28px -36px 0; pointer-events: none;
+  background: linear-gradient(to bottom, transparent, color-mix(in oklab, var(--surface-solid) 92%, transparent)); }
+
+/* ---------------------------------------------------------------- header: the same 7/5 grid as the body, so the fact card sits over the right column */
+.dx-head { display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); gap: 0 var(--dx-gap); align-items: start; }
+.dx-head-main { min-width: 0; }
+/* D-8: parts wrap as flex items; each part's "·" sits in the column gap before it, and the left-edge clip hides the
+   one that would start a line, so no line ever begins with a separator */
+.dx-eyebrow { display: flex; flex-wrap: wrap; align-items: center; column-gap: 16px; row-gap: 2px; clip-path: inset(-6px -6px -6px 0); }
+.dx-eb-part { position: relative; white-space: nowrap; } /* the line wraps between its parts, never inside "updated 2d ago" */
+.dx-eb-part::before { content: "·"; position: absolute; right: 100%; width: 16px; text-align: center; color: var(--text-3); }
+.dx-eyebrow .tag + .dx-eb-part::before { content: none; }
+.dx-eyebrow .tag { display: inline-flex; margin-right: -6px; white-space: nowrap; } /* the Demo / Archived tag leads the line, so it never wraps alone (FD10) */
+@media (max-width: 599px) {
+  .dx-eb-topic { flex-basis: 100%; }
+  .dx-eb-long { display: none; }
+}
+.dx-title {
+  margin: 12px 0 0; max-width: 22ch; color: var(--text-1); text-wrap: balance;
+  font: 400 40px/44px var(--font-serif); font-variation-settings: 'opsz' 72; letter-spacing: -0.02em;
+}
+/* FD9: a long headline (over 70 characters) steps down one size so the header columns stay level */
+.dx-title--long { font-size: 36px; line-height: 40px; max-width: 24ch; }
+.dx h1[tabindex="-1"]:focus, /* FD9: a long headline (over 70 characters) steps down one size so the header columns stay level */
+.dx h1[tabindex="-1"]:focus-visible { box-shadow: none; }
+.dx-dek { margin: 14px 0 0; max-width: 60ch; color: var(--text-2); font: 400 var(--fs-lede)/var(--lh-lede) var(--font-sans); letter-spacing: -0.006em; text-wrap: pretty; }
+.dx-dek mark.num-hl { font-weight: 500; }
+.dx-topics { margin-top: 18px; line-height: 0; }
+.dx-topics .chip { margin: 0 6px 6px 0; vertical-align: top; }
+.dx-rest-topics { display: inline; }
+
+/* fact card (right): ring + labelled rows. Rows own their hairlines (nothing paints before it fades in). */
+.dx-head-side { display: flex; flex-direction: column; align-items: stretch; min-width: 0; padding: 30px 0 0 var(--dx-rule); }
+.dx-card { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 0 20px; align-items: start; }
+/* FD9: pills / actions moved under the score card when the left column runs longer (story-dossier.js headPlan) */
+.dx-head-side > .dx-topics { margin-top: 6px; }
+.dx-head-side > .dx-actions { margin-top: 16px; }
+.dx-head--stack .dx-card { grid-template-columns: minmax(0, 1fr); }
+.dx-head--stack .dx-ring { justify-self: start; }
+.dx-ring { display: grid; place-items: center; padding-bottom: 22px; }
+.dx-facts { margin: 0; display: flex; flex-direction: column; }
+.dx-fact { display: flex; flex-direction: column; gap: 3px; padding: 10px 0; border-top: 1px solid var(--line); }
+.dx-fact:first-child { border-top: 0; padding-top: 2px; }
+.dx-fact dt { display: flex; align-items: center; gap: 10px; font: 500 12px/16px var(--font-sans); color: var(--text-3); } /* sentence case: mono caps are for eyebrows only */
+.dx-fact dd { margin: 0; }
+.dx-fact-v { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; color: var(--text-1); font: 500 14px/20px var(--font-sans); font-variant-numeric: tabular-nums; }
+/* "6 posts · 1 outlet · 0 independent" wraps between its parts, and a wrapped line never starts with the "·" */
+.dx-fact-v.dx-seps { column-gap: 14px; row-gap: 0; clip-path: inset(-6px -6px -6px 0); }
+.dx-seps > span { position: relative; white-space: nowrap; }
+.dx-seps > span + span::before { content: "·"; position: absolute; right: 100%; width: 14px; text-align: center; color: var(--text-3); }
+.dx-fact-s { color: var(--text-3); font: 450 12.5px/17px var(--font-sans); }
+
+.dx-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 22px; }
+.dx-split { position: relative; display: inline-flex; }
+.dx-split > .btn--primary:first-child:not(:only-of-type) { border-radius: var(--r-ctl) 0 0 var(--r-ctl); }
+.dx-split-more { width: 30px; border-radius: 0 var(--r-ctl) var(--r-ctl) 0; box-shadow: inset 1px 0 0 color-mix(in oklab, var(--on-accent) 28%, transparent); }
+.dx-chev { transform: rotate(90deg); transition: transform var(--dur-micro) var(--ease-move); }
+.dx-split-more[aria-expanded=true] .dx-chev { transform: rotate(-90deg); }
+.dx-menu {
+  position: absolute; z-index: 5; top: calc(100% + 6px); left: 0; min-width: 220px; padding: 6px; border-radius: var(--r-tile);
+  background: var(--raised); box-shadow: inset 0 0 0 1px var(--line-2), var(--shadow-2);
+  display: flex; flex-direction: column; gap: 1px; animation: dx-menu-in 200ms var(--ease-settle) both;
+}
+.dx-menu[hidden] { display: none; }
+.dx-menu-item { display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 10px; border: 0; border-radius: var(--r-ctl); background: none;
+  color: var(--text-1); font: 450 13.5px/1 var(--font-sans); text-align: left; cursor: pointer; white-space: nowrap; }
+.dx-menu-item:hover, .dx-menu-item:focus-visible { background: var(--hover-row); outline: none; box-shadow: inset 0 0 0 1px var(--accent-line); }
+.dx-check { display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 4px; box-shadow: inset 0 0 0 1px var(--line-ctl); color: var(--accent-text); }
+.dx-check .icon { width: 12px; height: 12px; }
+[aria-checked=true] .dx-check { box-shadow: inset 0 0 0 1px var(--accent-line); background: var(--accent-soft); }
+@keyframes dx-menu-in { from { opacity: 0; transform: translateY(-4px); } }
+
+/* ---------------------------------------------------------------- columns (D §5: 7 / 5, right sticky) */
+/* both columns flat (D round 1): the right one is set off by a hairline rule, not a tile */
+.dx-cols { display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); gap: var(--dx-gap); align-items: start; margin-top: 28px; padding-top: 26px; border-top: 1px solid var(--line); }
+.dx-left { display: flex; flex-direction: column; gap: 32px; min-width: 0; }
+.dx-right {
+  position: sticky; top: var(--dx-stick, 24px); min-width: 0; display: flex; flex-direction: column;
+  padding: 0 0 0 calc(var(--dx-rule) - 1px); border-left: 1px solid var(--line);
+}
+.dx-right > .dx-sec { padding: 22px 0; }
+.dx-right > .dx-sec:first-child { padding-top: 0; }
+.dx-right > .dx-sec + .dx-sec { border-top: 1px solid var(--line); }
+.dx-left > .dx-sec[data-dx-movable] { padding-top: 22px; border-top: 1px solid var(--line); margin-top: -10px; }
+.dx-sec .section-head { margin-bottom: 10px; align-items: center; }
+.dx-h { font-size: 22px; line-height: 27px; }
+.dx-right .dx-h { margin: 0 0 10px; }
+.dx-right .section-head .dx-h { margin: 0; }
+.dx-h3 { margin: 0 0 10px; color: var(--text-1); font: 600 14px/20px var(--font-sans); letter-spacing: 0; }
+.section-head .dx-h3 { margin: 0; }
+.dx-k { margin: 14px 0 6px; color: var(--text-3); font: 500 12px/16px var(--font-sans); }
+.dx-k:first-of-type { margin-top: 4px; }
+.dx-p { margin: 0; color: var(--text-1); font: 400 15px/23px var(--font-sans); }
+.dx-fine { margin: 10px 0 0; color: var(--text-3); font: 450 12.5px/18px var(--font-sans); }
+.dx-fine a { color: var(--accent-text); }
+.dx-empty { margin: 0; color: var(--text-2); font: 400 14px/21px var(--font-sans); }
+.dx-link { display: inline-flex; align-items: center; height: 28px; margin-top: 8px; padding: 0 2px; border: 0; background: none; color: var(--accent-text); font: 500 13px/1 var(--font-sans); cursor: pointer; }
+.dx-link:hover { text-decoration: underline; text-underline-offset: 3px; }
+
+/* ---------------------------------------------------------------- shape markers ■ ◆ ○ (non-colour cue) */
+.mk { display: inline-block; flex: none; width: 7px; height: 7px; }
+.mk--fp { background: var(--text-2); border-radius: 1px; }
+.mk--ind { width: 7px; height: 7px; background: var(--accent); transform: rotate(45deg) scale(.92); border-radius: 1px; }
+.mk--com { box-shadow: inset 0 0 0 1.5px var(--text-3); border-radius: 50%; }
+
+/* ---------------------------------------------------------------- A. What the sources say */
+.dx-sum { margin: 0; color: var(--text-1); font: 450 15px/23px var(--font-sans); }
+.dx-sources .section-head .dx-h { white-space: nowrap; }
+.dx-legend { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px 14px; color: var(--text-3); font: 450 12px/16px var(--font-sans); }
+.dx-legend span { display: inline-flex; align-items: center; gap: 7px; }
+.dx-callout { display: flex; flex-direction: column; gap: 2px; margin: 4px 0 4px; padding: 10px 14px; border-radius: var(--r-ctl);
+  background: var(--warn-soft); box-shadow: inset 3px 0 0 var(--warn); color: var(--text-1); font: 400 14px/21px var(--font-sans); }
+.dx-callout--disagreement { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
+.dx-callout-k { color: var(--text-2); font: 600 12.5px/16px var(--font-sans); }
+/* FD8: when the callout would repeat the dek, an attribution line instead (outlet, domain, the two figures) */
+.dx-callout--attr { display: block; margin: 4px 0; line-height: 22px; }
+.dx-callout--attr .dx-callout-k { font-size: 13.5px; }
+.dx-callout--attr a { color: var(--accent-text); font-weight: 500; }
+.dx-callout--attr .dx-dom { color: var(--text-2); }
+.dx-sep { margin: 0 8px; color: var(--text-3); }
+.dx-arts { margin-top: 10px; }
+.dx-art { padding: 18px 0; border-top: 1px solid var(--line); }
+.dx-arts > .dx-art:first-child, .dx-arts > .dx-group:first-child > .dx-group-head + .dx-art { border-top: 0; }
+.dx-art-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; color: var(--text-3); font: 450 12.5px/16px var(--font-sans); }
+.dx-art-meta > * { white-space: nowrap; }
+.dx-dom-link { display: inline-flex; align-items: center; gap: 4px; text-decoration: none; }
+.dx-dom-link:hover { color: var(--accent-text); }
+.dx-dom-link .dx-out { margin-top: 0; }
+.dx-dom-link:hover .dx-out { color: var(--accent-text); }
+.dx-dom { color: var(--text-2); font: 450 12.5px/16px var(--font-mono); }
+.dx-srcname { color: var(--text-3); }
+.dx-srcname::before { content: "·"; margin-right: 10px; color: var(--line-3); }
+.dx-art-title { display: flex; align-items: flex-start; gap: 6px; margin-top: 8px; color: var(--text-1); font: 500 15.5px/22px var(--font-sans); text-decoration: none; }
+.dx-art-title:hover { color: var(--accent-text); }
+.dx-out { width: 13px; height: 13px; margin-top: 5px; color: var(--text-3); }
+.dx-art-title:hover .dx-out { color: var(--accent-text); }
+.dx-says { margin: 8px 0 0; max-width: 64ch; color: var(--text-1); font: 400 var(--fs-reading)/var(--lh-reading) var(--font-serif); font-variation-settings: 'opsz' 16; }
+.dx-says--none { color: var(--text-3); font: 400 14px/21px var(--font-sans); }
+.dx-says-k { display: block; margin-bottom: 2px; color: var(--text-3); font: 500 12px/16px var(--font-sans); }
+.dx-says-n { font-weight: 450; }
+.dx-art-meta + .dx-says { margin-top: 10px; }
+.dx-claims { margin: 10px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.dx-claims li { position: relative; padding-left: 16px; color: var(--text-2); font: 400 14px/21px var(--font-sans); }
+.dx-claims li::before { content: ""; position: absolute; left: 2px; top: 9px; width: 5px; height: 1.5px; background: var(--line-ctl); }
+.dx-also { color: var(--text-3); font-size: 12.5px; }
+.dx-group { margin: 6px 0 0; }
+.dx-group-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; padding: 10px 12px; border-radius: var(--r-ctl); background: var(--tint-1);
+  color: var(--text-1); font: 500 13px/18px var(--font-sans); }
+.dx-group-head .ink-3 { margin-left: auto; font-weight: 450; }
+.dx-group-more { height: 20px; margin: 0 0 0 auto; font-weight: 500; }
+.dx-group > .dx-art:first-of-type { border-top: 0; }
+.dx-rest { padding: 4px 0 6px; border-top: 1px solid var(--line); }
+.dx-compact { margin: 12px 0 0; padding: 0; list-style: none; counter-reset: dxc 2; display: flex; flex-direction: column; }
+.dx-compact li { counter-increment: dxc; position: relative; display: grid; gap: 2px; padding: 8px 0 8px 30px; border-top: 1px dashed var(--line); }
+.dx-compact li:first-child { border-top: 0; }
+.dx-compact li::before { content: counter(dxc, decimal-leading-zero); position: absolute; left: 0; top: 11px; color: var(--text-3); font: 450 11.5px/16px var(--font-mono); }
+.dx-compact-t { color: var(--text-1); font: 500 14px/20px var(--font-sans); text-decoration: none; }
+.dx-compact-t:hover { color: var(--accent-text); }
+.dx-compact-s { color: var(--text-2); font: 400 13.5px/20px var(--font-sans); overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; } /* FD5: two lines, not one */
+.dx-compact-s--none { color: var(--text-3); }
+/* D-5: a run of posts with nothing extracted, as one row */
+.dx-run { margin: 8px 0 0; color: var(--text-2); font: 400 14px/22px var(--font-sans); text-wrap: pretty; }
+.dx-run b { color: var(--text-1); font-weight: 600; }
+.dx-run a { color: var(--accent-text); font: 500 13px/20px var(--font-mono); text-decoration: none; white-space: nowrap; }
+.dx-run a:hover { text-decoration: underline; text-underline-offset: 3px; }
+.dx-srcname--first::before { content: none; }
+.dx-compact[hidden], .dx-rest-full[hidden], .dx-claims [hidden], .dx-conn-list [hidden], .dx-pieces [hidden] { display: none; }
+
+/* ---------------------------------------------------------------- B. Evidence (label column + plain sentences) */
+.dx-ev { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; padding: 14px 0; border-top: 1px solid var(--line); }
+.dx-ev-k { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; }
+.dx-evidence .section-head + .dx-ev { border-top: 0; padding-top: 6px; }
+.dx-ev-k h3 { margin: 0; color: var(--text-1); font: 600 13.5px/20px var(--font-sans); }
+.dx-ev-k p { margin: 0; color: var(--text-3); font: 450 12.5px/17px var(--font-sans); font-variant-numeric: tabular-nums; }
+.dx-ev-rows { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 10px; }
+.dx-ev-rows li[hidden] { display: none; }
+.dx-ev-rows li { display: block; color: var(--text-2); font: 400 14px/24px var(--font-sans); text-wrap: pretty; }
+.dx-ev-rows li > .chip { height: 22px; margin-right: 8px; vertical-align: 1px; }
+.dx-ev-line { margin: 0; color: var(--text-2); font: 400 14px/26px var(--font-sans); }
+.dx-term { padding: 1px 5px; border-radius: var(--r-tag); background: var(--tint-2); color: var(--text-1); font: 500 13px/20px var(--font-sans); white-space: nowrap; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+.dx-watch { display: flex !important; flex-direction: column; gap: 4px; }
+.dx-watch-q { color: var(--text-1); font: 400 16px/23px var(--font-serif); font-variation-settings: 'opsz' 16; }
+.dx-watch-m { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 13px; line-height: 22px; }
+.dx-pw li { display: flex; flex-direction: column; align-items: stretch; gap: 3px; }
+ /* FD6: quotes show whole up to 240 characters; longer ones are cut at a word boundary in JS (clip), never by a clamp */
+.dx-pw b { color: var(--text-1); font-weight: 600; font-size: 13.5px; }
+/* D-1: a signal with no quote reads "You can try it · matched available" on one line */
+.dx-pw .dx-pw-line > span:first-child { display: inline; line-height: 24px; }
+.dx-pw .dx-term { margin-left: 2px; }
+.dx-pw-ok { display: inline-flex; vertical-align: -2px; margin-left: 4px; color: var(--text-3); }
+.dx-pw-ok .icon { width: 14px; height: 14px; }
+.dx-quote { display: block; padding-left: 12px; box-shadow: inset 2px 0 0 var(--line-2); color: var(--text-2); font: 400 14.5px/21px var(--font-serif); font-variation-settings: 'opsz' 16; quotes: "“" "”"; }
+.dx-nums { margin: 2px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.dx-nums li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0 14px; align-items: baseline; color: var(--text-2); font: 400 14px/21px var(--font-sans); text-wrap: pretty; }
+.dx-frag-src { color: var(--text-3); font: 450 12px/16px var(--font-mono); white-space: nowrap; }
+.dx-notes { margin: 6px 0 0; padding: 14px 0 0; border-top: 1px solid var(--line); list-style: none; display: flex; flex-direction: column; gap: 6px; color: var(--text-2); font: 400 13.5px/20px var(--font-sans); }
+
+/* ---------------------------------------------------------------- C. Why it ranked: Today's dash markers (D-7, SPEC §0 names them), one component */
+.dx-why-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; }
+.dx-why-list li { position: relative; padding-left: 20px; color: var(--text-1); font: 400 15px/22px var(--font-sans); text-wrap: pretty; }
+.dx-why-list li::before { content: ""; position: absolute; left: 2px; top: 11px; width: 9px; height: 1.5px; border-radius: 1px; background: var(--accent); }
+
+/* ---------------------------------------------------------------- D. Score breakdown: UNEQUAL tracks ∝ weights */
+.dx-score-top { display: flex; align-items: center; gap: 14px; margin: 2px 0 6px; }
+.dx-score-num { color: var(--text-1); font: 320 48px/1 var(--font-sans); letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
+.dx-score-cap { color: var(--text-2); font: 450 13px/18px var(--font-sans); font-variant-numeric: tabular-nums; }
+.dx-score-cap b { color: var(--text-1); font-weight: 600; }
+.dx-score-line { margin: 0; color: var(--text-2); font: 450 14px/20px var(--font-sans); font-variant-numeric: tabular-nums; }
+.dx-score-line b { color: var(--text-1); font-weight: 600; }
+.dx-base { margin: 4px 0 12px; color: var(--text-2); font: 450 13px/18px var(--font-sans); font-variant-numeric: tabular-nums; }
+.dx-base b { color: var(--text-1); font-weight: 600; }
+.dx-bars { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 12px; }
+.dx-bar { display: grid; grid-template-columns: 92px minmax(0, 1fr) 78px; grid-template-areas: "l t v" ". n n"; align-items: center; gap: 2px 12px; }
+.dx-bar-l { grid-area: l; display: flex; align-items: baseline; gap: 6px; color: var(--text-1); font: 500 13.5px/18px var(--font-sans); }
+.dx-bar-l small { color: var(--text-3); font: 450 11.5px/1 var(--font-mono); }
+.dx-bar-t { grid-area: t; min-width: 0; }
+.dx-bar-track { position: relative; display: block; width: calc(var(--track) * 100%); height: 10px; border-radius: 3px; overflow: hidden;
+  background: var(--track); box-shadow: inset 0 0 0 1px var(--line-ctl); }
+.dx-bar-track i { position: absolute; inset: 0; transform-origin: left center; transform: scaleX(var(--fill)); background: var(--q); border-radius: 3px; }
+.dx-bars.is-pending .dx-bar-track i { transform: scaleX(0); } /* bars fill only after the flight */
+.dx-bar-v { grid-area: v; text-align: right; color: var(--text-3); font: 450 12.5px/18px var(--font-mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.dx-bar-v b { color: var(--text-1); font-weight: 500; }
+.dx-bar-n { grid-area: n; color: var(--text-3); font: 450 12px/16px var(--font-sans); }
+.dx-mults { margin: 16px 0 0; padding: 12px 0 0; border-top: 1px dashed var(--line-2); list-style: none; display: flex; flex-direction: column; gap: 5px; }
+.dx-mults li { display: grid; grid-template-columns: 62px 92px minmax(0, 1fr); gap: 8px; align-items: baseline; color: var(--text-1); font: 450 13px/18px var(--font-sans); }
+.dx-mults li.is-neutral { color: var(--text-3); }
+.dx-mult-v { font: 500 12.5px/18px var(--font-mono); font-variant-numeric: tabular-nums; }
+.dx-mult-n { color: var(--text-3); font-size: 12px; }
+.dx-mult-l--all { grid-column: 2 / -1; }
+.dx-recon { display: flex; align-items: baseline; gap: 12px; margin: 10px 0 0; padding-top: 10px; border-top: 1px solid var(--line-2); color: var(--text-1); font: 450 13px/18px var(--font-sans); }
+.dx-recon .dx-mult-v { font-size: 14px; font-weight: 600; min-width: 62px; }
+
+/* ---------------------------------------------------------------- E/F. Lens, connections, pieces, tune */
+.dx-who { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; }
+.dx-who li { position: relative; padding-left: 14px; color: var(--text-1); font: 400 15px/22px var(--font-sans); }
+.dx-who li::before { content: ""; position: absolute; left: 0; top: 10px; width: 5px; height: 5px; border-radius: 50%; background: var(--line-ctl); }
+.dx-tests { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.dx-tests li { display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: 2px 10px; align-items: start; }
+.dx-box { width: 14px; height: 14px; margin-top: 4px; border-radius: 4px; box-shadow: inset 0 0 0 1.5px var(--line-ctl); }
+.dx-test-t { color: var(--text-1); font: 400 14.5px/22px var(--font-sans); }
+.dx-link--inline { display: inline; height: auto; margin: 0 0 0 4px; padding: 0; font-size: 13px; line-height: inherit; white-space: nowrap; }
+.dx-conn-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; }
+.dx-conn-list li { padding: 12px 0; border-top: 1px solid var(--line); }
+.dx-conn-list li:first-child { border-top: 0; padding-top: 2px; }
+.dx-conn-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--text-1); font: 600 14px/20px var(--font-sans); }
+.dx-conn-list p { margin: 4px 0 0; color: var(--text-2); font: 400 13.5px/20px var(--font-sans); }
+.dx-conn-list .dx-fine { margin-top: 4px; }
+.dx-conn-list .dx-quote { margin-top: 6px; }
+.dx-conn-topical { display: flex; flex-direction: column; gap: 8px; }
+.dx-conn-list + .dx-conn-topical { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+.dx-conn-k { margin: 0; color: var(--text-2); font: 500 13px/18px var(--font-sans); }
+.dx-conn-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.dx-conn-chips .chip { height: 24px; padding: 0 9px; font-size: 12.5px; }
+.dx-conn-basis { margin: 2px 0 0; font: 450 12.5px/18px var(--font-sans); }
+.dx-conn-basis a { color: var(--accent-text); }
+.dx-conn-basis .dx-quote { margin-top: 4px; }
+.dx-conn-caveat { margin-top: 10px; }
+.dx-pieces { margin: 0 0 12px; padding: 0; list-style: none; display: flex; flex-direction: column; }
+.dx-pieces li { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 10px; align-items: center; padding: 8px 0; border-top: 1px solid var(--line); font: 450 14px/20px var(--font-sans); }
+.dx-pieces li:first-child { border-top: 0; }
+.dx-pieces a { color: var(--text-1); text-decoration: none; overflow-wrap: anywhere; }
+.dx-pieces a:hover { color: var(--accent-text); }
+.dx-pieces .dx-fine { margin: 0; white-space: nowrap; }
+.dx-angles { margin-top: 4px; }
+.dx-angle { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; padding: 12px 0; border-top: 1px solid var(--line); }
+.dx-angle b { color: var(--text-1); font: 600 14px/20px var(--font-sans); }
+.dx-angle p { margin: 3px 0 0; color: var(--text-2); font: 400 13.5px/20px var(--font-sans); }
+.dx-angle .btn { justify-self: start; }
+.dx-angles-out:not(:empty) { margin-top: 10px; }
+.dx-tune .btn[aria-pressed=true] { background: var(--accent-soft); color: var(--accent-text); box-shadow: inset 0 0 0 1px var(--accent-line); }
+
+mark.num-hl { background: var(--accent-soft); color: var(--text-1); border-radius: 3px; padding: 0 2px; font-weight: 500; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+
+/* ---------------------------------------------------------------- narrower panels */
+@media (max-width: 1279px) {
+  .dx-title { font-size: 36px; line-height: 40px; }
+}
+@media (max-width: 1100px) {
+  .dx-cols, .dx-head { grid-template-columns: minmax(0, 1fr); }
+  .dx-head-side { padding: 24px 0 0; }
+  .dx-head-side > .dx-topics { margin-top: 0; }
+  .dx-head--stack .dx-card { grid-template-columns: auto minmax(0, 1fr); }
+  .dx-right { position: static; padding-left: 0; border-left: 0; }
+}
+
+/* ---------------------------------------------------------------- phone: one column in F's order, actions pinned to the sheet's foot */
+@media (max-width: 760px) {
+  .dx-body { padding-top: 26px; }
+  .dx-body::after { display: none; } /* the sticky action bar is the sheet's foot */
+  .dx { display: flex; flex-direction: column; }
+  .dx-head, .dx-head-main, .dx-head-side, .dx-cols, .dx-left, .dx-right { display: contents; }
+  .dx-eyebrow { order: 0; padding-right: 44px; }
+  .dx-title { order: 1; font-size: 32px; line-height: 36px; margin-top: 10px; }
+  .dx-title--long { font-size: 28px; line-height: 32px; }
+  .dx-dek { order: 2; font-size: 16px; line-height: 24px; }
+  .dx-card { order: 3; padding: 20px 0 0; gap: 0 18px; grid-template-columns: auto minmax(0, 1fr) !important; }
+  .dx-topics { order: 4; margin-top: 4px; }
+  .dx-why { order: 5; } .dx-sources { order: 6; } .dx-evidence { order: 7; } .dx-score { order: 8; } .dx-lens { order: 9; }
+  .dx-conn { order: 10; } .dx-make { order: 11; } .dx-tune { order: 12; }
+  .dx-sec { margin-top: 30px; padding: 0 !important; border: 0 !important; background: none !important; box-shadow: none !important; }
+  .dx-why, .dx-score, .dx-lens, .dx-conn, .dx-make, .dx-tune { padding: 18px !important; border-radius: var(--r-tile); background: var(--surface-nested) !important; box-shadow: inset 0 0 0 1px var(--line) !important; }
+  .dx-actions { order: 99; position: sticky; bottom: 0; z-index: 4; margin: 24px -16px calc(-1 * (32px + env(safe-area-inset-bottom, 0px))); padding: 12px 16px calc(12px + env(safe-area-inset-bottom, 0px));
+    background: var(--surface-solid); box-shadow: 0 -1px 0 var(--line); flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .dx-actions .btn { flex: none; }
+  .dx-menu { top: auto; bottom: calc(100% + 6px); }
+  .dx-callout--attr .dx-sep:last-of-type { display: none; }
+  .dx-callout--attr .dx-sep:last-of-type + span { display: block; }
+  .dx-ev { grid-template-columns: 1fr; }
+  .dx-bar { grid-template-columns: 84px minmax(0, 1fr) 72px; }
+  .dx-mults li { grid-template-columns: 56px 84px minmax(0, 1fr); }
+  .dx-art-title { font-size: 15px; }
+  .dx-group-head .ink-3, .dx-group-more { margin-left: 0; }
+  .dx-sources .section-head { flex-wrap: wrap; gap: 6px; }
+  .dx-legend { justify-content: flex-start; }
+}
+/* FD11 / R14: the phone action bar in two rows, every action visible: the Draft split button full width, then
+   Save, Dismiss and Source in three equal columns. No horizontal scroll. */
+.dx-open-s { display: none; }
+@media (max-width: 480px) {
+  .dx-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; overflow: visible; }
+  .dx-actions > .dx-split:first-child { grid-column: 1 / -1; display: flex; }
+  .dx-actions > .dx-split:first-child > .btn:first-child { flex: 1 1 auto; justify-content: center; }
+  .dx-actions > .dx-split:not(:first-child) { display: flex; min-width: 0; }
+  .dx-actions .btn { min-width: 0; justify-content: center; padding-left: 8px; padding-right: 8px; }
+  .dx-actions > .dx-split:not(:first-child) > .btn, .dx-actions > .btn { flex: 1 1 auto; width: 100%; }
+  .dx-actions .btn .icon { flex: none; }
+  .dx-open-l { display: none; }
+  .dx-open-s { display: inline; }
+  .dx-actions > .dx-split:nth-child(2) .dx-menu { left: 0; }
+}
+@media (prefers-reduced-motion: reduce) { .dx-menu { animation: none; } .dx-chev { transition: none; } }
+@media (forced-colors: active) { .dx-bar-track { border: 1px solid CanvasText; } .dx-bar-track i { background: CanvasText; } .mk { border: 1px solid CanvasText; } }
+
+/* layout cost (E2 / FD1): only what the flight shows is rendered up front. Each deferred section arrives in its own
+   task with content-visibility:auto at its measured height (--cis, story-dossier.js CIS), then drops it one per task
+   once all have arrived, so the scroll height ends exact. overflow-clip-margin keeps focus rings unclipped meanwhile.
+   The collapsed rest of a group stays lazy. */
+/* D-6: a section inserted after the flight is held here until the scroller's IntersectionObserver reports it */
+.dossier .dx-body .dx-pre { opacity: 0; } /* beats the frame's .dossier [data-dossier-section] { opacity: 1 } */
+.dx-cv { content-visibility: auto; contain-intrinsic-size: auto var(--cis, 320px); overflow-clip-margin: 8px; }
+.dx-rest-full { content-visibility: auto; contain-intrinsic-size: auto 600px; }
+/* local fixes for shared components (requested upstream): AA demo tag; visible focus on .btn */
+.dx .btn:focus-visible, .dx-menu-item:focus-visible { box-shadow: var(--focus); }
