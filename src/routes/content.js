@@ -9,6 +9,7 @@ import { briefScript } from '../delivery.js';
 import { runDaily, submitUrl, ingestItem, clusterArticles, rankStories, evergreenDraft, todayIn, STAGES } from '../pipeline.js';
 import { loadStory, loadEmployers, storyPreferences, createDraft } from '../store.js';
 import { getProvider, providerStatus } from '../ai/index.js';
+import { local } from '../ai/local.js';
 import { publishers } from '../publishers/index.js';
 import { generateVisual } from '../visual.js';
 import { loadDemo, clearDemo } from '../demo.js';
@@ -88,6 +89,29 @@ export function sourceSummaryTotals(rows) {
   };
 }
 
+/**
+ * The next open posting day: a posting day (settings.posting_days) with nothing planned on that channel. Today counts
+ * when it is a posting day with nothing planned (the Calendar paints it "open"), so every tab names the same day.
+ * With `after`, the search starts the day after that date.
+ */
+export function nextOpenSlot({ today, after = null, days, taken = () => false, horizon = 60 }) {
+  const posting = days?.length ? days : ['Mon', 'Wed', 'Fri'];
+  const start = new Date(`${after || today}T12:00:00Z`);
+  for (let i = after ? 1 : 0; i <= horizon; i++) {
+    const d = new Date(start.getTime() + i * 864e5);
+    const iso = d.toISOString().slice(0, 10);
+    if (!posting.includes(d.toLocaleDateString('en-US', { weekday: 'short', timeZone: 'UTC' }))) continue;
+    if (taken(iso)) continue;
+    return iso;
+  }
+  return null;
+}
+
+/** Settings the generic PUT /api/settings may change. Everything else (TOTP material, the ICS token, demo and
+ *  alignment bookkeeping) is set only by its own route or by the server. */
+export const SETTINGS_KEYS = new Set(['timezone', 'schedule', 'publish_threshold', 'brief_size', 'priorities', 'posting_days', 'editorial',
+  'delivery', 'ai', 'budget', 'wallet', 'writing_profile', 'synthetic_media_opt_in', 'outreach_goal_per_week', 'intro_format', 'tts_voice']);
+
 export function registerContent(route) {
   route('GET', '/api/status', () => {
     const s = getSettings();
@@ -125,6 +149,9 @@ export function registerContent(route) {
     catch (e) { throw bad(`Kokoro voice unavailable: ${e.message}`, 503); }
   });
   route('PUT', '/api/settings', ({ body }) => {
+    if (!body || typeof body !== 'object' || Array.isArray(body)) throw bad('Send an object of settings');
+    const unknown = Object.keys(body).filter(k => !SETTINGS_KEYS.has(k));
+    if (unknown.length) throw bad(`Unknown or protected setting${unknown.length > 1 ? 's' : ''}: ${unknown.join(', ')}`);
     for (const [k, v] of Object.entries(body)) setSetting(k, v);
     if (body.priorities) rankStories({ days: 30 });
     return getSettings();
@@ -212,12 +239,11 @@ export function registerContent(route) {
     data.feedback = all('SELECT kind, created_at FROM feedback WHERE story_id = ? ORDER BY id DESC', story.id);
     data.drafts = all('SELECT id, channel, format, status, title, updated_at FROM drafts WHERE story_id = ? ORDER BY id DESC', story.id);
     data.projects = all('SELECT id, title, status FROM projects WHERE story_id = ?', story.id);
-    data.lens = parse(story.lens_json, null);
-    if (!data.lens) {
-      data.lens = await getProvider().careerLens({ ...data, settings: getSettings() });
-      run('UPDATE stories SET lens_json = ? WHERE id = ?', JSON.stringify(data.lens), story.id);
-    }
+    // GET is read-only: an unstored lens is computed with the free local templates and not saved
+    // (POST /api/stories/:id/viewed stores one with the configured provider).
+    data.lens = parse(story.lens_json, null) || await local.careerLens({ ...data, settings: getSettings() });
     data.employer_connections = await getProvider().employerConnections({ ...data, employers: loadEmployers() });
+    data.employer_unlinked = data.employer_connections.unlinked || [];
     data.story.prev_score = story.viewed_score ?? null;
     // ----- v4 dossier fields (docs/design/API-v4.md) -----
     const counts = sourceCounts(data.articles);
@@ -236,9 +262,19 @@ export function registerContent(route) {
     data.lens_raw = data.lens;
     data.lens = lensView(data.lens);
     delete data.articles_raw;
-    if (query.mark_viewed !== '0') run('UPDATE stories SET viewed_score = score WHERE id = ?', story.id);
-    if (query.mark_viewed !== '0') run("UPDATE stories SET last_viewed_at = ?, status = CASE WHEN status = 'new' THEN 'seen' ELSE status END WHERE id = ?", now(), story.id);
     return data;
+  });
+  // Opening a story: remember the score it was seen at, mark it seen, and store its career lens once.
+  route('POST', '/api/stories/:id/viewed', async ({ params }) => {
+    const data = loadStory(params.id);
+    if (!data) throw bad('Story not found', 404);
+    const { story } = data;
+    if (!parse(story.lens_json, null)) {
+      const lens = await getProvider().careerLens({ ...data, settings: getSettings() });
+      run('UPDATE stories SET lens_json = ? WHERE id = ?', JSON.stringify(lens), story.id);
+    }
+    run("UPDATE stories SET viewed_score = score, last_viewed_at = ?, status = CASE WHEN status = 'new' THEN 'seen' ELSE status END WHERE id = ?", now(), story.id);
+    return { ok: true, last_viewed_at: get('SELECT last_viewed_at FROM stories WHERE id = ?', story.id).last_viewed_at };
   });
   route('PATCH', '/api/stories/:id', ({ params, body }) => {
     if (body.status) run('UPDATE stories SET status = ? WHERE id = ?', body.status, params.id);
@@ -448,16 +484,9 @@ export function registerContent(route) {
   route('POST', '/api/weekly-roundup', ({ body }) => weeklyRoundup(body.date || todayIn(getSettings().timezone)));
   route('GET', '/api/slots/next', ({ query }) => {
     const s = getSettings();
-    const days = s.posting_days?.length ? s.posting_days : ['Mon', 'Wed', 'Fri'];
-    const start = new Date(`${query.after || todayIn(s.timezone)}T12:00:00Z`);
-    for (let i = 1; i <= 60; i++) {
-      const d = new Date(start.getTime() + i * 864e5);
-      const iso = d.toISOString().slice(0, 10);
-      if (!days.includes(d.toLocaleDateString('en-US', { weekday: 'short', timeZone: 'UTC' }))) continue;
-      if (get("SELECT id FROM drafts WHERE channel = ? AND planned_date = ? AND status NOT IN ('archived')", query.channel || 'linkedin', iso)) continue;
-      return { date: iso };
-    }
-    return { date: null };
+    const channel = query.channel || 'linkedin';
+    return { date: nextOpenSlot({ after: query.after || null, today: todayIn(s.timezone), days: s.posting_days,
+      taken: (iso) => !!get("SELECT id FROM drafts WHERE channel = ? AND planned_date = ? AND status NOT IN ('archived')", channel, iso) }) };
   });
   route('GET', '/api/calendar.ics', () => { throw bad('Use the feed URL shown in Settings', 400); });
 

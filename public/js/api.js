@@ -28,5 +28,7 @@ export const api = {
   put: (p, b = {}) => write('PUT')(p, b),
   patch: (p, b = {}) => write('PATCH')(p, b),
   del: (p, b) => write('DELETE')(p, b),
+  // A write that changes nothing another view shows (marking a story viewed): it keeps the GET cache warm.
+  mark: (p, b = {}) => request('POST', p, b),
   clear: () => cache.clear()
 };

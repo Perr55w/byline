@@ -265,10 +265,15 @@ export async function open(id, srcEl = null, opts = {}) {
     anims.push(scrim.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 240, easing: EASE.fade, fill: 'both' })); // ≥ .6 by 120ms
     // shared elements ride inside the panel's clipped layer, on the title's curve
     for (const { n, s, dst, d, fs } of dsts) {
+      // A1: from a Feed score chip the ring itself flies from the chip's box (scaled down, fading up from .4), so a score
+      // is on screen in every frame of the open. Its corners move linearly with the clip's, so it is never cut by it.
       const fromChip = n === 'ring' && s.el.classList.contains('score-chip');
-      if (fromChip) { // a chip doesn't become a ring: R3 S3, the ring cross-fades in place from flight offset .75, once
-        // the clip's top edge is above it (never a ring glyph cut by the clip)
-        anims.push(dst.animate([{ opacity: 0 }, { opacity: 1 }], { duration: DUR.morphOpen * .4, delay: DUR.morphOpen * .75, easing: EASE.fade, fill: 'backwards' }));
+      if (fromChip) {
+        const k = Math.min(s.rect.width / (d.width || 1), s.rect.height / (d.height || 1));
+        anims.push(dst.animate([
+          { transform: `translate(${(s.rect.left - d.left).toFixed(1)}px, ${(s.rect.top - d.top).toFixed(1)}px) scale(${k.toFixed(4)})`, transformOrigin: 'top left', opacity: .4, offset: 0 },
+          { opacity: 1, offset: .45 },
+          { transform: 'none', transformOrigin: 'top left', opacity: 1, offset: 1 }], { duration: DUR.morphOpen, easing: EASE.move }));
         continue;
       }
       const scale = n === 'title' ? s.fs / (fs || s.fs) : (s.rect.width / (d.width || 1));
@@ -340,8 +345,8 @@ export async function open(id, srcEl = null, opts = {}) {
       runAfter(out, seq);
     });
   }
-  // mark viewed (the server's GET side effect), once the user has actually opened it
-  api.get(`/stories/${id}`, { fresh: true }).catch(() => {});
+  // mark viewed (and store the career lens), once the user has actually opened it
+  api.mark(`/stories/${id}/viewed`).catch(() => {});
   return landed;
 }
 
@@ -421,7 +426,7 @@ async function swap(id, opts = {}) {
   if (!reduced()) body.animate([{ opacity: 0, transform: 'translateY(6px)' }, { opacity: 1, transform: 'none' }], { duration: 360, easing: EASE.settle });
   body.querySelector('h1')?.focus({ preventScroll: true });
   runAfter(after, seq);
-  api.get(`/stories/${id}`, { fresh: true }).catch(() => {});
+  api.mark(`/stories/${id}/viewed`).catch(() => {});
 }
 const root = () => S.root;
 
@@ -435,6 +440,7 @@ const root = () => S.root;
 export function close({ instant = false } = {}) {
   if (!S.open || S.closing) return Promise.resolve();
   S.closing = true; S.seq++;
+  document.documentElement.classList.remove('rail-hold-main'); // a collapse still in flight lands now
   const seqAtClose = S.seq;
   const r = S.root, panel = S.panel, scrim = r?.querySelector('.dossier-scrim');
   if (!r) { teardown(); return Promise.resolve(); }
@@ -605,6 +611,7 @@ let railAnims = [];
 export function railWillChange(newW) {
   dropPrebuilt();
   if (!S.open || phone() || !S.body) return;
+  if (!reduced()) document.documentElement.classList.add('rail-hold-main');
   const oldW = collapsed() ? 64 : 232, toW = typeof newW === 'number' ? newW : (collapsed() ? 232 : 64);
   const dx = oldW - toW; // left = inset + rail + inset, so the left edge moves by the rail's width change
   S.root?.classList.add('is-reflowing'); clearTimeout(reflowT);
@@ -619,7 +626,7 @@ export function railWillChange(newW) {
 }
 // the frost comes back 400ms after the move has landed (once, at rest), not in the frame the motion ends
 let reflowT = 0;
-export function railDidChange() { railAnims = []; clearTimeout(reflowT); const r = S.root; reflowT = setTimeout(() => { if (!railAnims.length) r?.classList.remove('is-reflowing'); }, 400); }
+export function railDidChange() { railAnims = []; clearTimeout(reflowT); document.documentElement.classList.remove('rail-hold-main'); const r = S.root; reflowT = setTimeout(() => { if (!railAnims.length) r?.classList.remove('is-reflowing'); }, 400); }
 addEventListener('resize', () => dropPrebuilt(), { passive: true });
 document.addEventListener('byline:theme', () => dropPrebuilt());
 

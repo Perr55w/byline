@@ -1145,6 +1145,8 @@ async function editor(el, id) {
     m.el.querySelector('#go').onclick = async (ev) => {
       const file = m.el.querySelector('#f').files[0];
       if (!file) return toast('Choose a file', 'err');
+      // the server takes request bodies up to 25 MB; base64 adds a third
+      if (file.size > 18e6) return toast('That file is over 18 MB. Trim or compress it, then upload again.', 'err');
       await act(ev.target, async () => {
         const synth = m.el.querySelector('#synth')?.checked;
         const img = await api.post('/images', { filename: file.name, mime: file.type, data: await fileToBase64(file), attribution: m.el.querySelector('#attr').value, license: m.el.querySelector('#lic').value,

@@ -32,9 +32,12 @@ registerDrafts(route);
 registerCareer(route);
 registerMap(route);
 
+// Request bodies are JSON (uploads arrive base64-encoded): 25 MB by default, BYLINE_MAX_BODY_MB to change it.
+const MAX_BODY = Math.max(1, Number(process.env.BYLINE_MAX_BODY_MB) || 25) * 1e6;
 async function readBody(req) {
   const chunks = []; let size = 0;
-  for await (const c of req) { size += c.length; if (size > 300e6) throw Object.assign(new Error('Body too large'), { status: 413 }); chunks.push(c); }
+  if (Number(req.headers['content-length'] || 0) > MAX_BODY) throw Object.assign(new Error(`Body too large (max ${MAX_BODY / 1e6} MB)`), { status: 413 });
+  for await (const c of req) { size += c.length; if (size > MAX_BODY) throw Object.assign(new Error(`Body too large (max ${MAX_BODY / 1e6} MB)`), { status: 413 }); chunks.push(c); }
   if (!size) return {};
   const raw = Buffer.concat(chunks).toString('utf8');
   try { return JSON.parse(raw); } catch { throw Object.assign(new Error('Invalid JSON body'), { status: 400 }); }
@@ -71,6 +74,42 @@ const proxied = (req) => !!(req.headers['cf-connecting-ip'] || req.headers['x-fo
 const loopback = (addr = '') => addr === '::1' || addr.startsWith('127.') || addr.startsWith('::ffff:127.');
 // Remote = arrived through a proxy/tunnel, or from another machine on the network.
 const remote = (req) => proxied(req) || !loopback(req.socket.remoteAddress);
+
+// ----- cross-site request check (CSRF) -----
+// Every state-changing request that carries an Origin (or, failing that, a Referer) must come from Byline's own
+// origin: the Host it was sent to (X-Forwarded-Host / -Proto when behind `tailscale serve` or a tunnel), a loopback
+// address, or an origin listed in BYLINE_PUBLIC_URL / BYLINE_ALLOWED_ORIGINS (comma-separated). Requests with neither
+// header (curl, scripts) are not browser cross-site requests and pass; the session cookie is SameSite=Lax as well.
+const STATE_CHANGING = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+const originOf = (u) => { try { const x = new URL(u); return `${x.protocol}//${x.host}`.toLowerCase(); } catch { return null; } };
+const ALLOWED_ORIGINS = new Set([process.env.BYLINE_PUBLIC_URL, ...String(process.env.BYLINE_ALLOWED_ORIGINS || '').split(',')]
+  .map(s => (s || '').trim()).filter(Boolean).map(originOf).filter(Boolean));
+const first = (v) => String(Array.isArray(v) ? v[0] : v || '').split(',')[0].trim();
+export function originAllowed(req, allowed = ALLOWED_ORIGINS) {
+  const raw = req.headers.origin || (req.headers.referer ? originOf(req.headers.referer) : null);
+  if (!raw) return true;
+  const origin = String(raw).toLowerCase();
+  if (origin === 'null') return false;
+  if (allowed.has(origin)) return true;
+  const proto = (first(req.headers['x-forwarded-proto']) || (req.socket.encrypted ? 'https' : 'http')).toLowerCase();
+  for (const host of [first(req.headers['x-forwarded-host']), first(req.headers.host)].filter(Boolean)) {
+    if (origin === `${proto}://${host}`.toLowerCase() || origin === `http://${host}`.toLowerCase() || origin === `https://${host}`.toLowerCase()) return true;
+  }
+  try { const h = new URL(origin).hostname.replace(/^\[|\]$/g, ''); if (h === 'localhost' || h === '::1' || /^127\./.test(h)) return true; } catch { /* malformed */ }
+  return false;
+}
+
+// ----- general rate limit (remote requests only; the login limiter below is stricter) -----
+const RATE = { api: Number(process.env.BYLINE_RATE_LIMIT) || 600, writes: Math.max(30, Math.round((Number(process.env.BYLINE_RATE_LIMIT) || 600) / 5)) };
+const hits = new Map();
+function rateLimited(req, ip) {
+  const nowMs = Date.now(), key = ip || 'unknown';
+  let h = hits.get(key);
+  if (!h || nowMs - h.start > 60e3) { h = { start: nowMs, api: 0, writes: 0 }; hits.set(key, h); }
+  h.api++; if (STATE_CHANGING.has(req.method)) h.writes++;
+  if (hits.size > 5000) for (const [k, v] of hits) if (nowMs - v.start > 60e3) hits.delete(k);
+  return h.api > RATE.api || h.writes > RATE.writes;
+}
 
 // ----- optional TOTP second factor -----
 // The secret comes from BYLINE_TOTP_SECRET, or from the `totp_secret` setting enrolled in Settings → Security.
@@ -123,8 +162,14 @@ route('POST', '/api/security/totp/disable', ({ body }) => {
   return { ok: true, totp_enabled: false };
 });
 
+// The client address: the proxy's view when the request came through a loopback proxy (tailscale serve, a tunnel),
+// otherwise the socket. Forwarded headers from a non-loopback peer are not trusted.
+function clientIp(req) {
+  const fwd = req.headers['cf-connecting-ip'] || first(req.headers['x-forwarded-for']);
+  return fwd && loopback(req.socket.remoteAddress) ? fwd : req.socket.remoteAddress;
+}
 async function handleLogin(req, res) {
-  const ip = req.headers['cf-connecting-ip'] || req.socket.remoteAddress;
+  const ip = clientIp(req);
   const a = (attempts.get(ip) || []).filter(t => Date.now() - t < 15 * 60e3);
   if (a.length >= 10) { res.writeHead(429, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'Too many attempts. Try again in 15 minutes.' })); }
   const body = await readBody(req);
@@ -157,6 +202,14 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(200, { 'Content-Type': 'text/calendar; charset=utf-8' });
       return res.end(icsFeed());
     }
+    if (STATE_CHANGING.has(req.method) && url.pathname.startsWith('/api/') && !originAllowed(req)) {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'Cross-site request blocked. If you reach Byline at another address, add it to BYLINE_ALLOWED_ORIGINS.' }));
+    }
+    if (url.pathname.startsWith('/api/') && remote(req) && rateLimited(req, clientIp(req))) {
+      res.writeHead(429, { 'Content-Type': 'application/json', 'Retry-After': '60' });
+      return res.end(JSON.stringify({ error: 'Too many requests. Wait a minute and try again.' }));
+    }
     if (url.pathname === '/api/login' && req.method === 'POST') return handleLogin(req, res);
     if (url.pathname === '/api/login' && req.method === 'GET') {
       res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
@@ -166,9 +219,11 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(200, { 'Content-Type': 'application/json', 'Set-Cookie': 'byline_session=; Path=/; Max-Age=0' });
       return res.end('{"ok":true}');
     }
-    if (!PASSWORD && proxied(req)) {
+    if (!PASSWORD && remote(req)) {
       res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
-      return res.end('Byline is being reached through a proxy or tunnel but no password is set. Set BYLINE_PASSWORD and restart before exposing it.');
+      return res.end(proxied(req)
+        ? 'Byline is being reached through a proxy or tunnel but no password is set. Set BYLINE_PASSWORD and restart before exposing it.'
+        : 'Byline is being reached from another device but no password is set. Set BYLINE_PASSWORD (and two-step sign-in) and restart before opening it on your network.');
     }
     if (PASSWORD && !PUBLIC_PATHS.has(url.pathname) && !url.pathname.startsWith('/icons/') && !url.pathname.startsWith('/fonts/') && !validSession(req)) {
       if (url.pathname.startsWith('/api/')) { res.writeHead(401, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'Sign in required' })); }

@@ -36,7 +36,10 @@ export async function submitUrl(url, evidenceKind) {
   }
   let item;
   try { item = await fetchArticle(url); }
-  catch (e) { throw Object.assign(new Error(`Could not fetch that page (${e.message}). Check the URL or your network.`), { status: 502 }); }
+  catch (e) {
+    if (e.code === 'EBLOCKED') throw Object.assign(new Error(e.message), { status: 400 });
+    throw Object.assign(new Error(`Could not fetch that page (${e.message}). Check the URL or your network.`), { status: 502 });
+  }
   const res = ingestItem({ ...item, evidence_kind: evidenceKind || 'reporting' }, manual);
   run('UPDATE sources SET last_sync_at = ?, last_error = NULL WHERE id = ?', now(), manual.id);
   clusterArticles();

@@ -3,12 +3,14 @@
 //   collect(source) -> Promise<Item[]>  (Item: url, title, summary, content, author, published_at, image_url, engagement)
 // Retrieved content is untrusted data: it is stored as plain text and never interpreted as instructions.
 import { stripHtml, decodeEntities, truncate } from '../text.js';
+import { safeFetch } from '../net.js';
 
 const UA = 'Byline/1.0 (personal news reader)';
 const TIMEOUT_MS = 15000;
 
 async function fetchText(url) {
-  const res = await fetch(url, { headers: { 'User-Agent': UA, Accept: '*/*' }, signal: AbortSignal.timeout(TIMEOUT_MS), redirect: 'follow' });
+  // feed and article URLs are untrusted: public hosts only, re-checked on every redirect (src/net.js)
+  const res = await safeFetch(url, { headers: { 'User-Agent': UA, Accept: '*/*' }, signal: AbortSignal.timeout(TIMEOUT_MS) });
   if (!res.ok) throw new Error(`HTTP ${res.status} from ${new URL(url).hostname}`);
   const len = Number(res.headers.get('content-length') || 0);
   if (len > 8e6) throw new Error('Response too large');

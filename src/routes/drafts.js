@@ -9,6 +9,7 @@ import { generateVisual, saveSvg, cardSvg, diagramSvg } from '../visual.js';
 import { publishers } from '../publishers/index.js';
 import { sentences, truncate } from '../text.js';
 import { hashFile } from '../blurhash.js';
+import { safeFetch } from '../net.js';
 
 const bad = (msg, status = 400) => Object.assign(new Error(msg), { status });
 
@@ -317,12 +318,15 @@ export function registerDrafts(route) {
   route('POST', '/api/images/import', async ({ body }) => {
     if (!/^https?:\/\//.test(body.url || '')) throw bad('Image URL required');
     if (!body.attribution || !body.license) throw bad('Attribution and license are required for sourced images.');
-    const res = await fetch(body.url, { signal: AbortSignal.timeout(15000) });
+    let res;
+    try { res = await safeFetch(body.url, { signal: AbortSignal.timeout(15000) }); }
+    catch (e) { throw bad(e.code === 'EBLOCKED' ? e.message : `Could not download image (${e.message})`, e.status || 502); }
     if (!res.ok) throw bad(`Could not download image (HTTP ${res.status})`, 502);
     const mime = res.headers.get('content-type')?.split(';')[0] || 'image/jpeg';
     if (!mime.startsWith('image/')) throw bad('URL is not an image');
     const ext = { 'image/png': '.png', 'image/webp': '.webp', 'image/gif': '.gif', 'image/svg+xml': '.svg' }[mime] || '.jpg';
     const filename = `src-${Date.now()}${ext}`;
+    if (Number(res.headers.get('content-length') || 0) > 20e6) throw bad('Image is larger than 20 MB');
     fs.writeFileSync(path.join(MEDIA_DIR, filename), Buffer.from(await res.arrayBuffer()));
     const r = run('INSERT INTO images(filename, mime, origin, source_url, attribution, license, generated, alt, created_at) VALUES(?,?,?,?,?,?,0,?,?)', filename, mime, 'sourced', body.source_url || body.url, body.attribution, body.license, body.alt || '', now());
     const bh = hashFile(path.join(MEDIA_DIR, filename));

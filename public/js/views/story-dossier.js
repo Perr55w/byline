@@ -601,7 +601,10 @@ const quoteOf = (c) => /“([^”]+)”\s*$/.exec(c.why || '')?.[1] || null;
 function connectionsHtml(d) {
   const list = d.employer_connections || [];
   const head = html`<h2 class="dx-h3" id="dx-h-conn">Employer connections</h2>`;
-  if (!list.length) return html`<section class="dx-sec dx-conn" data-dossier-section data-dx-movable aria-labelledby="dx-h-conn">${head}<p class="dx-empty">No grounded connection to your target employers.</p></section>`;
+  // A company chip with no connection card: say where it was named instead of a bare "no connection".
+  const unlinked = (d.employer_unlinked || []).filter(n => !list.some(c => c.employer === n));
+  const unlinkedP = unlinked.length ? html`<p class="dx-empty">${listJoin(unlinked)} ${unlinked.length > 1 ? 'are' : 'is'} named only in the body of a source, with no passage tying this story to ${unlinked.length > 1 ? 'their' : 'its'} public work. Mention ${unlinked.length > 1 ? 'them' : 'it'} only with your own analysis.</p>` : '';
+  if (!list.length) return html`<section class="dx-sec dx-conn" data-dossier-section data-dx-movable aria-labelledby="dx-h-conn">${head}${unlinkedP || html`<p class="dx-empty">No source ties this story to your target employers.</p>`}</section>`;
   const named = list.filter(c => c.mention_ok), topical = list.filter(c => !c.mention_ok);
   const shownQuotes = new Map(); // quote → first employer that showed it
   const card = (c, i) => {
@@ -632,6 +635,7 @@ function connectionsHtml(d) {
       <div class="dx-conn-chips">${topical.map(c => { const hits = uniqCI(c.matched); return html`<span class="chip chip--topic" title="${hits.length ? `Overlaps on ${hits.join(', ')}` : 'Topical overlap'}">${c.employer}</span>`; })}</div>
       ${basisShown ? html`<p class="dx-conn-basis"><span class="ink-3">${basisList.length === topical.length ? (topical.length > 1 ? 'All match on' : 'Matches on') : html`${listJoin(basisList.map(c => c.employer))} match on`} this passage from ${basisList[0].source?.url ? html`<a href="${basisList[0].source.url}" target="_blank" rel="noopener noreferrer">${basisList[0].source.domain || 'the source'}</a>` : 'the source'}:</span> <q class="dx-quote">${basisQ}</q></p>` : ''}
     </div>` : ''}
+    ${unlinkedP}
     ${caveat ? html`<p class="dx-fine dx-conn-caveat">${caveat}</p>` : ''}
   </section>`;
 }

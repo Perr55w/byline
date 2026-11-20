@@ -21,6 +21,13 @@ html.dossier-open .main { transition: none; }
 /* R3 S5 (C, F): the open panel and its shadow step their --rail-w once too (one layout); dossier.js carries them over
    with a WAAPI translateX on the rail's duration and curve, so `left` is never re-laid out per frame */
 html.dossier-open :is(.dossier-panel, .dossier-shadow) { transition: none; }
+/* A1 (E r4 #1): with the dossier open the field is hidden, so the rail's translucent fill only let the page ghost
+   through it during a collapse. It is opaque while the dossier is open. */
+html.dossier-open .rail { background: var(--surface-solid); }
+/* A1: and the page keeps its old padding for the whole collapse (dossier.js sets rail-hold-main before the class flips
+   and drops it when the panel's move lands), so it re-lays out once, at rest under the scrim, not in the click frame */
+html.rail-hold-main.rail-collapsed .main { --rail-w: var(--rail-expanded); }
+html.rail-hold-main:not(.rail-collapsed) .main { --rail-w: var(--rail-collapsed); }
 @media (max-width: 760px) { .main, .rail, .dossier-panel, .dossier-shadow, .toasts, .rail-tip, html.rail-collapsed :is(.main, .rail, .dossier-panel, .dossier-shadow, .toasts, .rail-tip) { --rail-w: 0px; } }
 html.no-anim, html.no-anim * { transition: none !important; } /* first paint + instant state restores only */
 body {

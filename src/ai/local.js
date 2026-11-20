@@ -1,7 +1,7 @@
 // Local, deterministic provider. Works offline with no credentials.
 // It only rearranges facts found in the collected sources and the user's own notes;
 // it never invents experiences, opinions, or accomplishments.
-import { sentences, truncate, termHits, termHitsShadowed, tokens, domainOf } from '../text.js';
+import { sentences, truncate, termHits, termHitsShadowed, tokens, domainOf, matchEmployers } from '../text.js';
 
 const pick = (arr, seed = 0) => arr[Math.abs(seed) % arr.length];
 const lower1 = (s = '') => s.charAt(0).toLowerCase() + s.slice(1);
@@ -36,6 +36,21 @@ const ROLE_LENS = {
  * employer's name (parenthetical words dropped) must be a label of the domain; the most specific match wins
  * (cloud.google.com → "Google Cloud", not "Google (other teams)"). Only an announcement-type origin counts.
  */
+/** The names a source can use for an employer: its name, the name without a parenthetical, and terms that are
+ *  name-like (share a word with the name, e.g. "DeepMind", or spell its initials, e.g. "Amazon Web Services" → AWS). */
+export function nameAliases(e) {
+  const base = String(e.name || '').replace(/\s*\([^)]*\)\s*/g, ' ').trim();
+  const words = new Set(base.toLowerCase().split(/[^a-z0-9]+/).filter(w => w.length > 2));
+  const initials = (t) => t.split(/\s+/).filter(Boolean).map(w => w[0]).join('').toLowerCase();
+  const out = new Set([e.name, base].filter(Boolean));
+  for (const t of e.terms || []) {
+    const tw = String(t).split(/[^A-Za-z0-9]+/).filter(Boolean);
+    if (!tw.length || tw[0][0] !== tw[0][0].toUpperCase()) continue; // proper names only
+    if (tw.some(w => words.has(w.toLowerCase())) || (tw.length > 1 && initials(String(t)) === base.toLowerCase())) out.add(t);
+  }
+  return [...out];
+}
+
 export function firstPartyEmployer(origin, employers = []) {
   if (!origin || origin.evidence_kind !== 'announcement' || !origin.domain) return null;
   const labels = new Set(String(origin.domain).toLowerCase().replace(/^www\./, '').split('.'));
@@ -195,7 +210,10 @@ export const local = {
       const isOrigin = firstParty === e.name;
       if ((!best || !bestHits.length) && !isOrigin) continue;
       const art = (best && articles.find(a => a.id === best.article_id)) || (isOrigin ? org : null) || articles[0];
-      const nameHit = isOrigin || termHits(allText, [e.name]).length > 0 || companies.some(c => lc(c) === lc(e.name));
+      // A mention is supported only when a source names the company itself (its name, or a name-like alias such as
+      // "DeepMind" or "Amazon Web Services"). A product term ("Gemini") or the stored companies list (which is matched
+      // on product terms too) is topical overlap, not a named source.
+      const nameHit = isOrigin || termHits(allText, nameAliases(e)).length > 0;
       // R3 S12: a hit on the employer's own name or its parent's ("Google") is a mention, not public work on a topic
       const topical = bestHits.filter(h => lc(h) !== lc(e.name) && lc(h) !== lc(e.parent));
       const where = art ? `${art.domain}` : 'the source';
@@ -208,7 +226,13 @@ export const local = {
         mention_note: isOrigin ? `First-party: this is ${e.name}’s own post.` : nameHit ? 'The source names this company directly, so a mention is supported.' : 'Topical overlap only — mention only if you add specific analysis of their public work.'
       });
     }
-    return out.sort((a, b) => (b.first_party - a.first_party) || (b.matched.length - a.matched.length));
+    out.sort((a, b) => (b.first_party - a.first_party) || (b.matched.length - a.matched.length));
+    // Employers on the story's company list that no title, summary or claim ties to the story (e.g. "AWS" only in a
+    // release note's body). Said honestly instead of a bare "no connection" next to a company chip.
+    const listed = new Set(out.map(c => c.employer));
+    const bodyNamed = new Set(matchEmployers(articles.map(a => `${a.title || ''} ${a.summary || ''} ${a.content || ''}`).join(' \n '), employers));
+    out.unlinked = companies.filter(n => !listed.has(n) && bodyNamed.has(n));
+    return out;
   },
 
   async outreach({ contact, purpose, channel, basis, profile, introFormat, seed = 0 }) {
