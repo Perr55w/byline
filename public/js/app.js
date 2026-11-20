@@ -61,7 +61,7 @@ function paintTheme() {
 let xfadeT = 0, midT = 0, inkT = [];
 // S6 (round 2): surfaces (CSS and the field) cross-fade over --dur-theme on --ease-move. The ink never cross-fades:
 // while the surface passes through its mid-tones every ink is held at the strongest ink (the old theme's until the
-// step, the new theme's after: one step), then the new theme's own inks return at ~470ms.
+// step, the new theme's after: one step), then the new theme's own inks return when the cross-fade ends (R3 S6).
 // Mid-grey muted ink on a mid-grey surface was < 1.5:1 at ~150ms otherwise.
 function applyTheme(next) {
   if (next === themeNow()) return;
@@ -75,8 +75,9 @@ function applyTheme(next) {
     // darkening surface); each step is one document restyle, done in the same frame as the theme flip itself
     root.classList.add('theme-xfade', `ink-strong-${prev}`);
     midT = setTimeout(() => { root.classList.remove(`ink-strong-${prev}`); root.classList.add(`ink-strong-${next}`, 'theme-mid'); }, Math.round(T * (next === 'proof' ? .36 : .42)));
-    inkT.push(setTimeout(() => { root.classList.remove(`ink-strong-${next}`); }, Math.round(T * .78)));
-    xfadeT = setTimeout(() => root.classList.remove('theme-xfade', 'theme-mid'), T + 60);
+    // R3 S6 (B): one ink step only. The new theme's own inks return once the surfaces have stopped moving, in the same
+    // frame that ends the cross-fade (a second step at .78T dropped links and status colours mid-fade)
+    xfadeT = setTimeout(() => root.classList.remove('theme-xfade', 'theme-mid', `ink-strong-${next}`), T + 60);
   }
   root.dataset.theme = next;
   paintTheme();
@@ -293,7 +294,8 @@ window.__byline.replaceHash = replaceHash;
 let lastY = 0; // last scrollY seen by the rAF'd scroll handler (no layout-forcing read in timer tasks)
 const enterAnims = new Map(); // element → Animation, for the in-flight entrance only
 function settleInFlight() {
-  view.querySelectorAll('.page.leaving').forEach(p => { clearTimeout(p.__kill); p.remove(); });
+  // a page that started leaving on hashchange (R3 S7) but was never swapped out is still the current page: keep it
+  view.querySelectorAll('.page.leaving').forEach(p => { if (p.__early && p === cur.page) return; clearTimeout(p.__kill); p.remove(); });
   clearTimeout(settleT);
   for (const a of enterAnims.values()) { try { a.finish(); } catch (e) { /* gone */ } }
   enterAnims.clear();
@@ -315,9 +317,32 @@ const LEAVE_MS = 220, LEAVE_QUICK_MS = 160;
 for (const t of ['click', 'pointerdown', 'focusin', 'keydown']) view.addEventListener(t, (e) => {
   if (e.target.closest?.('.page.leaving, .page.is-pending, .page.skeleton-page')) { e.preventDefault(); e.stopPropagation(); }
 }, true);
+/**
+ * R3 S7 (E): the old page starts its leave fade (opacity, plus the head's own 140ms fade) on hashchange, while the new
+ * page still renders offscreen, so the click is answered on the next frame. It stays in the DOM (at opacity 0 once the
+ * fade ends) until the swap takes it out.
+ */
+function leaveEarly(old) {
+  if (!old || old.__early || old.classList.contains('leaving') || old.classList.contains('skeleton-page') || reducedMotion() || document.hidden) return;
+  const quick = lastY > 0;
+  destroyPage(old);
+  old.__early = true; old.__quick = quick; old.__leaveAt = performance.now();
+  old.classList.remove('current');
+  if (quick) old.classList.add('skeleton-page');
+  old.classList.add('leaving');
+}
+/** R3 S8 (E): out of flow in the swap task, so #view's height is the new page's alone and its removal lays nothing out */
+function destroyPage(p) { if (!p || p.__destroyed) return; p.__destroyed = true; p.__mod?.destroy?.(p); }
+function unflow(old) { if (old?.isConnected) { old.style.position = 'absolute'; old.style.inset = '0 0 auto 0'; } }
+const sinceLeave = (old) => (old?.__leaveAt ? performance.now() - old.__leaveAt : 0);
 function leave(old, { quick = false } = {}) {
   if (!old) return;
-  old.__mod?.destroy?.(old);
+  if (old.__early) { // already fading since the hashchange: only schedule its removal
+    clearTimeout(old.__kill);
+    old.__kill = setTimeout(() => old.remove(), Math.max(0, (old.__quick ? LEAVE_QUICK_MS : LEAVE_MS) + 40 - sinceLeave(old)));
+    return;
+  }
+  destroyPage(old);
   // both pages share #view's one grid cell: the old page leaves in place, no position write, no layout read.
   // Its .page-head fades on its own 140 ms --ease-exit curve (shell.css), so the old h1 is gone before the new one starts.
   old.classList.remove('current');
@@ -329,7 +354,7 @@ function showSkeleton(key, old) {
   const sk = document.createElement('div');
   sk.className = 'page skeleton-page current';
   sk.innerHTML = skeleton(key);
-  if (old && lastY > 0) { old.__mod?.destroy?.(old); old.remove(); window.scrollTo({ top: 0, behavior: 'instant' }); }
+  if (old && lastY > 0) { destroyPage(old); old.remove(); window.scrollTo({ top: 0, behavior: 'instant' }); }
   else if (!reducedMotion()) leave(old); else old?.remove();
   view.append(sk);
   if (!reducedMotion()) sk.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 240, easing: EASE.fade });
@@ -339,8 +364,9 @@ function showSkeleton(key, old) {
 const HEAD_ENTER = '.page-head .btn, .page-head .actions, .page-head .page-head-actions, .page-head .chips, .chips, [data-enter]';
 const ENTER_BASE = 120; // ≈ when the old page (220ms, --ease-fade) is below .3 opacity: the cascade starts here
 const HEAD_GAP = 50;    // the new h1 starts at ENTER_BASE + 50 = 170 ms; the old h1 is below .05 by 150 ms
-/** Start the entrance of `page` (already .current). `base`: ms before the cascade starts. */
-function reveal(page, { key, base, fromSkeleton }) {
+const HEAD_GONE = 150;  // R3 S7 (C): the old .page-head (140ms --ease-exit from the hashchange) is ≤ .05 by here
+/** Start the entrance of `page` (already .current). `base`: ms before the cascade starts; `h1At`: ms before the h1. */
+function reveal(page, { key, base, fromSkeleton, h1At = null }) {
   const items = enterTargets(page);
   const heads = [];
   for (const el of page.querySelectorAll(HEAD_ENTER)) {
@@ -365,7 +391,7 @@ function reveal(page, { key, base, fromSkeleton }) {
   const h1 = page.querySelector('.page-head h1') || page.querySelector('h1');
   if (h1) {
     const head = h1.closest('.page-head');
-    enterHeading(h1, { variant: firstRoute ? 'load' : 'tab', key, delay: firstRoute ? 0 : base + (base ? HEAD_GAP : 0), lede: head?.querySelector('.lede, .live-dek'), eyebrow: head?.querySelector('.eyebrow, .kicker') });
+    enterHeading(h1, { variant: firstRoute ? 'load' : 'tab', key, delay: firstRoute ? 0 : h1At ?? (base + (base ? HEAD_GAP : 0)), lede: head?.querySelector('.lede, .live-dek'), eyebrow: head?.querySelector('.eyebrow, .kicker') });
   }
   const done = base + 8 * stag + 700;
   settleT = setTimeout(() => {
@@ -378,7 +404,7 @@ function reveal(page, { key, base, fromSkeleton }) {
 function swapIn(page, old, { key, hash, fromSkeleton }) {
   const motion = !reducedMotion() && !document.hidden;
   const scrolled = lastY > 0; // no layout-forcing scrollY read here: prepareHeading just split the h1
-  const finishSwap = (base) => {
+  const finishSwap = (base, h1At = null) => {
     page.classList.remove('is-pending');
     page.classList.add('current');
     let after = null;
@@ -386,7 +412,7 @@ function swapIn(page, old, { key, hash, fromSkeleton }) {
       // the pending page is opacity 0 (not visibility:hidden, which re-laid out every text node in the swap frame);
       // it comes up over 200ms so nothing inside it, animated or not, appears at full opacity on frame 0
       page.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 200, delay: Math.max(0, base - 60), easing: 'linear', fill: 'backwards' });
-      after = reveal(page, { key, base, fromSkeleton });
+      after = reveal(page, { key, base, fromSkeleton, h1At });
     }
     firstRoute = false;
     const label = NAV_INDEX[ALIAS[key] || key]?.label || '';
@@ -401,20 +427,25 @@ function swapIn(page, old, { key, hash, fromSkeleton }) {
   if (old && motion && scrolled) {
     // S1a: the old page fades where the reader left it; scrollY keeps its value until it is at opacity 0. Then, in one
     // task, the old page goes, scroll resets and the new page comes in (no frame of the old page at its top).
-    leave(old, { quick: true });
+    // R3 S7: it has been fading since the hashchange, so only the rest of its fade is waited for (often none).
+    const wait = old.__early ? Math.max(0, (old.__quick ? LEAVE_QUICK_MS : LEAVE_MS) + 10 - sinceLeave(old)) : LEAVE_QUICK_MS + 10;
+    if (!old.__early) leave(old, { quick: true });
     clearTimeout(old.__kill);
     const seq = cur.seq;
-    old.__kill = setTimeout(() => {
+    const go = () => {
       old.remove();
       if (seq !== cur.seq || !page.isConnected) return;
       window.scrollTo({ top: 0, behavior: 'instant' });
       finishSwap(0);
-    }, LEAVE_QUICK_MS + 10);
+    };
+    if (wait > 0) old.__kill = setTimeout(go, wait); else go();
     return;
   }
-  if (old) { if (motion) leave(old, { quick: fromSkeleton }); else { old.__mod?.destroy?.(old); old.remove(); } }
+  const el = old ? sinceLeave(old) : 0; // R3 S7: the cascade and the h1 count from the hashchange, not from this swap
+  if (old) { if (motion) { leave(old, { quick: fromSkeleton }); unflow(old); } else { destroyPage(old); old.remove(); } }
   if (scrolled) window.scrollTo({ top: 0, behavior: 'instant' });
-  finishSwap(old && !fromSkeleton ? ENTER_BASE : 0);
+  if (old && !fromSkeleton) finishSwap(Math.max(0, ENTER_BASE - el), old.__early ? Math.max(0, HEAD_GONE - el) : null);
+  else finishSwap(0);
 }
 
 async function routeTo(key, params, hash) {
@@ -429,6 +460,7 @@ async function routeTo(key, params, hash) {
   page.className = 'page is-pending is-building';
   page.dataset.route = key;
   view.append(page);
+  leaveEarly(old); // R3 S7: the click is answered on the next frame; the new page keeps rendering offscreen
   let sk = null, skAt = 0;
   const slow = setTimeout(() => { if (seq === cur.seq) { sk = showSkeleton(key, cur.page && cur.page.isConnected ? cur.page : old); skAt = performance.now(); cur.page = sk; } }, 120);
   try {
@@ -463,6 +495,9 @@ async function routeTo(key, params, hash) {
 let lastSrc = null;
 async function route(ev) {
   if (history.state?.sheet) return; // a sheet's own history entry; the sheet handles it
+  // R3 S2 (C): the dossier is already open (or opening) on this story: nothing else to do in the click task
+  const sm = /^#\/story\/([^/?#]+)/.exec(location.hash);
+  if (sm && dossier.isOpenOn(sm[1])) return;
   const hash = location.hash && location.hash !== '#' && location.hash !== '#/' ? location.hash : '#/today';
   const [n0, ...params] = hash.replace(/^#\/?/, '').split('/');
   const name = (n0 || 'today').split('?')[0] || 'today'; // `#/feed?days=all` is the Feed with a query
@@ -609,7 +644,7 @@ function gotoSettings(section) {
 const ACTIONS = [
   { id: 'run', label: 'Run today’s workflow now', hint: 'Collect → rank → brief', run: () => { go('#/today'); whenRouted('today', (p) => p.querySelector('[data-act="run"]')?.click()); } },
   { id: 'add', label: 'Add a story by URL', hint: 'Feed', run: () => { go('#/feed'); whenRouted('feed', (p) => p.querySelector('[name="url"]')?.focus()); } },
-  { id: 'draft', label: 'Draft a post', hint: dossierHint(), run: () => { const b = document.querySelector('.dossier [data-dz-draft]'); if (b) b.click(); else go('#/studio'); } },
+  { id: 'draft', label: 'Draft a post', hint: dossierHint(), run: () => { const b = document.querySelector('.dossier:not(.is-prebuild) [data-dz-draft]'); if (b) b.click(); else go('#/studio'); } },
   { id: 'theme', get label() { return themeNow() === 'night' ? 'Switch to Proof (light)' : 'Switch to Night (dark)'; }, hint: 'n', run: toggleTheme },
   { id: 'rail', get label() { return collapsed() ? 'Expand the sidebar' : 'Collapse the sidebar'; }, hint: '[', run: () => setCollapsed(!collapsed()) },
   { id: 'keys', label: 'Keyboard shortcuts', hint: '?', run: () => window.__byline.styleSheet?.() }

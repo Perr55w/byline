@@ -18,6 +18,9 @@ html.rail-collapsed :is(.rail-group, .rail-hl) { --grp-h: 4px; }
 /* R2 S4: with the dossier open, the page behind the .72 scrim takes its new padding in one step (one layout) instead of
    re-wrapping on every frame of the collapse; the rail and the panel's left edge still move together, frame-locked */
 html.dossier-open .main { transition: none; }
+/* R3 S5 (C, F): the open panel and its shadow step their --rail-w once too (one layout); dossier.js carries them over
+   with a WAAPI translateX on the rail's duration and curve, so `left` is never re-laid out per frame */
+html.dossier-open :is(.dossier-panel, .dossier-shadow) { transition: none; }
 @media (max-width: 760px) { .main, .rail, .dossier-panel, .dossier-shadow, .toasts, .rail-tip, html.rail-collapsed :is(.main, .rail, .dossier-panel, .dossier-shadow, .toasts, .rail-tip) { --rail-w: 0px; } }
 html.no-anim, html.no-anim * { transition: none !important; } /* first paint + instant state restores only */
 body {

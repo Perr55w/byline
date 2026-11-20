@@ -310,6 +310,9 @@ export function stampChanged(el) {
  * @returns html markup with role="img" and an aria-label.
  */
 let ringSeq = 0;
+// R3 S9 (E): a ring whose count is pending shows an empty, fixed-width tabular box (figure spaces are digit-wide), never
+// a literal "0"; the final value is in the aria-label and countTo writes the first value on its first frame
+const FIG = '\u2007';
 export function scoreRing(score, th = threshold(), { size = 96, label = true, count = false, decimals = 0, key = null } = {}) {
   const s = Number(score) || 0;
   const r = 50 - 3, C = 2 * Math.PI * r;
@@ -329,7 +332,7 @@ export function scoreRing(score, th = threshold(), { size = 96, label = true, co
   const arcStroke = s >= th && !counting ? ` stroke:url(#${gid});` : '';
   return html`<span class="score-ring${size < 64 ? ' ring--sm' : ''}${counting ? ' is-counting' : ''}" role="img" aria-label="Score ${shown} of 100, ${above} your bar of ${th}" data-q="${counting ? qualityTier(0, th) : tier}" data-q-score="${s}" data-q-threshold="${th}" style="--ring-size:${size}px;--q:${counting ? qualityColor(0, th) : col}"${key ? raw(` data-count-key="${esc(key)}"`) : ''}>
     <svg viewBox="0 0 100 100" aria-hidden="true">${grad}<circle class="ring-track" cx="50" cy="50" r="${r}"/><circle class="ring-halo" cx="50" cy="50" r="${r + 4}"/><circle class="ring-arc" cx="50" cy="50" r="${r}" data-c="${C.toFixed(2)}" stroke-dasharray="${C.toFixed(2)}" style="stroke-dashoffset:${(C * (1 - Math.min(100, start) / 100)).toFixed(2)};${arcStroke}"/></svg>
-    <span class="ring-num"${count && !already ? raw(` data-count-to="${s}" data-decimals="${decimals}"`) : ''} aria-hidden="true">${counting ? '0' : shown}</span>
+    <span class="ring-num"${count && !already ? raw(` data-count-to="${s}" data-decimals="${decimals}"`) : ''} aria-hidden="true">${counting ? FIG.repeat(shown.length) : shown}</span>
     ${label ? html`<span class="ring-sub" aria-hidden="true">${qualityLabel(s, th)}</span>` : ''}
   </span>`;
 }

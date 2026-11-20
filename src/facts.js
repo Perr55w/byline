@@ -63,7 +63,7 @@ export function whyRanked(story, counts) {
   const out = [];
   const pr = (b.priorities || []).filter(p => !p.de_emphasis);
   out.push(pr.length
-    ? `Fits ${listJoin(pr.slice(0, 2).map(p => p.topic))}${b.interest >= 1 ? ' (interest maxed, 35 of 35)' : ` (interest ${pts.interest} of 35)`}.`
+    ? `Fits ${listJoin(pr.slice(0, 2).map(p => p.topic))}${b.interest >= 1 ? ' (full marks for interest, 35 of 35)' : ` (interest ${pts.interest} of 35)`}.`
     : `Barely touches your priorities (interest ${pts.interest ?? 0} of 35).`);
   const comps = Object.keys(W).map(k => ({ k, frac: (pts[k] ?? 0) / W[k] })).sort((a, b) => a.frac - b.frac);
   const weakest = comps[0];
@@ -76,6 +76,7 @@ export function whyRanked(story, counts) {
     : evText);
   const sig = b.signals || {};
   const pw = [sig.testable && 'you can test it', sig.challenges && 'it challenges a claim', sig.process && 'it changes a process', sig.numbers && 'it has checkable numbers'].filter(Boolean);
-  out.push(pw.length ? `Worth a post: ${listJoin(pw)}.` : (b.impact_hits?.length ? `Mentions ${listJoin(mapSignals(b.impact_hits).slice(0, 3))}; no post-worthy signals.` : 'No post-worthy signals found.'));
+  // R3 S14 (F): the label states the signals found, whatever the score ("Worth a post" read as a verdict on a 17)
+  out.push(pw.length ? `Post-worthy signals: ${listJoin(pw)}.` : (b.impact_hits?.length ? `Mentions ${listJoin(mapSignals(b.impact_hits).slice(0, 3))}; no post-worthy signals.` : 'No post-worthy signals found.'));
   return out;
 }

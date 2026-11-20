@@ -34,7 +34,9 @@ test('/api/stories: v2 breakdown reconciles with score; finding and honest count
     assert.equal(s.breakdown.version, 2, `story ${s.id}`);
     assert.equal(scoreFrom(s.breakdown).score, s.score, `story ${s.id} reconciles`);
     for (const k of ['base', 'penalty', 'source_pref', 'newest_hours', 'priorities', 'watch_terms', 'impact_hits', 'signal_quotes']) assert.ok(k in s.breakdown, k);
-    assert.equal(typeof s.finding, 'string');
+    // R3 S13: finding may be null (an echo of the title or a numberless template); never equal to the title
+    assert.ok(s.finding === null || typeof s.finding === 'string', `story ${s.id} finding`);
+    if (s.finding) assert.notEqual(s.finding.replace(/[.\s]+$/, '').toLowerCase(), String(s.title).replace(/[.\s]+$/, '').toLowerCase(), `story ${s.id} dek echoes its title`);
     assert.ok(Array.isArray(s.finding_marks));
     assert.equal(s.first_party + s.primary + s.independent + s.commentary, s.posts);
     assert.ok(!/credible independent/i.test(s.explanation));
@@ -75,7 +77,7 @@ test('/api/today: ranked, cleared, weighted topic counts, threshold and brief da
   assert.equal(t.is_today, t.brief_date === t.today);
   for (const tc of t.topic_counts) assert.equal(tc.weighted, Math.round(tc.count * tc.weight * 100) / 100);
   if (t.headline_topic) assert.notEqual(t.topic_counts.find(x => x.topic === t.headline_topic).weight <= 1 && t.topic_counts.some(x => x.weight > 1), true);
-  for (const i of t.brief.items) { assert.equal(typeof i.finding, 'string'); assert.ok('posts' in i && 'independent' in i && Array.isArray(i.why)); }
+  for (const i of t.brief.items) { assert.ok(i.finding === null || typeof i.finding === 'string'); assert.ok('posts' in i && 'independent' in i && Array.isArray(i.why)); }
 });
 
 test('/api/status: new counts, schedule flag, last run summary and issue number', async () => {

@@ -41,16 +41,29 @@ function jobGroups(jobs) {
   const sizes = new Set(groups.map(g => g.length));
   return { groups, unique: groups.length, factor: sizes.size === 1 ? [...sizes][0] : null, copies: jobs.length - groups.length };
 }
-/** Merge skills that differ only by case (the radar tracks "evals" and a watchlist "Evals"). */
+/** Merge skills that differ only by case silently (the radar tracks "evals" and a watchlist "Evals"), and fold
+ *  word-form variants into their head term with a visible note (R20: "agentic" into "agents"). A folded variant's
+ *  counts are not added: one article can use both words, so the note states its own count instead. */
+const FOLD = { agentic: 'agents' };
 function mergeSkills(skills) {
   const out = [], seen = new Map();
   for (const s of skills) {
     const k = s.skill.toLowerCase();
-    if (seen.has(k)) { seen.get(k).aliases.push(s.skill); continue; }
+    if (seen.has(k)) { const c = seen.get(k); c.evidence = [...c.evidence, ...s.evidence.filter(e => !c.evidence.some(x => x.url === e.url && x.snippet === e.snippet))]; continue; }
     const c = { ...s, aliases: [] }; seen.set(k, c); out.push(c);
+  }
+  for (const [from, to] of Object.entries(FOLD)) {
+    const a = seen.get(from), b = seen.get(to);
+    if (!a || !b) continue;
+    b.aliases.push({ skill: a.skill, n: a.source_mentions + a.job_mentions });
+    b.evidence = [...b.evidence, ...a.evidence.filter(e => !b.evidence.some(x => x.url === e.url && x.snippet === e.snippet))];
+    out.splice(out.indexOf(a), 1);
   }
   return out;
 }
+/** Sentence case for display (R20): an all-lower-case term gets a capital first letter; anything already carrying
+ *  capitals (MCP, SQL, PRD, Bedrock, AI governance, Vertex AI) keeps its casing from the data. */
+export const skillName = (t = '') => /[A-Z]/.test(t) ? t : t.charAt(0).toUpperCase() + t.slice(1);
 const jobCount = (s, J) => J.factor && J.factor > 1 ? Math.round(s.job_mentions / J.factor) : s.job_mentions;
 
 const weight = (s, J) => s.source_mentions + 2 * jobCount(s, J);   // job posts count double in the ranking
@@ -68,12 +81,13 @@ function headline({ skills, weekly, J, articles }) {
     const h = persisted[0] ? `${persisted[0].topic} was a story topic on ${persisted[0].days} days this week.` : 'Not enough signal yet.';
     return { h, l: html`The radar uses the last 30 days of articles plus pasted job posts; you have <b>${articles}</b> ${articles === 1 ? 'article' : 'articles'} and <b>${J.unique}</b> ${J.unique === 1 ? 'job post' : 'job posts'}.` };
   }
-  // F: the skill is a term, quoted with its casing from the data (AI, SEC and Bedrock keep theirs).
-  const q = `“${s.skill}”`;
-  const h = rising ? `${q} is rising in your sources.`
+  // F / R20: the skill in sentence case, keeping the data's casing for acronyms and names (AI, SEC, Bedrock).
+  const q = skillName(s.skill);
+  const h = rising && s.older_rate > 0 ? `${q} is rising in your sources.`
     : s.recent > 0 && s.skill.length > 26 ? `Your top skill this week is ${s.skill} (${plural(s.recent, 'mention')}).`
-    : s.recent > 0 ? `${q} leads your skill radar: ${plural(s.recent, 'mention')} this week.`
-    : `${q} leads your skill radar, from job posts alone.`;
+    : s.recent > 0 ? `${q} tops your skill radar: ${plural(s.recent, 'mention')} this week.`
+    : `${q} tops your skill radar, from job posts alone.`;
+  const saidMentions = !(rising && s.older_rate > 0) && s.recent > 0;   // K-3: the h1 already gives this week's count
   // One-liner (computed template; a clause is dropped when its data is missing):
   // "<Skill>: N source mentions this week and named in your J saved job post(s) (K copies counted once).
   //  <Topic> was a story topic on D days, but only the job post names it as a skill."
@@ -83,7 +97,12 @@ function headline({ skills, weekly, J, articles }) {
   const named = !J.unique ? null
     : jm ? html`named in ${jm === J.unique ? html`your <b>${J.unique}</b>` : html`<b>${jm}</b> of your <b>${J.unique}</b>`} saved job ${J.unique === 1 ? 'post' : 'posts'}${copies}`
     : html`not named in your <b>${J.unique}</b> saved job ${J.unique === 1 ? 'post' : 'posts'}${copies}`;
-  const first = mentions && named ? html`${q}: ${mentions} and ${named}.` : mentions ? html`${q}: ${mentions}.` : named ? html`${q}: ${named}.` : '';
+  // K-3: when the h1 carries the mention count, the one-liner moves on to the job posts instead of repeating it.
+  const posts = !J.unique ? null
+    : jm === J.unique ? (J.unique === 1 ? html`Your saved job post names it too${copies}.` : html`All <b>${J.unique}</b> of your saved job posts name it${copies}.`)
+    : jm ? html`<b>${jm}</b> of your <b>${J.unique}</b> saved job posts name it${copies}.`
+    : html`None of your <b>${J.unique}</b> saved job ${J.unique === 1 ? 'post names' : 'posts name'} it${copies}.`;
+  const first = saidMentions ? (posts || '') : mentions && named ? html`${q}: ${mentions} and ${named}.` : mentions ? html`${q}: ${mentions}.` : named ? html`${q}: ${named}.` : '';
   const t = persisted.find(p => p.topic.toLowerCase() !== s.skill.toLowerCase());
   const tSkill = t && skills.find(x => x.skill.toLowerCase() === t.topic.toLowerCase());
   const topic = !t ? '' : tSkill && tSkill.source_mentions === 0 && jobCount(tSkill, J) > 0
@@ -178,7 +197,7 @@ async function radar(pane, again, { skills, jobs, J, weekly }) {
     if (single) return n ? html`<span class="cr-yes" title="${J.factor > 1 ? `${s.job_mentions} raw matches across ${J.factor} identical copies, counted once` : 'Named in your saved job post'}">${icon('check')}<span class="sr-only">Yes</span></span>` : html`<span class="cr-raw" aria-label="No">—</span>`;
     return html`${n}<span class="cr-raw"> of ${J.unique}</span>`; };
   const row = (s) => { const i = skills.indexOf(s); return html`<tr data-skill="${i}" class="${long ? 'cv-row' : ''}">
-          <td class="cr-skillcol"><button class="cr-linkbtn" data-skill-open="${i}">${s.skill}</button>${jobsOnly(s) ? html`<span class="cr-jobsonly" title="Only job descriptions mention it">Jobs only</span>` : ''}${s.aliases.length ? html`<span class="cr-alias">also “${s.aliases.join('”, “')}”</span>` : ''}</td>
+          <td class="cr-skillcol"><button class="cr-linkbtn" data-skill-open="${i}">${skillName(s.skill)}</button>${jobsOnly(s) ? html`<span class="cr-jobsonly" title="Only job descriptions mention it">Jobs only</span>` : ''}${s.aliases.length ? html`<span class="cr-alias" title="Counted separately: one article can use both words">also ${s.aliases.map(a => `${a.skill} (${a.n})`).join(', ')}</span>` : ''}</td>
           <td class="num cr-wcol"><b>${weight(s, J)}</b></td>
           <td class="cr-barcell"><span class="cr-bar ${s.source_mentions ? '' : 'is-zero'}"><span class="meter"><i style="--v:${s.source_mentions / maxSrc}"></i></span><b>${s.source_mentions}</b></span></td>
           ${showWeek ? html`<td class="num cr-weekcol">${s.recent}</td>` : ''}
@@ -193,7 +212,7 @@ async function radar(pane, again, { skills, jobs, J, weekly }) {
         <caption class="cr-cap">Weight is source mentions plus 2 × job posts, so a skill named in a job post ranks above one seen once in the news. ${fresh ? html`Every article in the 30-day window is from this week, so there is no earlier rate to compare against${showWeek ? '' : ' and “this week” equals the 30-day count'}; the trend column appears once there are two weeks of history.` : showTrend ? 'Trend compares this week with the weekly rate over the previous three weeks.' : 'Trends are hidden while fewer than a quarter of skills have one.'}</caption>
         <thead><tr><th class="cr-skillcol">Skill</th><th class="num cr-wcol" title="Source mentions + 2 × job posts">Weight</th><th class="cr-barcell">Source mentions${showWeek ? '' : html`<span class="cr-th-note">all this week</span>`}</th>${showWeek ? html`<th class="num cr-weekcol">This week</th>` : ''}<th class="num cr-jobcol">${single ? 'In job post' : 'Job posts'}</th>${showTrend ? html`<th class="cr-trendcol">Trend</th>` : ''}</tr></thead>
         <tbody>${head.map(row)}</tbody>
-        ${rest.length ? html`<tbody class="cr-tailhead"><tr><td colspan="${cols}"><button type="button" class="cr-tailbtn" data-tail aria-expanded="false" aria-controls="cr-tail">${icon('chevron-right', 'cr-tail-chev')}${plural(rest.length, 'more skill')} with 1 mention</button><span class="cr-tail-names">${rest.slice(0, 3).map(s => s.skill).join(', ')}${rest.length > 3 ? ', …' : ''}</span></td></tr></tbody>
+        ${rest.length ? html`<tbody class="cr-tailhead"><tr><td colspan="${cols}"><button type="button" class="cr-tailbtn" data-tail aria-expanded="false" aria-controls="cr-tail">${icon('chevron-right', 'cr-tail-chev')}${plural(rest.length, 'more skill')} with 1 mention</button><span class="cr-tail-names">${rest.slice(0, 3).map(s => skillName(s.skill)).join(', ')}${rest.length > 3 ? ', …' : ''}</span></td></tr></tbody>
         <tbody id="cr-tail" class="cr-tail" hidden>${rest.map(row)}</tbody>` : ''}</table>`
       : html`<div class="cr-pad cr-padb"><div class="empty"><h3>No skill evidence yet.</h3><p>Run the daily workflow or paste a job description.</p></div></div>`}
     </section>
@@ -210,13 +229,13 @@ async function radar(pane, again, { skills, jobs, J, weekly }) {
       </section>
       ${(weekly?.persisted || []).length ? html`<section class="tile tile--static cr-card" aria-labelledby="cr-tp-h">
         <div class="section-head"><h2 class="section-label" id="cr-tp-h">Story topics this week</h2><span class="section-meta">days seen of 7</span></div>
-        <ul class="cr-days cr-days--side">${weekly.persisted.slice(0, 3).map(p => { const sk = skills.find(x => x.skill.toLowerCase() === p.topic.toLowerCase()); return html`<li><span class="cr-days-t">${p.topic}${sk && jobsOnly(sk) ? html`<span class="cr-jobsonly" title="As a skill, only job posts name it">Jobs only</span>` : ''}</span>
+        <ul class="cr-days cr-days--side">${weekly.persisted.slice(0, 3).map(p => { const sk = skills.find(x => x.skill.toLowerCase() === p.topic.toLowerCase()); return html`<li><span class="cr-days-t">${p.topic}${sk && jobsOnly(sk) ? html`<span class="cr-days-note" title="As a skill, only job posts name it">also a job-post skill</span>` : ''}</span>
           <span class="cr-days-dots" aria-hidden="true">${Array.from({ length: 7 }, (_, i) => html`<i class="${i < p.days ? 'on' : ''}"></i>`)}</span><span class="cr-days-k">${p.days}<span class="sr-only"> of 7 days</span></span></li>`; })}</ul>
       </section>` : ''}
       <section class="tile tile--static cr-card" aria-labelledby="cr-jp-h">
         <h2 class="section-label" id="cr-jp-h">Add a job description</h2>
         <form class="cr-form" id="jp">
-          <label class="field">Title<input class="input" name="title" placeholder="Associate Product Manager, AI"></label>
+          <label class="field">Title<input class="input cr-ph" name="title" placeholder="Job title"></label>
           <label class="field">Employer<input class="input" name="employer"></label>
           <label class="field cr-full">Posting URL<input class="input" name="url" placeholder="https://…" inputmode="url"></label>
           <label class="field cr-full">Description *<textarea class="textarea" name="text" rows="3" required placeholder="Paste the full job description"></textarea></label>
@@ -234,7 +253,7 @@ async function radar(pane, again, { skills, jobs, J, weekly }) {
   on(pane, 'click', 'tr[data-skill]', (e, tr) => {
     if (e.target.closest('[data-tail]')) return;
     const s = skills[tr.dataset.skill];
-    modal(String(html`<div class="cr-ev-head"><h2>${s.skill}</h2>${trendTag(s.trend, s)}</div>
+    modal(String(html`<div class="cr-ev-head"><h2>${skillName(s.skill)}</h2>${trendTag(s.trend, s)}</div>
       <p class="cr-note">${plural(s.source_mentions, 'source mention')} in 30 days (${s.recent} this week, baseline ${s.older_rate}/week) · ${plural(jobCount(s, J), 'job post')}${J.factor > 1 && s.job_mentions ? ` (${s.job_mentions} raw matches across copies)` : ''}</p>
       <ul class="cr-ev">${s.evidence.map(ev => html`<li class="${ev.kind === 'job' ? 'is-job' : ''}">
         <div class="cr-ev-meta"><span class="tag tag--neutral">${ev.kind === 'job' ? 'Job description' : 'Source'}</span>${ev.kind === 'job' ? html`<span>${stripDemo(ev.title)}</span>${demoTag(isDemoText(ev.title))}` : html`<span class="cr-mono">${ev.domain}</span>`}</div>

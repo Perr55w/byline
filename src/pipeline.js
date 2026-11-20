@@ -2,7 +2,7 @@
 // Idempotent per date: articles are unique by URL, briefs by date, the auto draft by auto_key.
 import { all, get, run, now, tx, getSettings, cacheGet, cacheSet, parse, hydrate } from './db.js';
 import { connectorFor, fetchArticle } from './connectors/index.js';
-import { tokens, jaccard, sentences, hasNumber, termHits, domainOf, wordCount, readingMinutes, truncate, entities } from './text.js';
+import { tokens, jaccard, sentences, hasNumber, termHits, domainOf, wordCount, readingMinutes, truncate, entities, matchEmployers } from './text.js';
 import { sourceCounts, cleanClaim, numberMarks, markedText, keyEligible } from './finding.js';
 import { WEIGHTS, BREAKDOWN_VERSION, scoreFrom, r1, r2, r3 } from './score.js';
 import { getProvider } from './ai/index.js';
@@ -147,7 +147,7 @@ function refreshStoryMeta(storyId) {
   const arts = all('SELECT * FROM articles WHERE story_id = ? ORDER BY COALESCE(published_at, fetched_at)', storyId);
   const text = arts.map(a => `${a.title} ${a.summary || ''} ${(a.content || '').slice(0, 1500)}`).join(' ');
   const topics = s.priorities.filter(p => p.weight > 0).map(p => ({ t: p.topic, n: termHits(text, p.terms).length })).filter(x => x.n > 0).sort((a, b) => b.n - a.n).map(x => x.t).slice(0, 4);
-  const companies = loadEmployers().filter(e => termHits(text, [e.name, ...(e.terms || []).filter(t => /^[A-Z]/.test(t))]).length).map(e => e.name);
+  const companies = matchEmployers(text, loadEmployers()); // R3 S12: longest match wins among siblings
   const origin = arts.find(a => a.evidence_kind === 'announcement') || arts.find(a => a.evidence_kind === 'research') || arts[0];
   run('UPDATE stories SET title = ?, summary = ?, topics = ?, companies = ? WHERE id = ?', origin.title, truncate(origin.summary || '', 400), JSON.stringify(topics), JSON.stringify(companies), storyId);
 }

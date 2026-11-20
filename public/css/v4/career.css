@@ -151,6 +151,10 @@
 .cr-days { display: flex; flex-direction: column; gap: 10px; margin: 0; padding: 0; list-style: none; }
 .cr-days li { display: grid; grid-template-columns: minmax(140px, 1fr) auto 150px; align-items: center; gap: 16px; }
 .cr-days-t { color: var(--text-1); font: 500 14px/20px var(--font-sans); }
+/* K-2: muted note instead of a chip in "Story topics this week" (the chip stays on the radar row). */
+.cr-days-note { display: block; color: var(--text-3); font: 450 12px/16px var(--font-sans); }
+/* K-4: the Title placeholder reads as a hint, not a pre-filled value. */
+.cr-ph::placeholder { color: var(--text-3); opacity: 1; }
 .cr-days-dots { display: inline-flex; gap: 4px; }
 .cr-days-dots i { width: 14px; height: 14px; border-radius: 4px; background: var(--track); box-shadow: inset 0 0 0 1px var(--line); }
 .cr-days-dots i.on { background: var(--text-2); box-shadow: none; }

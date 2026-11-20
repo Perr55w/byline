@@ -301,13 +301,15 @@ export function countTo(el, n, { ring = null, threshold, duration = DUR.count, d
   if (reduced() || counted().has(k) || document.hidden) { paint(target); remember(k); return Promise.resolve(); }
   remember(k);
   return new Promise((resolve) => {
-    const t0 = performance.now();
-    paint(from);
+    // R3 S9: nothing is painted before the first frame (the markup holds an empty tabular box); that frame already
+    // shows one frame of progress, so a non-zero score never reads "0"
+    let t0 = 0;
     const step = (now) => {
+      if (!t0) t0 = now - 16.7;
       if (!el.isConnected) { resolve(); return; }
       const t = Math.min(1, (now - t0) / duration);
       const v = from + (target - from) * easeCount(t, 4);
-      paint(t < 1 ? v : target);
+      paint(t < 1 ? (target >= 1 && from < 1 ? Math.max(v, 1) : v) : target);
       if (t < 1) requestAnimationFrame(step); else resolve();
     };
     requestAnimationFrame(step);

@@ -103,17 +103,26 @@ export function createField(ctx) {
             sheen = L * Math.max(0, Math.min(1, (w - prev) * 5));
           }
         }
-        let P = 0;
-        if (pooled) { const qx = Math.max(pool[0] - x, 0, x - pool[0] - pool[2]), qy = Math.max(pool[1] - y, 0, y - pool[1] - pool[3]), d2 = qx * qx + qy * qy; if (d2 < 30000) P = poolS * Math.exp(-d2 / 3200); }
+        // R3 S10 (R10): the pool lifts dashes in neutral ink (gain −40%); accent only within 40px of the tile's edge
+        let P = 0, PE = 0;
+        if (pooled) {
+          const qx = Math.max(pool[0] - x, 0, x - pool[0] - pool[2]), qy = Math.max(pool[1] - y, 0, y - pool[1] - pool[3]), d2 = qx * qx + qy * qy;
+          if (d2 < 30000) {
+            P = poolS * Math.exp(-d2 / 3200);
+            const sd = d2 > 0 ? Math.sqrt(d2) : Math.min(x - pool[0], pool[0] + pool[2] - x, y - pool[1], pool[1] + pool[3] - y);
+            if (sd < 40) PE = P * (sd <= 24 ? 1 : 1 - ((sd - 24) / 16) ** 2 * (3 - 2 * (sd - 24) / 16));
+          }
+        }
         let pr = 0;
         if (pulsing) { const d = Math.hypot(x - pu.x, y - pu.y) - pu.p * 420; if (d < 140 && d > -140) pr = pu.a * Math.exp(-d * d / 968); }
         const he = D.heat[i], u = .5 + .5 * w;
-        let a = aBase + aSpan * u * u + he * .10 + L * .16 + sheen * .22 + P * .12 + pr * .2;
-        let hot = Math.min(1, he * .85 + L * .5 + P * .6 + pr * .5);
+        let a = aBase + aSpan * u * u + he * .10 + L * .16 + sheen * .22 + P * .072 + pr * .2;
+        // R3 S10: blue only from heat, the pool's edge band and a click pulse; the pointer light is neutral
+        let hot = Math.min(1, he * .85 + PE * .5 + pr * .5);
         a *= 1 + (hratio - 1) * hot * hot;
         if (near > .001) {
           const ddx = x - px, ddy = y - py, d2 = ddx * ddx + ddy * ddy;
-          if (d2 < 25600) { const q = Math.sqrt(d2) / 160, N = near * (1 - q * q * (3 - 2 * q)); a += (Math.max(a, amax + .08) - a) * N; hot = Math.max(hot, .35 * N * 1.4); }
+          if (d2 < 25600) { const q = Math.sqrt(d2) / 160, N = near * (1 - q * q * (3 - 2 * q)); a += (Math.max(a, amax + .08) - a) * N; }
         }
         if (band) {
           const qx = Math.max(band[0] - x, 0, x - band[0] - band[2]), qy = Math.max(band[1] - y, 0, y - band[1] - band[3]);

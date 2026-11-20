@@ -100,8 +100,9 @@ void main(){
   float L = u_ptr.z * exp(-dot(dp, dp) / 96800.);
   float sheen = 0.;
   if (L > .003) { float Wu = wave(c - vec2(0., ROW), u_time); sheen = L * clamp((W - Wu)*5., 0., 1.); }
-  float P = 0.;
-  if (u_poolS > .001) { float d = max(sdRect(c, u_pool, 12.), 0.); P = u_poolS * exp(-d*d/3200.) * (u_near.y / .07); }
+  // R3 S10 (R10): the tile-hover pool lifts the dashes in neutral ink (gain −40%); accent only within 40px of the edge
+  float P = 0., PE = 0.;
+  if (u_poolS > .001) { float sd = sdRect(c, u_pool, 12.); float d = max(sd, 0.); P = u_poolS * exp(-d*d/3200.) * (u_near.y / .07); PE = P * (1. - smoothstep(24., 40., abs(sd))); }
   // S13d: the pointer lights the dashes within 160px (full intensity only): alpha toward amax + .08, ink 35% toward hot
   float N = 0.;
   if (u_near.x > .001) N = u_near.x * (1. - smoothstep(0., 160., length(dp)));
@@ -114,15 +115,16 @@ void main(){
   float hx = 1.6*len;
   float cov = (1. - smoothstep(hx - aa, hx + aa, q.x)) * (1. - smoothstep(.5 - aa, .5 + aa, q.y));
   float u = .5 + .5*W;
-  float a = u_alpha.x*(.6 + .4*I) + (u_alpha.y - u_alpha.x)*I*u*u + .10*H + .16*L + .22*sheen + .12*P + .2*pr;
-  float hot = clamp(.85*H + .5*L + .6*P + .5*pr, 0., 1.);
+  float a = u_alpha.x*(.6 + .4*I) + (u_alpha.y - u_alpha.x)*I*u*u + .10*H + .16*L + .22*sheen + .072*P + .2*pr;
+  // R3 S10: blue comes from heat (hot topics), the pool's edge band and a click pulse only; the pointer light is neutral
+  float hot = clamp(.85*H + .5*PE + .5*pr, 0., 1.);
   a *= mix(1., u_alpha.z / max(u_alpha.y, .01), hot*hot);
   a = mix(a, max(a, u_alpha.y + .08), N);
   // S13b: under the page head (h1 + lede) the field steps back to ×0.35 with a 48px feather
   if (u_band.z > 0.) a *= mix(.35, 1., smoothstep(0., 48., sdRect(f, u_band, 0.)));
   float inside = u_rail.z > 0. ? 1. - smoothstep(-8., 1., sdRect(f, u_rail, 16.)) : 0.;
   cov = mix(cov, (4.*hx*.5)/(ROW*COL)*1.4, inside);
-  vec3 ink = mix(mix(u_ink, u_hot, hot), u_hot, .35*N);
+  vec3 ink = mix(u_ink, u_hot, hot);
   o = vec4(mix(u_bg, ink, clamp(a*cov, 0., 1.)), 1.);
 }`;
 

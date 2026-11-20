@@ -5,9 +5,10 @@
 // Kept from v3: goal metric (reach / saves / meaningful conversations), compare by topic / format / angle /
 // channel, per-post metric entry (blank = unavailable, never zero), CSV import with matched / unmatched report.
 import { api } from '../api.js';
-import { html, on, act, toast, channelLabel, icon, useStyle, status } from '../ui.js';
+import { html, raw, on, act, toast, channelLabel, icon, useStyle, status } from '../ui.js';
 import { enterItems, reduced } from '../motion.js';
-import { plural, dayLabel } from './people.js';
+import { plural, dayLabel, listJoin } from './people.js';
+import { shortTitle } from './employers.js';
 
 const EDITABLE = ['impressions', 'reach', 'reactions', 'comments', 'reposts', 'saves', 'clicks', 'profile_visits', 'meaningful_conversations'];
 const GOALS = [['reach', 'Reach'], ['saves', 'Saves'], ['meaningful_conversations', 'Meaningful conversations']];
@@ -73,13 +74,13 @@ function lastEditStrip(open, tz) {
   return { days, by, max, older, peak, active, today, allDays };
 }
 
-/** Open drafts grouped by story (story_id, else exact title): one entry per story, with its channel · format
- *  variants. Each variant shows its furthest status and how many drafts share it. Ranked by the story's furthest
- *  status, then its latest edit. */
+/** Open drafts grouped by story_id (P-4): one entry per story, with its channel · format variants; drafts with no
+ *  story form one "Unlinked drafts" group. Each variant shows its furthest status and how many drafts share it.
+ *  Ranked by the group's furthest status, then its latest edit. */
 function storyGroups(open) {
   const m = new Map();
   for (const d of open) {
-    const k = d.story_id != null ? `s${d.story_id}` : `t${d.title}`;
+    const k = d.story_id != null ? `s${d.story_id}` : 'unlinked';
     if (!m.has(k)) m.set(k, []);
     m.get(k).push(d);
   }
@@ -95,13 +96,14 @@ function storyGroups(open) {
     }
     const last = drafts.reduce((a, d) => String(d.updated_at || '') > a ? String(d.updated_at || '') : a, '');
     const planned = drafts.map(d => d.planned_date).filter(Boolean).sort()[0] || null;
-    return { best: drafts[0], drafts, kinds: [...kinds.values()].sort((a, b) => byNear(a.best, b.best) || b.n - a.n), last, planned };
+    return { story_id: drafts[0].story_id ?? null, best: drafts[0], drafts, kinds: [...kinds.values()].sort((a, b) => byNear(a.best, b.best) || b.n - a.n), last, planned };
   }).sort((a, b) => rank(a.best) - rank(b.best) || b.last.localeCompare(a.last));
 }
 
 export async function render(view) {
   await useStyle('/css/v4/performance.css');
-  const [p, drafts, settings] = await Promise.all([api.get('/performance', { fresh: true }), api.get('/drafts').catch(() => []), api.get('/settings').catch(() => ({}))]);
+  const [p, drafts, settings, storiesRaw] = await Promise.all([api.get('/performance', { fresh: true }), api.get('/drafts').catch(() => []), api.get('/settings').catch(() => ({})), api.get('/stories?limit=200').catch(() => [])]);
+  const storyById = new Map((Array.isArray(storiesRaw) ? storiesRaw : (storiesRaw?.stories || [])).map(s => [s.id, s]));
   const tz = settings.timezone;
   const metrics = p.metrics || EDITABLE;
   const groups = p[ui.group] || [];
@@ -119,6 +121,17 @@ export async function render(view) {
   const slotList = await Promise.all(channels.map(c => api.get(`/slots/next?channel=${c}`).then(r => [c, r?.date || null]).catch(() => [c, null])));
   const slots = Object.fromEntries(slotList);
   const postingDays = settings.posting_days?.length ? settings.posting_days : null;
+  // P-1: the same next open day for every channel is said once ("Mon 23 Nov: open on LinkedIn, Instagram and Video").
+  const chanDates = new Set(byChannel.map(([c]) => slots[c] || null));
+  const oneSlot = byChannel.length > 1 && chanDates.size === 1 ? [...chanDates][0] : undefined;
+  // Each "Closest to publishing" row's date: its planned day, else the next open slot on its lead channel. When every
+  // row would say the same unplanned date, it moves to the card's header meta instead of repeating per row.
+  const rowSlot = (g) => g.planned ? { k: `p${g.planned}`, l: 'Planned', d: g.planned } : slots[g.best.channel] ? { k: `o${slots[g.best.channel]}`, l: 'Next open slot', d: slots[g.best.channel] } : { k: 'none', l: 'No open slot in 60 days', d: null };
+  const nearSlots = near.map(rowSlot);
+  const sharedSlot = near.length > 1 && new Set(nearSlots.map(x => x.k)).size === 1 && !near[0].planned ? nearSlots[0] : null;
+  const groupTitle = (g) => { const st = g.story_id != null ? storyById.get(g.story_id) : null; return g.story_id == null ? { t: 'Unlinked drafts', full: 'Drafts not linked to a story', href: null } : st ? { t: shortTitle(st), full: st.title, href: `#/story/${st.id}` } : { t: shortTitle({ title: g.best.title }), full: g.best.title, href: `#/draft/${g.best.id}` }; };
+  // A variant chip names its draft when the draft's title is not the story's (e.g. a weekly roundup on story 16).
+  const kindTitle = (g, k) => { const st = storyById.get(g.story_id); return g.story_id == null || (st && k.best.title !== st.title && k.best.title !== st.short_title) ? k.best.title : ''; };
   const strip = lastEditStrip(open, tz);
   // R13: a chart only when last edits fall on ≥3 distinct days in the window; otherwise one computed sentence.
   const showChart = strip.active >= 3;
@@ -214,15 +227,14 @@ export async function render(view) {
 
   <div class="pf-cols">
     <section class="tile tile--static pf-card pf-near-card" aria-labelledby="pf-near-h">
-      <div class="section-head"><h2 class="t-h2" id="pf-near-h">Closest to publishing</h2><span class="section-meta">${plural(stories.length, 'story', 'stories')} · furthest status, then latest edit</span></div>
-      ${near.length ? html`<ol class="pf-near">${near.map((g, i) => html`<li>
+      <div class="section-head"><h2 class="t-h2" id="pf-near-h">Closest to publishing</h2><span class="section-meta">${plural(stories.length, 'story', 'stories')} · furthest status first${sharedSlot ? html` · ${sharedSlot.d ? html`next open slot <b class="pf-meta-d">${dShort(sharedSlot.d)}</b>` : 'no open slot in 60 days'}` : ''}</span></div>
+      ${near.length ? html`<ol class="pf-near">${near.map((g, i) => { const gt = groupTitle(g); const sl = nearSlots[i]; return html`<li>
         <span class="pf-rank" aria-hidden="true">${i + 1}</span>
-        <div class="pf-near-main"><a class="pf-title" href="#/draft/${g.best.id}">${g.best.title}</a>
-          <ul class="pf-kinds" aria-label="Drafts for this story by channel">${g.kinds.map(k => html`<li><a class="pf-kind" href="#/draft/${k.best.id}"><span class="pf-kind-c">${channelLabel(k.best.channel, k.best.format)}</span>${stTag(k.best.status)}${k.n > 1 ? html`<span class="pf-kind-n" title="${k.n} drafts in this format">×${k.n}</span>` : ''}</a></li>`)}</ul>
+        <div class="pf-near-main">${gt.href ? html`<a class="pf-title" href="${gt.href}" title="${gt.full}"${gt.href.startsWith('#/story/') ? raw(' data-dossier-src') : ''}>${gt.t}</a>` : html`<span class="pf-title pf-title--plain">${gt.t}</span>`}
+          <ul class="pf-kinds" aria-label="Drafts for this story by channel">${g.kinds.map(k => { const kt = kindTitle(g, k); return html`<li><a class="pf-kind" href="#/draft/${k.best.id}"${kt ? html` title="Draft #${k.best.id}: ${kt}"` : ''}><span class="pf-kind-c">${channelLabel(k.best.channel, k.best.format)}${kt ? html`<span class="pf-kind-t">: ${kt}</span>` : ''}</span>${stTag(k.best.status)}${k.n > 1 ? html`<span class="pf-kind-n" title="${k.n} drafts in this format">×${k.n}</span>` : ''}</a></li>`; })}</ul>
 </div>
-        <span class="pf-slot">${g.planned ? html`<span class="pf-slot-l">Planned</span><b>${dShort(g.planned)}</b>`
-          : slots[g.best.channel] ? html`<span class="pf-slot-l">Next open ${channelLabel(g.best.channel)} slot</span><b>${dShort(slots[g.best.channel])}</b>` : html`<span class="pf-slot-l">No open slot in 60 days</span>`}<span class="pf-slot-m">${plural(g.drafts.length, 'draft')} · edited ${dDay(ymdIn(g.last, tz))}</span></span>
-      </li>`)}</ol>${stories.length > 3 ? html`<p class="pf-sub pf-near-more">${plural(stories.length - 3, 'more story', 'more stories')} with open drafts in <a href="#/studio">Studio</a>.</p>` : ''}` : html`<p class="pf-sub">No open drafts. Start one from a story in Today or Feed.</p>`}
+        <span class="pf-slot">${sharedSlot ? '' : sl.d ? html`<span class="pf-slot-l">${sl.l}</span><b>${dShort(sl.d)}</b>` : html`<span class="pf-slot-l">${sl.l}</span>`}<span class="pf-slot-m">${plural(g.drafts.length, 'draft')} · edited ${dDay(ymdIn(g.last, tz))}</span></span>
+      </li>`; })}</ol>${stories.length > 3 ? html`<p class="pf-sub pf-near-more">${plural(stories.length - 3, 'more story', 'more stories')} with open drafts in <a href="#/studio">Studio</a>.</p>` : ''}` : html`<p class="pf-sub">No open drafts. Start one from a story in Today or Feed.</p>`}
     </section>
     <section class="tile tile--static pf-card pf-side" aria-labelledby="pf-slots-h">
       <div class="section-head"><h2 class="t-h2" id="pf-slots-h">Next open slots</h2><span class="section-meta">${postingDays ? `posting days ${postingDays.join(', ')}` : 'posting days not set'}</span></div>
@@ -230,7 +242,8 @@ export async function render(view) {
         <span class="pf-chan-l">Drafts by channel</span>
         <span class="pf-chan-bar" role="img" aria-label="${byChannel.map(([c, n]) => `${n} ${channelLabel(c)}`).join(', ')}">${byChannel.map(([c, n], i) => html`<i class="pf-chan-seg pf-chan-seg--${i}" style="--w:${n}"></i>`)}</span>
       </div>
-      <ul class="pf-slots">${byChannel.map(([c, n], i) => { const sc = STATUS_ORDER.map(st => [st, open.filter(d => d.channel === c && d.status === st).length]).filter(x => x[1]); return html`<li><span class="pf-slots-c"><i class="k pf-chan-seg--${i}" aria-hidden="true"></i>${channelLabel(c)}</span><span class="pf-slots-d">${slots[c] ? dShort(slots[c]) : 'none in 60 days'}</span><span class="pf-slots-n">${plural(n, 'draft')} waiting, ${sc.length === 1 ? `all ${STATUS_PHRASE[sc[0][0]]}` : sc.slice().reverse().map(([st, k]) => `${k} ${STATUS_PHRASE[st]}`).join(', ')}</span></li>`; })}</ul>
+      ${oneSlot !== undefined ? html`<p class="pf-oneslot">${oneSlot ? html`<b>${dShort(oneSlot)}</b>: open on ${listJoin(byChannel.map(([c]) => channelLabel(c)))}` : `No open slot in the next 60 days on ${listJoin(byChannel.map(([c]) => channelLabel(c)))}`}</p>` : ''}
+      <ul class="pf-slots">${byChannel.map(([c, n], i) => { const sc = STATUS_ORDER.map(st => [st, open.filter(d => d.channel === c && d.status === st).length]).filter(x => x[1]); return html`<li><span class="pf-slots-c"><i class="k pf-chan-seg--${i}" aria-hidden="true"></i>${channelLabel(c)}</span>${oneSlot === undefined ? html`<span class="pf-slots-d">${slots[c] ? dShort(slots[c]) : 'none in 60 days'}</span>` : ''}<span class="pf-slots-n">${plural(n, 'draft')} waiting, ${sc.length === 1 ? `all ${STATUS_PHRASE[sc[0][0]]}` : sc.slice().reverse().map(([st, k]) => `${k} ${STATUS_PHRASE[st]}`).join(', ')}</span></li>`; })}</ul>
       <p class="pf-sub">Open means no draft is planned for that channel on that posting day. Plan drafts onto days in Calendar.</p>
       <div class="pf-side-import">${importCard}</div>
     </section>

@@ -197,7 +197,8 @@ export function registerContent(route) {
       (SELECT GROUP_CONCAT(collection) FROM saved v WHERE v.story_id = s.id) AS collections
       FROM stories s WHERE ${where.join(' AND ')} ORDER BY s.score DESC, s.updated_at DESC LIMIT ?`, ...p, Number(query.limit || 60));
     const weights = topicWeights();
-    return enrich(rows.map(hydrate)).map(r => ({ ...r, main_topic: mainTopic(r.topics, weights) }));
+    // R3 S12: hydrate re-checks sibling employers, so a company filter applies to the corrected list too
+    return enrich(rows.map(hydrate).filter(r => !query.company || r.companies.includes(query.company))).map(r => ({ ...r, main_topic: mainTopic(r.topics, weights) }));
   });
 
   route('GET', '/api/stories/:id', async ({ params, query }) => {
@@ -297,7 +298,8 @@ export function registerContent(route) {
   route('GET', '/api/employers', () => loadEmployers().map(e => ({
     ...e,
     teams: all('SELECT * FROM watchlists WHERE employer = ? ORDER BY pinned DESC, name', e.name).map(hydrate),
-    story_count: get('SELECT COUNT(*) AS n FROM stories WHERE companies LIKE ?', `%"${e.name}"%`).n,
+    // R3 S12 (R14): counted on the corrected company list (longest match wins among siblings), not the raw column
+    story_count: all('SELECT id, companies, updated_at FROM stories WHERE companies LIKE ?', `%"${e.name}"%`).map(hydrate).filter(s => s.companies.includes(e.name)).length,
     contact_count: get('SELECT COUNT(*) AS n FROM contacts WHERE employer = ?', e.name).n
   })));
   route('POST', '/api/employers', ({ body }) => {
@@ -315,8 +317,10 @@ export function registerContent(route) {
     const e = hydrate(get('SELECT * FROM employers WHERE id = ?', params.id));
     if (!e) throw bad('Employer not found', 404);
     const like = `%"${e.name}"%`;
-    const stories = all('SELECT id, title, topics, updated_at, score FROM stories WHERE companies LIKE ? ORDER BY updated_at DESC LIMIT 50', like).map(hydrate);
-    const covered = all(`SELECT d.id, d.title, d.channel, d.status, d.published_at FROM drafts d JOIN stories s ON s.id = d.story_id WHERE s.companies LIKE ? AND d.status IN ('approved','scheduled','published') ORDER BY d.id DESC`, like);
+    const named = (s) => s.companies.includes(e.name); // R3 S12: the corrected list (hydrate)
+    const stories = all('SELECT id, title, topics, companies, updated_at, score FROM stories WHERE companies LIKE ? ORDER BY updated_at DESC LIMIT 50', like).map(hydrate).filter(named).map(({ companies, ...s }) => s);
+    const ok = new Set(all('SELECT id, companies, updated_at FROM stories WHERE companies LIKE ?', like).map(hydrate).filter(named).map(s => s.id));
+    const covered = all(`SELECT d.id, d.title, d.channel, d.status, d.published_at, d.story_id FROM drafts d JOIN stories s ON s.id = d.story_id WHERE s.companies LIKE ? AND d.status IN ('approved','scheduled','published') ORDER BY d.id DESC`, like).filter(d => ok.has(d.story_id)).map(({ story_id, ...d }) => d);
     const projects = all('SELECT id, title, status FROM projects WHERE employer = ?', e.name);
     const events = all('SELECT * FROM events WHERE employer = ? ORDER BY date DESC', e.name);
     const conversations = all('SELECT i.*, c.name FROM interactions i JOIN contacts c ON c.id = i.contact_id WHERE c.employer = ? ORDER BY i.date DESC', e.name);
@@ -403,7 +407,7 @@ export function registerContent(route) {
       const rows = both({ key: 'stories', sql: 'stories s', cols: 's.id, s.title, s.summary, s.topics, s.companies, s.status, s.score, s.first_seen, s.updated_at, s.is_demo, s.breakdown_json' },
         where, p, raw ? '(s.title LIKE ?) DESC, s.score DESC' : 's.score DESC', hydrate, raw ? [q] : []);
       const weights = topicWeights();
-      out.stories = enrich(rows).map(({ breakdown, ...r }) => ({ ...r, main_topic: mainTopic(r.topics, weights) }));
+      out.stories = enrich(query.company ? rows.filter(r => (r.companies || []).includes(query.company)) : rows).map(({ breakdown, ...r }) => ({ ...r, main_topic: mainTopic(r.topics, weights) }));
     }
     if (types.includes('claims')) {
       const where = `c.text LIKE ?${query.source ? ' AND a.source_id = ?' : ''}`; const p = [q, ...(query.source ? [query.source] : [])];

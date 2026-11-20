@@ -51,7 +51,7 @@
 .pf-pipe-n { color: var(--text-1); font: 320 34px/1 var(--font-sans); letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
 .pf-pipe-l { color: var(--text-2); font: 450 13px/18px var(--font-sans); white-space: nowrap; }
 .pf-pipe li.is-zero .pf-pipe-n { color: var(--text-3); }
-.pf-pipe-end { background: var(--inset); }
+/* P-3: the zero Published cell matches the other zero cells (no unexplained fill). */
 .pf-pipe-bar { display: block; height: 4px; margin-top: 4px; border-radius: 2px; background: var(--track); overflow: hidden; }
 .pf-pipe-bar > i { display: block; height: 100%; width: 100%; border-radius: inherit; background: color-mix(in oklab, var(--text-3) 60%, transparent); transform: scaleX(var(--v, 0)); transform-origin: left; }
 
@@ -83,8 +83,9 @@
 .pf-strip--line .pf-strip-note { margin-top: auto; padding-top: 14px; color: var(--text-3); font-size: 12.5px; line-height: 18px; }
 
 /* ---------------------------------------------------------------- row 2: closest + slots/import */
-.pf-cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 0.6fr); gap: var(--gap); align-items: stretch; }
-.pf-near-card, .pf-side { display: flex; flex-direction: column; }
+.pf-cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 0.6fr); gap: var(--gap); align-items: start; }
+/* P-2: each card is as tall as its content (no stretched dead band); the two may differ in height. */
+.pf-near-card, .pf-side { display: flex; flex-direction: column; align-self: start; }
 .pf-near { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
 .pf-near > li { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; align-items: start; gap: 4px 14px; padding: 14px 0; border-top: 1px solid var(--line); }
 .pf-near > li:first-child { border-top: 0; padding-top: 4px; }
@@ -97,6 +98,12 @@
 .pf-kind:hover { background: var(--hover-row); }
 .pf-kind:focus-visible { outline: 2px solid var(--focus-c); outline-offset: 1px; }
 .pf-kind .tag { height: 20px; }
+.pf-kind-t { color: var(--text-2); }
+.pf-title--plain { color: var(--text-1); }
+.pf-meta-d { color: var(--text-1); font-weight: 500; }
+/* P-1: one line when every channel shares the next open day. */
+.pf-oneslot { margin: 2px 0 10px; color: var(--text-2); font: 450 13.5px/20px var(--font-sans); }
+.pf-oneslot b { color: var(--text-1); font-weight: 500; }
 .pf-kind-n { margin-left: -2px; padding-right: 4px; color: var(--text-2); font: 500 12px/1 var(--font-mono); font-variant-numeric: tabular-nums; }
 .pf-near .pf-meta { margin-top: 8px; }
 .pf-near-more { margin-top: 2px; padding-top: 12px; border-top: 1px solid var(--line); }
@@ -123,7 +130,7 @@
 .pf-slots-c { color: var(--text-1); font: 500 14px/20px var(--font-sans); }
 .pf-slots-d { color: var(--text-1); font: 450 13.5px/20px var(--font-sans); text-align: right; }
 .pf-slots-n { grid-column: 1 / -1; color: var(--text-3); font: 450 12px/16px var(--font-sans); }
-.pf-side-import { margin-top: auto; padding-top: 14px; }
+.pf-side-import { margin-top: 24px; padding-top: 0; }
 .pf-metric-list { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 0; padding: 0; list-style: none; }
 .pf-metric-list li { height: 24px; padding: 0 10px; border-radius: var(--r-chip); background: var(--tint-2); color: var(--text-2); font: 500 12.5px/24px var(--font-sans); }
 .pf-metric-list li::first-letter { text-transform: uppercase; }

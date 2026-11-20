@@ -1,7 +1,7 @@
 // Local, deterministic provider. Works offline with no credentials.
 // It only rearranges facts found in the collected sources and the user's own notes;
 // it never invents experiences, opinions, or accomplishments.
-import { sentences, truncate, termHits, tokens, domainOf } from '../text.js';
+import { sentences, truncate, termHits, termHitsShadowed, tokens, domainOf } from '../text.js';
 
 const pick = (arr, seed = 0) => arr[Math.abs(seed) % arr.length];
 const lower1 = (s = '') => s.charAt(0).toLowerCase() + s.slice(1);
@@ -185,9 +185,11 @@ export const local = {
     const out = [];
     for (const e of employers) {
       const terms = [...(e.terms || []), ...(e.topics || [])];
+      // R3 S12 (R14): among siblings sharing a parent the longest match wins ("Google" inside "Google Cloud" is Cloud's)
+      const shadow = e.parent ? employers.filter(o => o !== e && o.parent === e.parent).flatMap(o => [o.name, ...(o.terms || [])]) : [];
       let best = null, bestHits = [];
       for (const c of corpus) {
-        const hits = termHits(c.text, terms);
+        const hits = termHitsShadowed(c.text, terms, shadow);
         if (hits.length > bestHits.length) { best = c; bestHits = hits; }
       }
       const isOrigin = firstParty === e.name;

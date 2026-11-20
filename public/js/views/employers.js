@@ -33,21 +33,75 @@ function headline(emps) {
   return { h, l };
 }
 
+// Short story title for the coverage table (E-1), 48 characters at most so it fits one line: a title that already
+// fits is kept whole; a longer one keeps the text before ':' or ' — ' (when that part is a real phrase, not
+// "Study"), then is cut at a word boundary. The full title stays in `title`.
+export function shortTitle(st) {
+  const base = String(st.short_title && !/…$/.test(st.short_title) ? st.short_title : st.title || '').trim();
+  let t = base;
+  const m = base.length > 48 && base.match(/^(.+?)(?::\s| — )/);
+  if (m && m[1].length >= 12 && m[1].split(/\s+/).length >= 2) t = m[1];
+  if (t.length > 48) { const cut = t.slice(0, 48); const sp = cut.lastIndexOf(' '); t = `${(sp > 24 ? cut.slice(0, sp) : cut).replace(/[\s,;:.–—-]+$/, '')}…`; }
+  return t;
+}
+
 export async function render(el, ctx = {}) {
   await useStyle('/css/v4/employers.css');
   if (ctx.params?.[0]) return renderActivity(el, ctx.params[0], ctx);
   const [employers, storiesRaw] = await Promise.all([api.get('/employers'), api.get('/stories?limit=200').catch(() => [])]);
   const hd = headline(employers);
   const rows = [...employers].sort((a, b) => b.story_count - a.story_count || b.pinned - a.pinned || a.name.localeCompare(b.name));
-  const max = Math.max(1, ...employers.map(e => e.story_count));
+  const covered = rows.filter(e => e.story_count > 0);
+  // No-stories employers collapse into one line (E-4): pinned first (with the pin glyph), then the rest.
+  const none = rows.filter(e => !e.story_count);
+  const nonePinned = none.filter(e => e.pinned), noneOther = none.filter(e => !e.pinned);
+  const max = Math.max(1, ...covered.map(e => e.story_count));
+  // Bars only say something when counts differ (E-5): identical full bars are hidden, the count stays.
+  const showBars = covered.some(e => e.story_count !== max);
   const teams = employers.reduce((n, e) => n + e.teams.length, 0);
-  const showPeople = employers.some(e => e.contact_count > 0);
-  // Story titles behind each count: the same match the server counts with (stories.companies holds the exact
-  // employer name), highest score first. Archived stories are not listed by /api/stories, so a count can exceed
-  // the titles shown; the remainder is stated, never guessed.
+  const anyPeople = employers.some(e => e.contact_count > 0);
+  // Story titles behind each count. Prefer the server's own story ids (S12); otherwise the same match the server
+  // counts with (stories.companies holds the exact employer name), highest score first. If the server count is
+  // lower than the client match (a sibling such as "Google Cloud" took the hit), stories shared with a sibling
+  // under the same parent are dropped first, and the list never exceeds the count. Archived stories are not
+  // listed by /api/stories, so a count can exceed the titles shown; the remainder is stated, never guessed.
   const stories = Array.isArray(storiesRaw) ? storiesRaw : (storiesRaw?.stories || []);
-  const mentions = (e) => stories.filter(s => (s.companies || []).includes(e.name));
+  const byStory = new Map(stories.map(s => [s.id, s]));
+  const mentions = (e) => {
+    if (Array.isArray(e.story_ids)) return e.story_ids.map(id => byStory.get(id)).filter(Boolean);
+    let ms = stories.filter(s => (s.companies || []).includes(e.name));
+    if (ms.length > e.story_count) {
+      const sibs = employers.filter(o => o !== e && e.parent && o.parent === e.parent).map(o => o.name);
+      ms = [...ms.filter(s => !(s.companies || []).some(c => sibs.includes(c))), ...ms.filter(s => (s.companies || []).some(c => sibs.includes(c)))].slice(0, e.story_count);
+    }
+    return ms;
+  };
+  // Identical story sets (R14): a row whose story ids equal an earlier row's says so instead of repeating titles.
+  const seen = [];
+  const cov = covered.map(e => {
+    const ms = mentions(e);
+    const key = ms.map(s => s.id).sort((a, b) => a - b).join(',');
+    const same = ms.length && ms.length === e.story_count ? seen.find(x => x.key === key) : null;
+    if (!same && ms.length) seen.push({ key, name: e.name });
+    return { e, ms, same };
+  });
   const long = rows.length > 30;
+  const pinTitle = (e) => e.pinned ? 'Pinned: stories that mention it get the larger ranking boost. Click to unpin.' : 'Pin: stories that mention it get a larger ranking boost';
+  const watchLine = (e) => {
+    const fol = e.teams.filter(t => t.pinned), oth = e.teams.filter(t => !t.pinned);
+    const tip = (t) => (t.terms || []).length ? `Matches ${(t.terms || []).join(', ')}` : 'No match terms';
+    const part = (label, ts) => ts.length ? html`<span class="em-wl-part">${label}: ${ts.map((t, i) => html`${i ? ', ' : ''}<span class="em-team" data-team="${t.id}" title="${tip(t)}">${t.name}</span>`)}</span>` : '';
+    return e.teams.length ? html`<span class="em-wl">${part('Following', fol)}${fol.length && oth.length ? ' · ' : ''}${part(oth.length === 1 ? 'Team watchlist' : 'Team watchlists', oth)}</span>` : '';
+  };
+  const menu = (e) => html`<span class="em-menu"><button type="button" class="btn btn--ghost btn--sm btn--icon em-more-btn" data-menu="${e.id}" aria-haspopup="menu" aria-expanded="false" aria-controls="em-menu-${e.id}" aria-label="More actions for ${e.name}">${icon('more')}</button>
+    <div class="em-menu-pop" id="em-menu-${e.id}" role="menu" aria-label="${e.name} actions" hidden>
+      <button type="button" role="menuitem" tabindex="-1" data-edit="${e.id}">Edit ${e.name}…</button>
+      <button type="button" role="menuitem" tabindex="-1" data-team-add="${e.id}">Add a team watchlist…</button>
+      ${e.teams.map(t => html`<div class="em-menu-sep" role="separator"></div>
+      <button type="button" role="menuitem" tabindex="-1" data-team-pin="${t.id}" data-on="${t.pinned ? 1 : 0}">${t.pinned ? 'Unfollow' : 'Follow'} ${t.name}</button>
+      <button type="button" role="menuitem" tabindex="-1" data-team-del="${t.id}">Remove ${t.name}</button>`)}
+    </div></span>`;
+  const noneLink = (e) => html`<a class="em-none-l" href="#/employers/${e.id}" title="${e.name} activity">${e.name}</a>`;
 
   const root = document.createElement('div');
   root.className = 'em';
@@ -60,37 +114,34 @@ export async function render(el, ctx = {}) {
   </header>
 
   <section class="tile tile--static tile--flush" aria-labelledby="em-t-h">
-    <div class="section-head em-pad"><h2 class="t-h2" id="em-t-h">Coverage</h2><span class="section-meta">${employers.length} employers · ${employers.filter(e => e.pinned).length} pinned · ${plural(teams, 'team watchlist')} · stories counted all-time${showPeople ? '' : ' · no people linked yet'}</span></div>
-    ${employers.length ? html`<table class="table em-table">
-      <thead><tr><th class="em-emp">Employer</th><th class="em-cov">Stories mentioning it <span class="em-th-sub">all-time</span></th>${showPeople ? html`<th class="num em-hide-sm">People</th>` : ''}<th class="em-teams">Team watchlists</th><th class="em-act"><span class="sr-only">Actions</span></th></tr></thead>
-      <tbody>${rows.map(e => { const ms = mentions(e); const shown = ms.slice(0, 2); const rest = e.story_count - shown.length; return html`<tr data-row data-emp="${e.id}" class="${e.pinned ? 'is-pinned' : ''}${long ? ' cv-row' : ''}">
+    <div class="section-head em-pad"><h2 class="t-h2" id="em-t-h">Coverage</h2><span class="section-meta">${employers.length} employers · ${employers.filter(e => e.pinned).length} pinned · ${plural(teams, 'team watchlist')} · stories counted all-time${anyPeople ? '' : ' · no people linked yet'}</span></div>
+    ${employers.length ? html`<table class="table em-table${showBars ? '' : ' em-nobars'}">
+      <colgroup><col class="em-c-emp"><col class="em-c-cov"><col class="em-c-act"></colgroup>
+      <thead><tr><th class="em-emp">Employer</th><th class="em-cov">Stories mentioning it <span class="em-th-sub">all-time</span></th><th class="em-act"><span class="sr-only">Activity and actions</span></th></tr></thead>
+      <tbody>${cov.map(({ e, ms, same }) => { const shown = same ? [] : ms.slice(0, 2); const rest = e.story_count - (same ? e.story_count : shown.length); return html`<tr data-row data-emp="${e.id}"${long ? raw(' class="cv-row"') : ''}>
         <td class="em-emp">
           <div class="em-namerow"><a class="em-name" href="#/employers/${e.id}">${e.name}</a>
-            <button type="button" class="em-pin" data-pin="${e.id}" data-on="${e.pinned ? 1 : 0}" aria-pressed="${String(!!e.pinned)}" aria-label="Pin ${e.name}" title="${e.pinned ? 'Pinned: stories that mention it get the larger ranking boost. Click to unpin.' : 'Pin: stories that mention it get a larger ranking boost'}">${PIN}</button></div>
-          ${e.parent ? html`<span class="em-sub">part of ${e.parent} · tracked separately</span>` : ''}
-          <span class="em-topics">${e.topics.join(' · ') || 'No topics set'}</span>
+            <button type="button" class="em-pin" data-pin="${e.id}" data-on="${e.pinned ? 1 : 0}" aria-pressed="${String(!!e.pinned)}" aria-label="Pin ${e.name}" title="${pinTitle(e)}">${PIN}</button></div>
+          ${e.parent ? html`<span class="em-sub">Part of ${e.parent} · tracked separately</span>` : ''}
+          <span class="em-topics" title="${e.topics.join(' · ')}">${e.topics.join(' · ') || 'No topics set'}</span>
+          ${watchLine(e)}
+          ${e.contact_count ? html`<span class="em-wl">${plural(e.contact_count, 'person', 'people')} linked</span>` : ''}
         </td>
-        <td class="em-cov">${e.story_count ? html`<span class="em-bar"><span class="meter"><i style="--v:${e.story_count / max}"></i></span><b>${e.story_count}</b></span>
-          ${shown.length ? html`<ul class="em-stories">${shown.map(st => html`<li data-dossier-src><a class="em-story-l" href="#/story/${st.id}">${st.short_title || st.title}</a></li>`)}</ul>` : ''}
-          ${shown.length && rest > 0 ? html`<a class="em-more" href="#/employers/${e.id}">${rest} more</a>` : ''}`
-          : html`<span class="em-zero">No stories yet</span>`}</td>
-        ${showPeople ? html`<td class="num em-hide-sm">${e.contact_count}</td>` : ''}
-        <td class="em-teams">${e.teams.length ? e.teams.map(t => html`<span class="em-team" data-team="${t.id}" title="${(t.terms || []).length ? `Matches ${(t.terms || []).join(', ')}` : 'No match terms'}">
-            <span class="em-team-n">${t.name}</span>${t.pinned ? html`<span class="tag tag--neutral">Following</span>` : ''}</span>`)
-          : html`<button class="btn btn--ghost btn--sm em-addteam" data-team-add="${e.id}" aria-label="Add a team watchlist at ${e.name}">${icon('plus')}Team</button>`}</td>
-        <td class="em-act"><span class="em-actrow">
-          <span class="em-menu"><button type="button" class="btn btn--ghost btn--sm btn--icon em-more-btn" data-menu="${e.id}" aria-haspopup="menu" aria-expanded="false" aria-controls="em-menu-${e.id}" aria-label="More actions for ${e.name}">${icon('more')}</button>
-            <div class="em-menu-pop" id="em-menu-${e.id}" role="menu" aria-label="${e.name} actions" hidden>
-              <button type="button" role="menuitem" tabindex="-1" data-edit="${e.id}">Edit ${e.name}…</button>
-              <button type="button" role="menuitem" tabindex="-1" data-team-add="${e.id}">Add a team watchlist…</button>
-              ${e.teams.map(t => html`<div class="em-menu-sep" role="separator"></div>
-              <button type="button" role="menuitem" tabindex="-1" data-team-pin="${t.id}" data-on="${t.pinned ? 1 : 0}">${t.pinned ? 'Unfollow' : 'Follow'} ${t.name}</button>
-              <button type="button" role="menuitem" tabindex="-1" data-team-del="${t.id}">Remove ${t.name}</button>`)}
-            </div></span>
-          <a class="em-activity" href="#/employers/${e.id}" aria-label="${e.name} activity">Activity${icon('arrow-right')}</a></span></td>
-      </tr>`; })}</tbody></table>`
+        <td class="em-cov"><div class="em-covrow">
+          ${showBars ? html`<span class="meter em-meter" aria-hidden="true"><i style="--v:${e.story_count / max}"></i></span>` : ''}<b class="em-count">${e.story_count}</b>
+          <div class="em-covlist">
+          ${same ? html`<p class="em-same">Same ${plural(e.story_count, 'story', 'stories')} as ${same.name}</p>`
+            : shown.length ? html`<ul class="em-stories">${shown.map(st => html`<li data-dossier-src><a class="em-story-l" href="#/story/${st.id}" title="${st.title}">${shortTitle(st)}</a></li>`)}</ul>` : ''}
+          ${!same && shown.length && rest > 0 ? html`<a class="em-more" href="#/employers/${e.id}">${rest} more</a>` : ''}
+          </div></div></td>
+        <td class="em-act"><span class="em-actrow">${menu(e)}<a class="em-activity" href="#/employers/${e.id}" aria-label="${e.name} activity">Activity${icon('arrow-right')}</a></span></td>
+      </tr>`; })}
+      ${none.length ? html`<tr class="em-nonerow"><td colspan="3"><p class="em-none-line"><span class="em-none-k">No stories yet</span>
+        ${nonePinned.length ? html`<span class="em-none-g">${nonePinned.map((e, i) => html`${i ? ', ' : ''}${noneLink(e)}`)}<span class="em-none-pin" role="img" aria-label="pinned" title="Pinned">${PIN}</span></span>` : ''}
+        ${noneOther.length ? html`<span class="em-none-g">${noneOther.map((e, i) => html`${i ? ', ' : ''}${noneLink(e)}`)}</span>` : ''}</p></td></tr>` : ''}
+      </tbody></table>`
     : html`<div class="em-pad em-padb"><div class="empty"><h3>No employers yet.</h3><p>Add the companies you want to work for. Stories that mention them are counted here, and their teams can be followed on your watchlist.</p></div></div>`}
-    ${employers.length ? html`<p class="em-foot em-pad">Matches use each employer’s name and capitalised match terms. A parent company is shown for context but its stories are not pooled with its subsidiaries. A pinned employer gives stories that mention it a larger ranking boost; a followed team’s matches weigh 1.5×.</p>` : ''}
+    ${employers.length ? html`<p class="em-foot em-pad">Matches use each employer’s name and capitalised match terms. A parent company is shown for context but its stories are not pooled with its subsidiaries. A pinned employer gives stories that mention it a larger ranking boost; a followed team’s matches weigh 1.5×. Pin, edit or log events for an employer with no stories from its Activity page.</p>` : ''}
   </section>`);
   el.replaceChildren(root);
 
@@ -145,23 +196,7 @@ export async function render(el, ctx = {}) {
       toast('Team added', 'ok'); again();
     });
   });
-  on(root, 'click', '[data-edit]', (e, b) => {
-    closeMenus();
-    const emp = byId(b.dataset.edit);
-    formModal(html`<h2>Edit ${emp.name}</h2>
-      <label class="field">Name<input class="input" name="name" value="${emp.name}"></label>
-      <label class="field">Parent organisation (shown, but tracked separately)<input class="input" name="parent" value="${emp.parent || ''}"></label>
-      <label class="field">Topics (comma-separated)<input class="input" name="topics" value="${emp.topics.join(', ')}"></label>
-      <label class="field">Match terms (comma-separated)<textarea class="textarea" name="terms" rows="3">${emp.terms.join(', ')}</textarea></label>
-      <label class="field">Notes<textarea class="textarea" name="notes" rows="2">${emp.notes || ''}</textarea></label>
-      <div><button type="button" class="btn btn--danger btn--sm" data-delete-emp>Delete employer</button></div>`, 'Save', async (f) => {
-      await api.patch(`/employers/${emp.id}`, { name: f.get('name'), parent: f.get('parent') || null, topics: list(f.get('topics')), terms: list(f.get('terms')), notes: f.get('notes') });
-      toast('Saved', 'ok'); again();
-    }, (m) => { m.el.querySelector('[data-delete-emp]').onclick = async () => {
-      if (!(await confirmBox(`Delete ${emp.name}? Its team watchlists stay but are no longer grouped.`, 'Delete'))) return;
-      try { await api.del(`/employers/${emp.id}`); m.close(); toast('Employer deleted', 'ok'); again(); } catch (err) { toast(err.message, 'err'); }
-    }; });
-  });
+  on(root, 'click', '[data-edit]', (e, b) => { closeMenus(); editModal(byId(b.dataset.edit), again, again); });
   on(root, 'click', '[data-act="add"]', () => formModal(html`<h2>Add employer</h2>
       <label class="field">Name *<input class="input" name="name" required></label>
       <label class="field">Parent organisation (optional)<input class="input" name="parent"></label>
@@ -171,6 +206,24 @@ export async function render(el, ctx = {}) {
     await api.post('/employers', { name: f.get('name'), parent: f.get('parent') || null, topics: list(f.get('topics')), terms: list(f.get('terms')), pinned: !!f.get('pinned') });
     toast('Employer added', 'ok'); again();
   }));
+}
+
+// Edit an employer (name, parent, topics, match terms, notes, delete). Used by the table's ··· menu and by the
+// Activity page head, which is the only place an employer with no stories can be edited from (E-4).
+function editModal(emp, onSaved, onDeleted) {
+  formModal(html`<h2>Edit ${emp.name}</h2>
+    <label class="field">Name<input class="input" name="name" value="${emp.name}"></label>
+    <label class="field">Parent organisation (shown, but tracked separately)<input class="input" name="parent" value="${emp.parent || ''}"></label>
+    <label class="field">Topics (comma-separated)<input class="input" name="topics" value="${emp.topics.join(', ')}"></label>
+    <label class="field">Match terms (comma-separated)<textarea class="textarea" name="terms" rows="3">${emp.terms.join(', ')}</textarea></label>
+    <label class="field">Notes<textarea class="textarea" name="notes" rows="2">${emp.notes || ''}</textarea></label>
+    <div><button type="button" class="btn btn--danger btn--sm" data-delete-emp>Delete employer</button></div>`, 'Save', async (f) => {
+    await api.patch(`/employers/${emp.id}`, { name: f.get('name'), parent: f.get('parent') || null, topics: list(f.get('topics')), terms: list(f.get('terms')), notes: f.get('notes') });
+    toast('Saved', 'ok'); onSaved();
+  }, (m) => { m.el.querySelector('[data-delete-emp]').onclick = async () => {
+    if (!(await confirmBox(`Delete ${emp.name}? Its team watchlists stay but are no longer grouped.`, 'Delete'))) return;
+    try { await api.del(`/employers/${emp.id}`); m.close(); toast('Employer deleted', 'ok'); onDeleted(); } catch (err) { toast(err.message, 'err'); }
+  }; });
 }
 
 function formModal(body, okLabel, onSubmit, after) {
@@ -202,8 +255,12 @@ async function renderActivity(el, id, ctx) {
     <p class="eyebrow"><a class="em-back" href="#/employers">${icon('chevron-left')}Employers</a></p>
     <h1>${e.name}</h1>
     <p class="lede">${lede}</p>
+    <div class="page-head-actions em-headacts">
+      <button type="button" class="btn em-pinbtn" data-pin-emp data-on="${e.pinned ? 1 : 0}" aria-pressed="${String(!!e.pinned)}" title="${e.pinned ? 'Stories that mention it get the larger ranking boost' : 'Pin: stories that mention it get a larger ranking boost'}">${PIN}${e.pinned ? 'Pinned' : 'Pin'}</button>
+      <button type="button" class="btn btn--ghost" data-edit-emp>Edit</button>
+    </div>
   </header>
-  <div class="em-tagrow cluster">${e.pinned ? html`<span class="tag tag--neutral">Pinned</span>` : ''}${e.topics.map(t => html`<span class="chip">${t}</span>`)}</div>
+  ${e.topics.length ? html`<div class="em-tagrow cluster">${e.topics.map(t => html`<span class="chip">${t}</span>`)}</div>` : ''}
   <div class="em-cols">
     <div class="stack">
       ${(() => {
@@ -241,6 +298,10 @@ async function renderActivity(el, id, ctx) {
     </aside>
   </div>`);
   el.replaceChildren(root);
+  const reload = () => renderActivity(el, id, ctx);
+  const pinB = root.querySelector('[data-pin-emp]');
+  pinB.addEventListener('click', () => act(pinB, async () => { await api.patch(`/employers/${e.id}`, { pinned: pinB.dataset.on !== '1' }); toast(pinB.dataset.on === '1' ? 'Unpinned' : 'Pinned', 'ok'); reload(); }));
+  root.querySelector('[data-edit-emp]').addEventListener('click', () => editModal(e, reload, () => { location.hash = '#/employers'; }));
   root.querySelector('#ev').addEventListener('submit', async (ev) => {
     ev.preventDefault();
     await act(ev.submitter, async () => { await api.post('/events', { ...Object.fromEntries(new FormData(ev.target)), employer: e.name }); toast('Event logged', 'ok'); renderActivity(el, id, ctx); });

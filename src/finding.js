@@ -263,7 +263,14 @@ export function findingLine(story = {}, articles = [], claims = []) {
   const od = origin?.domain;
   const byId = new Map(articles.map(a => [a.id, a]));
   const cleaned = claims.map(c => ({ ...c, clean: cleanClaim(c.text) })).filter(c => usableClaim(c.clean, c.text));
-  const done = (text, kind, extra = {}) => ({ text, marks: numberMarks(text), kind, article_id: extra.article_id ?? null, claim_id: extra.claim_id ?? null });
+  // R3 S13 (D, F; R13): a finding that restates the title (token overlap ≥ 0.8) or a numberless "signals" template is
+  // no finding: text is null and every view omits the dek line
+  const none = (kind) => ({ text: null, marks: [], kind, article_id: null, claim_id: null });
+  const done = (text, kind, extra = {}) => {
+    if (kind === 'signals' && !/\d/.test(text || '')) return none('none');
+    if (story.title && echoesTitle(text, story.title)) return none('echo');
+    return { text, marks: numberMarks(text), kind, article_id: extra.article_id ?? null, claim_id: extra.claim_id ?? null };
+  };
 
   // (a) disagreement
   for (const c of cleaned) {
@@ -275,6 +282,9 @@ export function findingLine(story = {}, articles = [], claims = []) {
       return done(capLen(/^independent\b/i.test(said) ? said : `Independent check: ${said}`), 'disagreement', { article_id: a.id, claim_id: c.id });
     }
   }
+  // (a2) R3 S13: a cluster of release notes → the releases themselves: "4 releases, v2.2.0 → v2.7.0, 23 Oct – 9 Nov"
+  const rel = releaseFinding(articles);
+  if (rel) return done(rel, 'releases');
   // (b) best numeric claim from the most credible article (origin first, then credibility, then date)
   const ordered = [...articles].sort((x, y) => (x === origin ? -1 : y === origin ? 1 : 0) || rankOf(x.evidence_kind) - rankOf(y.evidence_kind) || dateOf(x) - dateOf(y) || x.id - y.id);
   for (const a of ordered) {
@@ -306,6 +316,41 @@ export function findingLine(story = {}, articles = [], claims = []) {
 }
 
 const dateOf = (a) => Date.parse(a.published_at || a.fetched_at || '') || 0;
+
+/** R3 S13: share of the finding's (stop-word-free) tokens that the title already has; ≥ 0.8 is an echo. */
+export function titleOverlap(text = '', title = '') {
+  const F = new Set(tokens(String(text || ''))), T = new Set(tokens(String(title || '')));
+  if (!F.size) return 1;
+  let n = 0; for (const t of F) if (T.has(t)) n++;
+  return n / F.size;
+}
+export const echoesTitle = (text, title) => !!title && titleOverlap(text, title) >= 0.8;
+
+// a release-note post title ends in its tag: "owner/repo v2.7.0", "sdk 1.4.0-beta.1", "owner/spec 2025-06-18"
+const REL_TAG = /(?:^|\s)(v?\d+\.\d+(?:\.\d+)*(?:[-+][\w.]+)?|\d{4}-\d{2}-\d{2})\s*$/i;
+const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+/**
+ * R3 S13: for a story whose posts are (mostly) release notes, the finding is built from the posts' own titles and
+ * dates: "4 releases, v2.2.0 → v2.7.0, 23 Oct – 9 Nov". Date tags ("2025-06-18") are their own dates. A single
+ * release returns null (its title already says it). Every value comes from the article rows.
+ */
+export function releaseFinding(articles = []) {
+  if (articles.length < 2) return null;
+  const rel = articles.map(a => ({ a, tag: REL_TAG.exec(String(a.title || '').trim())?.[1] || null, t: dateOf(a) })).filter(x => x.tag);
+  if (rel.length < 2 || rel.length < articles.length * 0.5) return null;
+  const tags = [...new Map(rel.map(x => [x.tag, x])).values()].sort((x, y) => (x.t || 0) - (y.t || 0) || x.tag.localeCompare(y.tag, 'en', { numeric: true }));
+  if (tags.length < 2) return null;
+  const first = tags[0], last = tags[tags.length - 1];
+  let span = '';
+  if (!/^\d{4}-/.test(first.tag) && first.t && last.t) {
+    const d = (t) => new Date(t), y0 = d(first.t).getUTCFullYear(), y1 = d(last.t).getUTCFullYear();
+    const f = (t, yr) => `${d(t).getUTCDate()} ${MON[d(t).getUTCMonth()]}${yr ? ` ${d(t).getUTCFullYear()}` : ''}`;
+    const thisYear = new Date().getUTCFullYear();
+    span = y0 !== y1 ? `, ${f(first.t, true)} – ${f(last.t, true)}` : `, ${f(first.t)} – ${f(last.t)}${y1 !== thisYear ? ` ${y1}` : ''}`;
+    if (f(first.t) === f(last.t)) span = `, ${f(first.t)}${y1 !== thisYear ? ` ${y1}` : ''}`;
+  }
+  return `${tags.length} releases, ${first.tag} → ${last.tag}${span}`;
+}
 
 // ---------- dossier helpers ----------
 /** F §3 order: announcement/research, then reporting, then commentary, then community/application, then by date. */

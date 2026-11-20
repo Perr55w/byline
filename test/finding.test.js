@@ -73,15 +73,36 @@ test('findingLine: an independent challenge beats everything (disagreement callo
   assert.equal(f.article_id, 2);
 });
 
-test('findingLine: falls back to a clean summary, then to a signals phrase', () => {
+test('findingLine: falls back to a clean summary; R3 S13: a numberless signals template is no finding (null)', () => {
   const s = findingLine({ summary: 'Gemini Omni 1.2 Flash is now generally available on Google Cloud: fast, cost-effective video generation via API.' }, [], []);
   assert.equal(s.kind, 'summary');
   const sig = findingLine({ summary: 'Learn about the latest announcements.', breakdown: { impact_hits: ['ga', 'api', 'pricing'] } }, [], []);
-  assert.equal(sig.kind, 'signals');
-  assert.equal(sig.text, 'Mentions general availability, an API and pricing.');
+  assert.equal(sig.text, null, 'template: "Mentions general availability, an API and pricing." has no number');
+  assert.deepEqual(sig.marks, []);
   const none = findingLine({ summary: 'Bug fixes', topics: ['AI engineering'] }, [], []);
-  assert.equal(none.kind, 'signals');
-  assert.match(none.text, /^About AI engineering/);
+  assert.equal(none.text, null, '"About AI engineering; no checkable claim…" is a template');
+});
+
+test('R3 S13 · release-note clusters: the finding is built from the release titles and dates', () => {
+  const rel = (id, v, d) => ({ id, domain: 'github.com', evidence_kind: 'application', title: `anthropics/anthropic-sdk-python ${v}`, summary: '', published_at: d });
+  const arts = [rel(1, 'v2.7.0', '2026-11-09T10:00:00Z'), rel(2, 'v2.6.0', '2026-11-05T10:00:00Z'), rel(3, 'v2.5.0', '2026-11-04T10:00:00Z'), rel(4, 'v2.2.0', '2026-10-23T10:00:00Z')];
+  const f = findingLine({ title: 'anthropics/anthropic-sdk-python v2.7.0' }, arts, []);
+  assert.equal(f.kind, 'releases');
+  assert.equal(f.text, '4 releases, v2.2.0 → v2.7.0, 23 Oct – 9 Nov');
+  // a spec repo tagged by date: the tags are the dates
+  const spec = [1, 2, 3].map((i, k) => ({ id: i, domain: 'github.com', evidence_kind: 'application', title: `modelcontextprotocol/modelcontextprotocol ${['2025-03-26', '2025-06-18', '2025-11-25'][k]}`, published_at: ['2025-03-26', '2025-06-18', '2025-11-25'][k] }));
+  assert.equal(findingLine({ title: 'modelcontextprotocol/modelcontextprotocol 2025-11-25' }, spec, []).text, '3 releases, 2025-03-26 → 2025-11-25');
+  // a single release only restates its title: no finding
+  assert.equal(findingLine({ title: 'anthropics/anthropic-sdk-python v2.10.0' }, [rel(9, 'v2.10.0', '2026-11-17T10:00:00Z')], []).text, null);
+});
+
+test('R3 S13 · a finding that echoes the title (token overlap ≥ 0.8) is null', () => {
+  const story = { title: 'Study: 62% of enterprise AI pilots launched without defined success metrics' };
+  const arts = [{ id: 1, domain: 'research.example', evidence_kind: 'research', title: story.title, summary: '' }];
+  const echo = [{ id: 1, article_id: 1, text: '62% of enterprise AI pilots launched without defined success metrics.', has_number: 1 }];
+  assert.equal(findingLine(story, arts, echo).text, null);
+  const fresh = [{ id: 2, article_id: 1, text: 'The study of 310 companies found 62% of pilots had no defined metrics, and 18% had no owner.', has_number: 1 }];
+  assert.match(findingLine(story, arts, fresh).text, /310 companies/);
 });
 
 test('boilerplate filter: F regex, fewer than 8 words, newline lists, run-together release notes', () => {
@@ -249,8 +270,9 @@ test('S14 · "Mentions X, Y and Z." only when there is no claim; otherwise the s
   const story = { title: 'Northwind releases Relay: an agent runtime for teams', breakdown: { impact_hits: ['ga', 'api'] }, topics: ['Agents'] };
   const arts = [{ id: 1, domain: 'acme.dev', evidence_kind: 'announcement', title: 'Relay', summary: '' }];
   const claimNoNum = [{ id: 1, article_id: 1, text: 'Relay lets teams wire agents into existing workflows without new infrastructure.', has_number: 0 }];
-  assert.equal(findingLine(story, arts, claimNoNum).text, 'Northwind releases Relay.');
-  assert.match(findingLine(story, arts, []).text, /^Mentions general availability and an API\.$/);
+  // R3 S13: the short-title fallback restates the title and the "Mentions …" template has no number: both null now
+  assert.equal(findingLine(story, arts, claimNoNum).text, null);
+  assert.equal(findingLine(story, arts, []).text, null);
 });
 
 test('S14 · signal hits contained in another hit are dropped', () => {
@@ -272,4 +294,41 @@ test('S13 · an employer named only in an article title is "named"; the origin e
   assert.equal(g.first_party, true);
   assert.equal(g.mention_ok, true);
   assert.equal(g.mention_note, 'First-party: this is Google Cloud’s own post.');
+});
+
+// ---------------------------------------------------------------- R3 S12 / S14
+import { matchEmployers, termHitsShadowed } from '../src/text.js';
+import { whyRanked } from '../src/facts.js';
+
+const GOOGLE = [
+  { name: 'Google Cloud', parent: 'Google', terms: ['Google Cloud', 'Vertex AI', 'Gemini Enterprise', 'BigQuery', 'adoption'], topics: ['AI product decisions', 'Adoption'] },
+  { name: 'Google DeepMind', parent: 'Google', terms: ['DeepMind', 'Gemini', 'model evaluation', 'benchmark'], topics: ['Model evaluation', 'Research'] },
+  { name: 'Google (other teams)', parent: 'Google', terms: ['Google', 'Google Research', 'product decisions'], topics: ['AI product decisions', 'Adoption'] },
+  { name: 'AWS', terms: ['AWS', 'Bedrock'], topics: [] }
+];
+test('R3 S12 · employer matcher: the longest match wins among siblings sharing a parent', () => {
+  assert.deepEqual(matchEmployers('What Google Cloud announced in AI this month', GOOGLE), ['Google Cloud']);
+  assert.deepEqual(matchEmployers('Introducing Gemini Enterprise for teams', GOOGLE), ['Google Cloud'], '"Gemini" inside "Gemini Enterprise" is Cloud’s');
+  assert.deepEqual(matchEmployers('Google DeepMind ships a model on AWS Bedrock', GOOGLE), ['Google DeepMind', 'AWS']);
+  // "Google" on its own still counts for Google (other teams)
+  assert.deepEqual(matchEmployers('Google says Google Cloud customers grew', GOOGLE).sort(), ['Google (other teams)', 'Google Cloud']);
+  assert.deepEqual(matchEmployers('Nothing about them here', GOOGLE), []);
+  // passage matching in the dossier's employer connections uses the same rule
+  const sib = GOOGLE.filter(e => e.name !== 'Google (other teams)').flatMap(e => [e.name, ...e.terms]);
+  assert.deepEqual(termHitsShadowed('Google Cloud is a Leader in the 2026 report', ['Google', 'Google Research'], sib), []);
+  assert.deepEqual(termHitsShadowed('Google said so; Google Cloud agreed', ['Google'], sib), ['Google']);
+});
+test('R3 S12 · employer connections: "Google" inside "Google Cloud" does not list Google (other teams)', async () => {
+  const articles = [{ id: 1, domain: 'cloud.google.com', evidence_kind: 'announcement', title: 'What Google Cloud announced in AI this month', summary: 'Google Cloud is a Leader in the 2026 Gartner report.', url: 'https://cloud.google.com/x' }];
+  const out = await local.employerConnections({ story: { title: 'What Google Cloud announced', companies: ['Google Cloud'] }, articles, claims: [], employers: GOOGLE });
+  assert.ok(out.some(c => c.employer === 'Google Cloud'));
+  assert.ok(!out.some(c => c.employer === 'Google (other teams)' && c.matched.some(m => /^google/i.test(m))), 'no Google (other teams) hit on a Google Cloud passage');
+});
+test('R3 S14 · "Why it ranked" wording: post-worthy signals are stated, never a verdict', () => {
+  const b = { version: 2, interest: 1, points: { interest: 35, evidence: 5, novelty: 10, impact: 4 }, weights: { interest: 35, evidence: 25, novelty: 20, impact: 20 },
+    priorities: [{ topic: 'AI engineering' }], signals: { testable: true }, source_counts: { posts: 4, outlets: 1, independent_outlets: 0 } };
+  const lines = whyRanked({ breakdown: b });
+  assert.match(lines[0], /\(full marks for interest, 35 of 35\)/);
+  assert.equal(lines[2], 'Post-worthy signals: you can test it.');
+  assert.ok(!lines.some(l => /Worth a post|interest maxed/.test(l)));
 });

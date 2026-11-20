@@ -147,7 +147,7 @@ async function renderList(el, ctx) {
             <td>${personCell(c, { dnc: false, dup: dupIds.has(c.id) })}</td>
             <td class="pp-stagecell">${status(c.stage)}${c.dnc ? html`<span class="tag tag--err">Do not contact</span>` : ''}</td>
             ${hasEmp ? html`<td class="pp-hide-sm pp-hide-md">${c.employer || html`<span class="ink-3">—</span>`}</td>` : ''}
-            <td class="pp-next">${c.next_step || html`<span class="ink-3">—</span>`}${c.next_date ? html`<span class="pp-date ${c.dnc ? '' : c.next_date < today ? 'is-late' : c.next_date === today ? 'is-today' : ''}"><time datetime="${c.next_date}">${dayLabel(c.next_date)}</time>${c.dnc ? ' · paused' : ''}</span>` : ''}</td>
+            <td class="pp-next">${c.next_step || html`<span class="ink-3">—</span>`}${c.next_date ? html`<span class="pp-date ${c.dnc ? '' : c.next_date === today ? 'is-today' : ''}"><time datetime="${c.next_date}">${dayLabel(c.next_date)}</time>${c.dnc ? ' · paused' : c.next_date < today ? ' · overdue' : ''}</span>` : ''}</td>
             <td class="pp-c-last pp-hide-sm pp-mono">${c.last_interaction ? html`<time datetime="${c.last_interaction}">${dayLabel(c.last_interaction, { weekday: false })}</time>` : '—'}</td>
           </tr>`)}</tbody></table>`
         : html`<div class="pp-pad"><div class="empty"><h3>No people yet.</h3><p>Add someone whose public work you’ve actually read, with a source for every detail.</p></div></div>`}
@@ -289,6 +289,45 @@ async function renderPerson(el, id, ctx) {
   const demo = isDemoText(c.name) || isDemoText(c.org);
   const sentN = c.outreach.filter(o => o.status === 'sent').length;
 
+  // PE-4 (E1): the swap frame builds the head, the research card and the side column; the outreach and interaction
+  // cards (below the fold) follow in one idle chunk. Their form handlers bind once they exist.
+  const laterMain = () => html`
+      <section class="tile tile--static pp-card" aria-labelledby="pp-o-h">
+        <div class="section-head"><h2 class="t-h2" id="pp-o-h">Draft outreach</h2><span class="section-meta">${plural(c.outreach.length, 'message')}</span></div>
+        <p class="pp-note">A mentorship question is not a referral request; the two are kept separate. First-person claims come only from your public-OK experiences.</p>
+        <div class="pp-form">
+          ${field('Purpose', html`<select class="select" id="o-purpose">${opts(Object.entries(PURPOSES).filter(([k]) => k !== 'thank_you'), 'mentorship')}</select>`)}
+          ${field('Channel', html`<select class="select" id="o-channel">${opts(Object.entries(CHANNELS), 'email')}</select>`)}
+          <fieldset class="pp-full pp-fieldset"><legend>Use these sourced details</legend>
+            ${details.length ? details.map((d, i) => html`<label class="pp-check"><input type="checkbox" data-detail-idx="${i}" ${i === 0 ? 'checked' : ''}> <span>${d.detail} ${d.source ? html`<a href="${d.source}" target="_blank" rel="noopener">source${icon('arrow-up-right')}</a>` : html`<span class="tag tag--err">No source</span>`}</span></label>`)
+            : html`<span class="pp-note">None recorded, so the draft will be flagged as unsourced.</span>`}
+          </fieldset>
+          <div class="pp-full pp-form-end"><button class="btn btn--primary" data-act="draft" ${c.dnc ? 'disabled' : ''}>Draft message</button></div>
+        </div>
+        ${c.outreach.length ? html`<div class="pp-rule"></div><h3 class="pp-h3">Messages</h3>
+          <table class="table pp-table pp-table--inset"><tbody>${c.outreach.map(o => html`<tr data-outreach="${o.id}">
+            <td><button class="pp-linkbtn" data-outreach-open="${o.id}">${PURPOSES[o.purpose] || label(o.purpose)}</button>${o.subject ? html`<span class="pp-sub">${o.subject}</span>` : ''}</td>
+            <td class="pp-hide-sm">${CHANNELS[o.channel] || o.channel}</td>
+            <td class="pp-mono pp-hide-sm">${o.sent_at ? `sent ${whenLabel(o.sent_at, tz)}` : o.send_at ? `send ${whenLabel(o.send_at, tz)}` : ''}</td>
+            <td>${status(o.status)}</td></tr>`)}</tbody></table>` : ''}
+      </section>
+
+      <section class="tile tile--static pp-card" aria-labelledby="pp-i-h">
+        <div class="section-head"><h2 class="t-h2" id="pp-i-h">Interaction log</h2><span class="section-meta">${plural(c.interactions.length, 'entry', 'entries')}</span></div>
+        <form class="pp-ixform" id="ix">
+          ${field('Kind', html`<select class="select" name="kind">${opts(KINDS.map(k => [k, label(k)]), 'note')}</select>`)}
+          ${field('Date', html`<input class="input" type="date" name="date" value="${today}">`)}
+          ${field('Notes', raw('<input class="input" name="notes">'), 'pp-grow')}
+          <button class="btn" type="submit">Log</button>
+        </form>
+        <p class="pp-note">Logging a <b>reply</b> pauses follow-up reminders and moves the stage to “replied”. A coffee chat, call or meeting sets the next step to a thank-you.</p>
+        ${c.interactions.length ? html`<ol class="pp-timeline">${c.interactions.map(i => html`<li class="${i.kind === 'reply' ? 'is-reply' : ''}">
+          <span class="pp-tl-dot" aria-hidden="true"></span>
+          <div class="pp-tl-b"><span class="pp-tl-h"><span class="tag ${i.kind === 'reply' ? 'tag--ok' : 'tag--neutral'}">${label(i.kind)}</span><time class="pp-mono" datetime="${i.date}">${dayLabel(i.date)}</time></span>${i.notes ? html`<p>${i.notes}</p>` : ''}</div>
+          <button class="btn btn--ghost btn--sm btn--icon" data-act="rm-ix" data-id="${i.id}" aria-label="Delete this ${label(i.kind)} entry">${icon('x')}</button></li>`)}</ol>`
+          : html`<p class="pp-empty-line">No interactions yet.</p>`}
+      </section>
+`;
   const root = document.createElement('div');
   root.className = 'pp pp-person';
   root.innerHTML = String(html`
@@ -334,41 +373,7 @@ async function renderPerson(el, id, ctx) {
         <div class="pp-form-end"><button class="btn btn--sm" data-act="save-details">Save details</button></div>
       </section>
 
-      <section class="tile tile--static pp-card" aria-labelledby="pp-o-h">
-        <div class="section-head"><h2 class="t-h2" id="pp-o-h">Draft outreach</h2><span class="section-meta">${plural(c.outreach.length, 'message')}</span></div>
-        <p class="pp-note">A mentorship question is not a referral request; the two are kept separate. First-person claims come only from your public-OK experiences.</p>
-        <div class="pp-form">
-          ${field('Purpose', html`<select class="select" id="o-purpose">${opts(Object.entries(PURPOSES).filter(([k]) => k !== 'thank_you'), 'mentorship')}</select>`)}
-          ${field('Channel', html`<select class="select" id="o-channel">${opts(Object.entries(CHANNELS), 'email')}</select>`)}
-          <fieldset class="pp-full pp-fieldset"><legend>Use these sourced details</legend>
-            ${details.length ? details.map((d, i) => html`<label class="pp-check"><input type="checkbox" data-detail-idx="${i}" ${i === 0 ? 'checked' : ''}> <span>${d.detail} ${d.source ? html`<a href="${d.source}" target="_blank" rel="noopener">source${icon('arrow-up-right')}</a>` : html`<span class="tag tag--err">No source</span>`}</span></label>`)
-            : html`<span class="pp-note">None recorded, so the draft will be flagged as unsourced.</span>`}
-          </fieldset>
-          <div class="pp-full pp-form-end"><button class="btn btn--primary" data-act="draft" ${c.dnc ? 'disabled' : ''}>Draft message</button></div>
-        </div>
-        ${c.outreach.length ? html`<div class="pp-rule"></div><h3 class="pp-h3">Messages</h3>
-          <table class="table pp-table pp-table--inset"><tbody>${c.outreach.map(o => html`<tr data-outreach="${o.id}">
-            <td><button class="pp-linkbtn" data-outreach-open="${o.id}">${PURPOSES[o.purpose] || label(o.purpose)}</button>${o.subject ? html`<span class="pp-sub">${o.subject}</span>` : ''}</td>
-            <td class="pp-hide-sm">${CHANNELS[o.channel] || o.channel}</td>
-            <td class="pp-mono pp-hide-sm">${o.sent_at ? `sent ${whenLabel(o.sent_at, tz)}` : o.send_at ? `send ${whenLabel(o.send_at, tz)}` : ''}</td>
-            <td>${status(o.status)}</td></tr>`)}</tbody></table>` : ''}
-      </section>
-
-      <section class="tile tile--static pp-card" aria-labelledby="pp-i-h">
-        <div class="section-head"><h2 class="t-h2" id="pp-i-h">Interaction log</h2><span class="section-meta">${plural(c.interactions.length, 'entry', 'entries')}</span></div>
-        <form class="pp-ixform" id="ix">
-          ${field('Kind', html`<select class="select" name="kind">${opts(KINDS.map(k => [k, label(k)]), 'note')}</select>`)}
-          ${field('Date', html`<input class="input" type="date" name="date" value="${today}">`)}
-          ${field('Notes', raw('<input class="input" name="notes">'), 'pp-grow')}
-          <button class="btn" type="submit">Log</button>
-        </form>
-        <p class="pp-note">Logging a <b>reply</b> pauses follow-up reminders and moves the stage to “replied”. A coffee chat, call or meeting sets the next step to a thank-you.</p>
-        ${c.interactions.length ? html`<ol class="pp-timeline">${c.interactions.map(i => html`<li class="${i.kind === 'reply' ? 'is-reply' : ''}">
-          <span class="pp-tl-dot" aria-hidden="true"></span>
-          <div class="pp-tl-b"><span class="pp-tl-h"><span class="tag ${i.kind === 'reply' ? 'tag--ok' : 'tag--neutral'}">${label(i.kind)}</span><time class="pp-mono" datetime="${i.date}">${dayLabel(i.date)}</time></span>${i.notes ? html`<p>${i.notes}</p>` : ''}</div>
-          <button class="btn btn--ghost btn--sm btn--icon" data-act="rm-ix" data-id="${i.id}" aria-label="Delete this ${label(i.kind)} entry">${icon('x')}</button></li>`)}</ol>`
-          : html`<p class="pp-empty-line">No interactions yet.</p>`}
-      </section>
+      <div class="pp-later" data-later-main></div>
     </div>
 
     <aside class="pp-aside stack">
@@ -377,7 +382,9 @@ async function renderPerson(el, id, ctx) {
         <form class="stack-sm" id="rel">
           ${field('Stage', html`<select class="select" name="stage">${opts([...new Set([...STAGES, c.stage].filter(Boolean))].map(s => [s, label(s)]), c.stage)}</select>`)}
           ${field('Next step', html`<input class="input" name="next_step" value="${c.next_step || ''}">`)}
-          ${field('Next date', html`<input class="input" name="next_date" type="date" value="${c.next_date || ''}">`)}
+          <div class="field"><span class="pp-flabel" id="pp-nd-l">Next date</span>
+            <span class="pp-datepick"><button type="button" class="input pp-datebtn" data-datepick aria-labelledby="pp-nd-l pp-nd-v" aria-haspopup="dialog"><span id="pp-nd-v">${c.next_date ? dayLabel(c.next_date) : 'No date set'}</span>${icon('calendar')}</button>
+            <input class="input pp-date-native" name="next_date" type="date" value="${c.next_date || ''}" tabindex="-1" aria-hidden="true"></span></div>
           <div class="pp-form-end"><button class="btn btn--sm" type="submit">Save</button></div>
         </form>
         <div class="pp-rule"></div>
@@ -419,11 +426,18 @@ async function renderPerson(el, id, ctx) {
     const f = Object.fromEntries(new FormData(e.target));
     await act(e.submitter, async () => { await api.patch(`/contacts/${id}`, { ...f, next_date: f.next_date || null }); toast('Saved', 'ok'); again(); });
   });
-  root.querySelector('#ix').addEventListener('submit', async (e) => {
+  const bindLater = () => root.querySelector('#ix').addEventListener('submit', async (e) => {
     e.preventDefault();
     const f = Object.fromEntries(new FormData(e.target));
     await act(e.submitter, async () => { await api.post(`/contacts/${id}/interactions`, f); toast(f.kind === 'reply' ? 'Reply logged; follow-ups paused' : 'Logged', 'ok'); again(); });
   });
+  const slot = root.querySelector('[data-later-main]');
+  const fill = () => { if (!slot.isConnected && !el.contains(root)) return; slot.outerHTML = String(laterMain()); bindLater(); };
+  (window.requestIdleCallback ? requestIdleCallback(fill, { timeout: 300 }) : setTimeout(fill, 16));
+  // PE-3: the Next date shows a formatted day on a button that opens the native picker; the input stays the value.
+  const dInput = root.querySelector('.pp-date-native'), dBtn = root.querySelector('[data-datepick]');
+  dBtn.addEventListener('click', () => { try { dInput.showPicker(); } catch (err) { dInput.classList.add('is-shown'); dInput.removeAttribute('aria-hidden'); dInput.tabIndex = 0; dInput.focus(); } });
+  dInput.addEventListener('change', () => { root.querySelector('#pp-nd-v').textContent = dInput.value ? dayLabel(dInput.value) : 'No date set'; });
   on(root, 'click', 'tr[data-outreach]', (e, tr) => { e.preventDefault(); openOutreach(tr.dataset.outreach, again); });
   on(root, 'click', '[data-act]', async (e, btn) => {
     const a = btn.dataset.act;

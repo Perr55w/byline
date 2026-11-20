@@ -45,6 +45,9 @@
 .cp-cand-list { margin: 0; padding: 0; list-style: none; }
 .cp-cand-row { display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; gap: 16px; align-items: start; padding: 14px 24px 16px; }
 .cp-cand-row + .cp-cand-row { border-top: 1px solid var(--line); }
+/* C-4: rows off screen skip layout and paint; the intrinsic size is the measured row height (auto keeps the real one). */
+.cp-cand-row { content-visibility: auto; contain-intrinsic-size: auto 140px; }   /* measured mean at 1440: 139 px */
+@media (max-width: 760px) { .cp-cand-row { contain-intrinsic-size: auto 280px; } }  /* measured mean at 390: 277 px */
 .cp-cand-row:hover { background: var(--hover-row); }
 .cp-cand-row .score-chip { margin-top: 1px; }
 /* Start campaign (R10): a permanent small secondary button at the top right of each row. It only opens the
@@ -72,6 +75,10 @@
 .cp-topics b { font: 500 13px/18px var(--font-mono); text-align: right; font-variant-numeric: tabular-nums; }
 .cp-topic-d { color: var(--text-3); font-size: 12px; text-align: right; white-space: nowrap; }
 .cp-bars .meter > i { background: color-mix(in oklab, var(--text-3) 60%, transparent); }
+.cp-finding { margin: 0; color: var(--text-1); font: 400 14px/21px var(--font-sans); text-wrap: pretty; }
+.cp-finding b { font-weight: 600; font-variant-numeric: tabular-nums; }
+.cp-oneslot { margin: 0 0 10px; color: var(--text-2); font: 450 13.5px/20px var(--font-sans); }
+.cp-oneslot b { color: var(--text-1); font-weight: 500; }
 .cp-slots { display: flex; flex-direction: column; margin: 0 0 12px; padding: 0; list-style: none; }
 .cp-slots li { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: baseline; gap: 0 12px; padding: 8px 0; border-top: 1px solid var(--line); color: var(--text-1); font: 450 13.5px/20px var(--font-sans); }
 .cp-slots li:first-child { border-top: 0; padding-top: 0; }

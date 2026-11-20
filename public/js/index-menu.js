@@ -302,7 +302,7 @@ export function initShortcuts({ go, nav, onTheme, onNext, onPrev, onOpen, onRail
     if (e.defaultPrevented || e.isComposing || (e.repeat && e.key === 'g')) return;
     if (e.metaKey || e.ctrlKey || e.altKey) { end(); return; }
     if (inField(e) || ix || otherModal()) { end(); return; }
-    if (document.querySelector('.dossier') && e.key !== 'g' && !chord) {
+    if (document.querySelector('.dossier:not(.is-prebuild)') && e.key !== 'g' && !chord) {
       if (e.key === 'n' && cfg.handlers.onTheme) { e.preventDefault(); cfg.handlers.onTheme(); }
       if (e.key === '[' && cfg.handlers.onRail) { e.preventDefault(); cfg.handlers.onRail(); }
       return;

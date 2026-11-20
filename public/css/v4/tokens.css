@@ -120,7 +120,7 @@
 
   /* ---- background field (B §3) — rgb triplets ---- */
   --fd-bg: 245,246,248;
-  --fd-ink: 58,66,84;
+  --fd-ink: 56,59,66; /* R3 S10: neutral ink (a --text-3 / --text-1 mix), no blue cast; blue is heat only */
   --fd-hot: 31,94,255;
   --fd-amin: .06;
   --fd-amax: .18;
@@ -202,7 +202,7 @@
   --rail-fill: rgba(30,31,35,.60);
 
   --fd-bg: 18,19,22;
-  --fd-ink: 150,158,174;
+  --fd-ink: 146,149,156; /* R3 S10: neutral (--text-3 mix) */
   --fd-hot: 92,142,255;
   --fd-amin: .05;
   --fd-amax: .10;

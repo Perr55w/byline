@@ -1,6 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import fs from 'node:fs';
 import path from 'node:path';
+import { matchEmployers } from './text.js';
 
 export const DATA_DIR = process.env.BYLINE_DATA_DIR || path.resolve('data');
 export const MEDIA_DIR = path.join(DATA_DIR, 'media');
@@ -185,7 +186,41 @@ export function hydrate(row) {
     else if (['topics', 'companies', 'terms'].includes(k)) out[k] = parse(v, []);
     else out[k] = v;
   }
+  if (Array.isArray(out.companies) && out.companies.length && row.id != null && typeof row.companies === 'string') out.companies = fixCompanies(row, out.companies);
   return out;
+}
+
+// R3 S12 (F, R14): stories.companies was stored by a matcher that let a bare sibling term ("Google") match inside a
+// longer sibling's name ("Google Cloud"). Read paths re-check such entries against the article text with the fixed
+// matcher (text.js matchEmployers: longest match wins among siblings sharing a parent). Rows are never rewritten
+// here; a story whose stored list names no parented employer costs nothing. Memoised per story + stored list.
+let empCache = { at: 0, list: [], sig: '' };
+function employersForMatch() {
+  if (Date.now() - empCache.at > 5000) {
+    const list = all('SELECT name, parent, terms FROM employers').map(r => ({ name: r.name, parent: r.parent || null, terms: parse(r.terms, []) }));
+    empCache = { at: Date.now(), list, sig: JSON.stringify(list) };
+  }
+  return empCache;
+}
+const fixMemo = new Map();
+function fixCompanies(row, list) {
+  let emps;
+  try { emps = employersForMatch(); } catch { return list; }
+  const byName = new Map(emps.list.map(e => [e.name, e]));
+  const family = (n) => { const e = byName.get(n); return e?.parent ? emps.list.filter(o => o.parent === e.parent).length > 1 : false; };
+  if (!list.some(family)) return list;
+  const key = `${row.id}|${row.companies}|${row.updated_at || ''}|${emps.sig.length}:${emps.sig.slice(0, 64)}`;
+  let named = fixMemo.get(key);
+  if (!named) {
+    try {
+      const arts = all('SELECT title, summary, substr(content, 1, 1500) AS content FROM articles WHERE story_id = ?', row.id);
+      if (!arts.length) return list;
+      named = new Set(matchEmployers(arts.map(a => `${a.title} ${a.summary || ''} ${a.content || ''}`).join(' '), emps.list));
+    } catch { return list; }
+    fixMemo.set(key, named);
+    if (fixMemo.size > 2000) fixMemo.delete(fixMemo.keys().next().value);
+  }
+  return list.filter(n => !family(n) || named.has(n));
 }
 
 export const PRIORITIES = [
